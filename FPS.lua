@@ -44,11 +44,12 @@ return function(ctx)
     end)
 
     --// ================= SAVED CHOICES =================
-    -- Small file next to MainLocal's settings: remembers the picked modes and the overlay position.
+    -- Small file in the Elysera folder (next to the main settings): remembers the picked modes and the overlay position.
     -- Nothing is applied on load, every toggle starts off.
     local Prefs = {}
     do
-        local FILE = "Elysera_Fps.json"
+        local dataPath = ctx.dataPath or function(name) return name end
+        local FILE = dataPath("Elysera_Fps.json")
         local canFS = typeof(readfile) == "function" and typeof(writefile) == "function"
             and typeof(isfile) == "function"
         local data, queued = {}, false

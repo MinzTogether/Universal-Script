@@ -210,6 +210,55 @@ local canFS = typeof(writefile) == "function"
     and typeof(readfile) == "function"
     and typeof(isfile) == "function"
 
+--// ---- Thư mục dữ liệu: workspace/Elysera/ ----
+-- Mọi file .json của script và của các module nằm trong thư mục này (không để rải ở thư mục gốc workspace).
+-- Module nhận hàm dataPath qua ctx. Executor không hỗ trợ thư mục -> dataPath trả về tên file trơn như cũ.
+local dataPath
+do
+    local DATA_FOLDER = "Elysera"
+    -- File .json cũ ở thư mục gốc workspace: chuyển vào thư mục mới một lần để không mất dữ liệu đã lưu
+    local LEGACY_FILES = {
+        "Elysera_Settings.json", "Elysera_Fps.json", "Elysera_Waypoints.json",
+        "L-scr.json", "L-scr.bak.json", "L-scr.state.json",
+    }
+
+    local canFolder = canFS
+        and typeof(isfolder) == "function"
+        and typeof(makefolder) == "function"
+
+    local function ensureFolder()
+        if not canFolder then return false end
+        local ok, ready = pcall(function()
+            if not isfolder(DATA_FOLDER) then makefolder(DATA_FOLDER) end
+            return isfolder(DATA_FOLDER)
+        end)
+        return ok and ready == true
+    end
+
+    local useFolder = ensureFolder()
+
+    dataPath = function(name)
+        if not useFolder then return name end
+        ensureFolder() -- tạo lại nếu thư mục bị xóa trong lúc đang chạy
+        return DATA_FOLDER .. "/" .. name
+    end
+
+    if useFolder then
+        for _, name in ipairs(LEGACY_FILES) do
+            pcall(function()
+                local target = dataPath(name)
+                if isfile(name) and not isfile(target) then
+                    local body = readfile(name)
+                    writefile(target, body)
+                    if readfile(target) == body and typeof(delfile) == "function" then
+                        delfile(name)
+                    end
+                end
+            end)
+        end
+    end
+end
+
 local function num(v, default)
     return (type(v) == "number" and v == v and math.abs(v) < 1e6) and v or default
 end
@@ -222,8 +271,9 @@ end
 local function loadSettings()
     if not canFS then return {} end
     local ok, data = pcall(function()
-        if isfile(SAVE_FILE) then
-            return HttpService:JSONDecode(readfile(SAVE_FILE))
+        local path = dataPath(SAVE_FILE)
+        if isfile(path) then
+            return HttpService:JSONDecode(readfile(path))
         end
     end)
     return (ok and type(data) == "table") and data or {}
@@ -269,7 +319,7 @@ local function saveSettings()
             fpsMode = ScreenGui:GetAttribute("FpsMode"), -- mode FPS Profile đã chọn (không tự áp khi nạp)
             theme = ScreenGui:GetAttribute("Theme") or Saved.theme, -- id theme đang dùng (Settings.lua tự áp khi nạp)
         }
-        pcall(writefile, SAVE_FILE, HttpService:JSONEncode(data))
+        pcall(writefile, dataPath(SAVE_FILE), HttpService:JSONEncode(data))
     end)
 end
 
@@ -1532,7 +1582,7 @@ end
 --// ================= REMOTE MODULE LOADER =================
 -- Các module (Status_Server.lua, Local.lua, Script.lua, FPS.lua, Settings.lua) được tải từ GitHub (raw)
 -- rồi chạy bằng loadstring, không còn đọc từ thư mục workspace của executor.
--- Elysera_Settings.json vẫn lưu trong workspace như cũ.
+-- Các file .json (Elysera_Settings.json, ...) nằm trong thư mục workspace/Elysera/ (xem "Thư mục dữ liệu" ở trên).
 -- Muốn đổi nguồn hoặc nhánh thì sửa URL trong MODULE_URLS.
 local MODULE_URLS = {
     ["Status_Server.lua"] = "https://raw.githubusercontent.com/MinzTogether/Universal-Script/refs/heads/main/Status_Server.lua",
@@ -1617,6 +1667,7 @@ do
             HttpService        = HttpService,
             UI_NAME            = UI_NAME,
             canFS              = canFS,
+            dataPath           = dataPath,
             WHITE              = WHITE,
             CENTER             = CENTER,
             ANCHOR_CENTER      = ANCHOR_CENTER,
@@ -1700,6 +1751,7 @@ do
             UserInputService   = UserInputService,
             Workspace          = Workspace,
             CoreGui            = CoreGui,
+            dataPath           = dataPath,
             new                = new,
             corner             = corner,
             stroke             = stroke,
@@ -1732,6 +1784,7 @@ do
             MainUI              = MainUI,
             Saved               = Saved,
             saveSettings        = saveSettings,
+            dataPath            = dataPath,
             ANCHOR_CENTER       = ANCHOR_CENTER,
             CENTER              = CENTER,
             EASE_QUAD           = EASE_QUAD,

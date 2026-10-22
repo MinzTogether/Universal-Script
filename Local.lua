@@ -2386,10 +2386,11 @@ return function(ctx)
     end
 
     --// ---------------- Waypoints ----------------
-    -- Save the spot you stand on, jump back to it later. Saved per game (PlaceId) in Elysera_Waypoints.json
+    -- Save the spot you stand on, jump back to it later. Saved per game (PlaceId) in Elysera/Elysera_Waypoints.json
     -- when the executor has file access; otherwise they last until you leave the game.
     function Features.CreateWaypoints(parent)
-        local FILE, MAX = "Elysera_Waypoints.json", 15
+        local dataPath = ctx.dataPath or function(name) return name end
+        local FILE, MAX = dataPath("Elysera_Waypoints.json"), 15
         local HttpService = game:GetService("HttpService")
         local canFS = typeof(readfile) == "function" and typeof(writefile) == "function" and typeof(isfile) == "function"
         local placeKey = tostring(game.PlaceId)

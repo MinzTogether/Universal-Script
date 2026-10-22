@@ -47,8 +47,10 @@ return function(ctx)
     local isLocked            = ctx.isLocked -- replaces the main file's uiLocked variable
 
     --// ---- Constants ----
-    local SCRIPT_FILE         = "L-scr.json"
-    local BACKUP_FILE         = "L-scr.bak.json"
+    -- Every file lives in the Elysera folder: dataPath comes from the main script (plain file name if it is missing)
+    local dataPath            = ctx.dataPath or function(name) return name end
+    local SCRIPT_FILE         = dataPath("L-scr.json")
+    local BACKUP_FILE         = dataPath("L-scr.bak.json")
     local SCHEMA_VERSION      = 2
     local EXPORT_FORMAT       = "L-script-export"
 
@@ -58,9 +60,9 @@ return function(ctx)
     local MAX_IMPORT_BYTES    = 2000000
     local UNDO_SECONDS        = 6 -- 0 = delete immediately, no Undo
 
-    local STATE_FILE          = "L-scr.state.json" -- run info + auto-run switch (small, rewritten often)
-    local STARTUP_DELAY       = 1.5                -- seconds after load before auto-run starts
-    local REVIEW_SECONDS      = 5                  -- imported script: a second tap within this window runs it
+    local STATE_FILE          = dataPath("L-scr.state.json") -- run info + auto-run switch (small, rewritten often)
+    local STARTUP_DELAY       = 1.5                          -- seconds after load before auto-run starts
+    local REVIEW_SECONDS      = 5                            -- imported script: a second tap within this window runs it
 
     local SEARCH_MIN_ITEMS    = 5
     local SEARCH_H            = 30
@@ -492,7 +494,7 @@ return function(ctx)
 
         if why then -- corrupted: keep the corrupted copy, then try the backup
             if body then
-                report.corruptFile = ("L-scr.corrupt-%d.json"):format(os.time())
+                report.corruptFile = dataPath(("L-scr.corrupt-%d.json"):format(os.time()))
                 pcall(writefile, report.corruptFile, body)
             end
             data, why, body = readJson(BACKUP_FILE)
@@ -520,7 +522,7 @@ return function(ctx)
         if version < SCHEMA_VERSION then
             report.migrated = version
             needSave = true
-            pcall(function() writefile(("L-scr.v%d.bak.json"):format(version), body) end)
+            pcall(function() writefile(dataPath(("L-scr.v%d.bak.json"):format(version)), body) end)
         end
         if needSave then saveLibrary() end
         return report
@@ -787,13 +789,13 @@ return function(ctx)
         if canFS then
             local base = ("L-export-%s-%s"):format(
                 entry and safeFileName(entry.name) or "all", os.date("%Y%m%d-%H%M%S"))
-            fileName = base .. ".json"
+            fileName = dataPath(base .. ".json")
             local n = 2
             if typeof(isfile) == "function" then
                 while true do
                     local okI, taken = pcall(isfile, fileName)
                     if not okI or not taken then break end
-                    fileName = ("%s-%d.json"):format(base, n)
+                    fileName = dataPath(("%s-%d.json"):format(base, n))
                     n += 1
                 end
             end
@@ -818,12 +820,17 @@ return function(ctx)
         text = tostring(text or ""):match("^%s*(.-)%s*$")
         if text == "" then return nil, "Nothing to import" end
 
-        -- allow typing a file name instead of pasting the content
+        -- allow typing a file name instead of pasting the content (looked up in the Elysera folder first, then as typed)
         if canFS and #text < 200 and not text:find("[{%[\r\n]") then
-            local okF, exists = pcall(isfile, text)
-            if okF and exists then
-                local okR, body = pcall(readfile, text)
-                if okR then text = body end
+            for _, path in ipairs({ dataPath(text), text }) do
+                local okF, exists = pcall(isfile, path)
+                if okF and exists then
+                    local okR, body = pcall(readfile, path)
+                    if okR then
+                        text = body
+                        break
+                    end
+                end
             end
         end
         if #text > MAX_IMPORT_BYTES then return nil, "Input is too large" end
