@@ -1,5 +1,5 @@
 --// ================= SCRIPT TAB (module) =================
--- This file is loaded by the main script (MainLocal.lua) and called with a ctx table
+-- This file is loaded by the main script (MainWeb.lua / MainLocal.lua) and called with a ctx table
 -- containing the shared UI functions/variables. Returns ScriptDialog so the main file
 -- can use it when closing the UI (closeUI).
 --
@@ -45,6 +45,7 @@ return function(ctx)
     local flashStrokeError    = ctx.flashStrokeError
     local bindBoxFocus        = ctx.bindBoxFocus
     local isLocked            = ctx.isLocked -- replaces the main file's uiLocked variable
+    local UI                  = assert(ctx.UI, "Script.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
 
     --// ---- Constants ----
     -- Every file lives in the Elysera folder: dataPath comes from the main script (plain file name if it is missing)
@@ -89,12 +90,8 @@ return function(ctx)
         return #text > n and (text:sub(1, n) .. "...") or text
     end
 
-    -- UIStroke on a text object outlines the TEXT by default (Contextual); these strokes are meant to be borders
-    local function borderStroke(inst, color, thickness)
-        local s = stroke(inst, color, thickness)
-        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        return s
-    end
+    -- Border stroke from the shared UI kit (MainWeb.lua)
+    local borderStroke = UI.BorderStroke
 
     local function firstLine(text)
         return (tostring(text):match("^[^\r\n]*"))

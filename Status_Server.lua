@@ -179,13 +179,27 @@ return function(ctx)
         return string.format("%d ms", math.floor(pingItem:GetValue() + 0.5))
     end)
 
-    -- 1 vòng lặp duy nhất cho tất cả các dòng live (thay vì mỗi dòng 1 vòng)
+    -- 1 vòng lặp duy nhất cho tất cả các dòng live (thay vì mỗi dòng 1 vòng).
+    -- Chỉ cập nhật khi UI đang mở và tab này đang hiện; mở lại UI / quay về tab này thì cập nhật ngay.
+    -- (Core cũ không truyền isOpen -> coi như luôn mở, hành vi như trước.)
+    local isOpen = ctx.isOpen or function() return true end
+    local function tabShowing()
+        return isOpen() and StatusServerTab.Visible
+    end
     task.spawn(function()
         while ScreenGui.Parent do
-            refreshLiveRows()
+            if tabShowing() then refreshLiveRows() end
             task.wait(0.5)
         end
     end)
+    StatusServerTab:GetPropertyChangedSignal("Visible"):Connect(function()
+        if tabShowing() then refreshLiveRows() end
+    end)
+    if ctx.MainUI then
+        ctx.MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
+            if tabShowing() then refreshLiveRows() end
+        end)
+    end
 
     CreateCopyRow(StatusServerTab, "PlaceID", function() return tostring(game.PlaceId) end, true)
 

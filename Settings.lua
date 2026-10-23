@@ -31,12 +31,13 @@
 --// ============================================================================
 
 return function(D)
-    --// ================= DEPS (từ MainLocal.lua) =================
+    --// ================= DEPS (từ MainWeb.lua / MainLocal.lua) =================
     local Theme        = D.Theme
     local ScreenGui    = D.ScreenGui
     local MainUI       = D.MainUI
     local Tab          = D.Tab
     local CoreGui      = D.CoreGui
+    local GuiRoot      = D.GuiRoot or CoreGui   -- nơi GUI thực sự được gắn (CoreGui, hoặc PlayerGui khi dự phòng)
     local LocalPlayer  = D.LocalPlayer
     local Saved        = D.Saved or {}
     local saveSettings = D.saveSettings or function() end
@@ -530,9 +531,11 @@ return function(D)
 
     local function getRoots()
         local roots = { ScreenGui }
-        if CoreGui then
+        local containers = { GuiRoot }
+        if CoreGui and CoreGui ~= GuiRoot then containers[#containers + 1] = CoreGui end
+        for _, container in ipairs(containers) do
             for _, name in ipairs(EXTRA_ROOTS) do
-                local gui = CoreGui:FindFirstChild(name)
+                local gui = container:FindFirstChild(name)
                 if gui then roots[#roots + 1] = gui end
             end
         end

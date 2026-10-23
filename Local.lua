@@ -1,9 +1,10 @@
 --// ================= LOCAL TAB (module) =================
--- Loaded by MainUI (MainLocal.lua) and called with a ctx table of shared UI helpers.
+-- Loaded by the main script (MainWeb.lua / MainLocal.lua) and called with a ctx table of shared UI helpers
+-- (ctx.UI = shared UI kit: border stroke, chevron, collapsible section).
 --
 -- File structure:
 --   Core     : shared foundation (input parsing, toggle binding, character lifecycle, fly input, teleport history)
---              + shared UI pieces (toggle row, status badge, presets, mode dropdown, button, input, sections)
+--              + shared UI pieces (toggle row, status badge, presets, mode dropdown, button, input; sections come from ctx.UI)
 --   Features : Movement (Speed, Jump Boost, Gravity, Infinite Jump, Noclip, Fly)
 --              Teleport (Click Teleport, Waypoints, Players) + Quick actions (Back, Unstuck, Respawn)
 --              Camera (Field of View, Max Zoom), Visual (ESP, Hide Players, Full Bright)
@@ -21,6 +22,8 @@ return function(ctx)
     local UserInputService = ctx.UserInputService
     local Workspace        = ctx.Workspace
     local CoreGui          = ctx.CoreGui
+    local GuiRoot          = ctx.GuiRoot or CoreGui   -- where the UI is mounted (CoreGui, or PlayerGui as a fallback)
+    local UI               = assert(ctx.UI, "Local.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
     local Lighting         = game:GetService("Lighting")
     local TextService      = game:GetService("TextService")
     local TweenService     = game:GetService("TweenService")
@@ -716,11 +719,7 @@ return function(ctx)
     --// ---------- Small shared helpers ----------
     -- UIStroke on a TextButton/TextBox/TextLabel outlines the TEXT by default (Contextual mode);
     -- these strokes are meant to draw the border, so the mode is set explicitly.
-    function Core.BorderStroke(inst, color, thickness)
-        local s = stroke(inst, color, thickness)
-        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        return s
-    end
+    Core.BorderStroke = UI.BorderStroke   -- shared UI kit (MainWeb.lua)
 
     local tweenInfos = {} -- duration -> TweenInfo (hover and press effects start a tween on every event)
     function Core.Tween(inst, time, props)
@@ -918,164 +917,11 @@ return function(ctx)
     --// ---------- Chevron: arrow drawn from two rotated bars (no font glyph needed) ----------
     -- props: layout of the holder frame. Rotate the returned holder to animate it (0 = pointing down).
     -- return: holder, setColor(color)
-    function Core.CreateChevron(parent, props, color, len, thick)
-        len, thick = len or 8, thick or 2
-        props.BackgroundTransparency = 1
-        local Holder = new("Frame", props, parent)
-
-        local dx = len * 0.3536                                    -- half of the bar's horizontal extent at 45 degrees
-        local bars = {}
-        for i, rot in ipairs({ 45, -45 }) do
-            bars[i] = new("Frame", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new(0.5, (i == 1) and -dx or dx, 0.5, 0),
-                Size = UDim2.fromOffset(len, thick),
-                Rotation = rot,
-                BackgroundColor3 = color or Theme.SubText,
-                BorderSizePixel = 0,
-            }, Holder)
-            corner(bars[i], thick / 2)
-        end
-
-        return Holder, function(c)
-            for _, b in ipairs(bars) do b.BackgroundColor3 = c end
-        end
-    end
+    Core.CreateChevron = UI.CreateChevron
 
     --// ---------- Section: collapsible group ----------
     -- opts: { subtitle = "what is inside", collapsed = true }
-    function Core.CreateSectionGroup(parent, title, order, opts)
-        opts = opts or {}
-        local open = not opts.collapsed
-        local activeCount = 0
-        local api = {}
-
-        local Root = new("Frame", {
-            Name = "Section_" .. title,
-            LayoutOrder = order,
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
-        }, parent)
-        list(Root, 6)
-
-        local Header = new("TextButton", {
-            Name = "Header",
-            LayoutOrder = 0,
-            Size = UDim2.new(1, 0, 0, 52),
-            Text = "",
-            BackgroundColor3 = Theme.Header,
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-        }, Root)
-        corner(Header, 8)
-        Core.BorderStroke(Header)
-
-        -- Accent bar on the left: pink while something in this section is on
-        local Bar = new("Frame", {
-            AnchorPoint = Vector2.new(0, 0.5),
-            Position = UDim2.new(0, 8, 0.5, 0),
-            Size = UDim2.fromOffset(3, 26),
-            BackgroundColor3 = Theme.Border,
-            BorderSizePixel = 0,
-        }, Header)
-        corner(Bar, 2)
-
-        Core.Label(Header, {
-            Position = UDim2.fromOffset(20, 8),
-            Size = UDim2.new(1, -118, 0, 20),
-            Font = Enum.Font.GothamBold,
-            TextSize = 14,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Text = title,
-        })
-        Core.Label(Header, {
-            Position = UDim2.fromOffset(20, 28),
-            Size = UDim2.new(1, -118, 0, 16),
-            TextSize = 11,
-            TextColor3 = Theme.SubText,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Text = opts.subtitle or "",
-        })
-
-        -- "N on" pill
-        local Pill = new("Frame", {
-            Name = "ActivePill",
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -40, 0.5, 0),
-            Size = UDim2.fromOffset(46, 20),
-            BackgroundColor3 = WHITE, -- the gradient multiplies the base, so it stays white
-            BorderSizePixel = 0,
-            Visible = false,
-        }, Header)
-        corner(Pill, 10)
-        new("UIGradient", { Color = ColorSequence.new(Theme.AccentPurple, Theme.AccentPink) }, Pill)
-        local PillText = Core.Label(Pill, {
-            Size = UDim2.fromScale(1, 1),
-            Font = Enum.Font.GothamBold,
-            TextSize = 11,
-            TextColor3 = Theme.ToggleKnobOn,
-            TextXAlignment = Enum.TextXAlignment.Center,
-            Text = "",
-        })
-        PillText:SetAttribute("OnAccent", true)
-
-        local Chevron, setChevronColor = Core.CreateChevron(Header, {
-            Name = "Chevron",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(1, -24, 0.5, 0),
-            Size = UDim2.fromOffset(20, 20),
-        }, Theme.SubText, 10, 2)
-
-        local Body = new("Frame", {
-            Name = "Body",
-            LayoutOrder = 1,
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
-        }, Root)
-        list(Body, 6)
-
-        local function render(animate)
-            Body.Visible = open
-            local rot = open and 0 or -90
-            local barColor = (activeCount > 0) and Theme.AccentPink or Theme.Border
-            if animate then
-                Core.Tween(Chevron, 0.15, { Rotation = rot })
-                Core.Tween(Bar, 0.15, { BackgroundColor3 = barColor })
-            else
-                Chevron.Rotation = rot
-                Bar.BackgroundColor3 = barColor
-            end
-            setChevronColor(open and Theme.Text or Theme.SubText)
-            Pill.Visible = activeCount > 0
-            PillText.Text = activeCount .. " on"
-        end
-
-        Header.MouseEnter:Connect(function()
-            Core.Tween(Header, 0.12, { BackgroundColor3 = Theme.Header:Lerp(Theme.Border, 0.35) })
-        end)
-        Header.MouseLeave:Connect(function()
-            Core.Tween(Header, 0.12, { BackgroundColor3 = Theme.Header })
-        end)
-        Header.Activated:Connect(function()
-            if isLocked() then return end
-            open = not open
-            render(true)
-        end)
-
-        -- Attach the handle from BindToggle so the header shows how many features are on
-        function api.trackSwitch(handle)
-            handle.onChanged(function(on)
-                activeCount = math.max(0, activeCount + (on and 1 or -1))
-                render(true)
-            end)
-        end
-
-        render(false)
-        api.Body = Body
-        return api
-    end
+    Core.CreateSectionGroup = UI.CreateSection
 
     --// ---------- Text input: rounded box with the same focus glow as the number boxes ----------
     -- opts: { size, position, anchor, order }
@@ -1805,9 +1651,15 @@ return function(ctx)
     end
 
     -- ESP is event-driven and shows every player (no limit on distance / player count).
+    -- The engine draws at most 31 Highlights at once and silently skips the rest, so the nearest players get a
+    -- Highlight outline and everyone else a translucent box (BoxHandleAdornment): nobody is dropped, only the
+    -- way the outline is drawn differs. Ranking by distance runs only while there are more players than that.
     -- opts: { teamMode, occluded, hide = { name, dist, hp, team } }
     function Features.CreateEspController(opts)
+        local HIGHLIGHT_BUDGET = 31
         local entries, trackers, conns, folder, stopLoop = {}, {}, {}, nil, nil
+        local hlCount, stopping = 0, false                      -- Highlights in use / tearing everything down
+        local syncAll                                           -- re-rank + (re)start the loop; defined below
 
         local function teamColor(p)
             if not opts.teamMode then return WHITE end
@@ -1830,6 +1682,11 @@ return function(ctx)
             }, parent)
         end
 
+        -- e.outline is a Highlight (e.useHl = true) or a BoxHandleAdornment (e.useHl = false)
+        local function setOutlineColor(e, color)
+            if e.useHl then e.outline.OutlineColor = color else e.outline.Color3 = color end
+        end
+
         local function applyStyle(e)
             local h = opts.hide
             e.nameLine.Visible = not h.name
@@ -1839,13 +1696,17 @@ return function(ctx)
             e.bb.Enabled = e.nameLine.Visible or e.distLine.Visible
                 or e.hpLine.Visible or e.teamLine.Visible
             e.bb.AlwaysOnTop = not opts.occluded
-            e.hl.DepthMode = opts.occluded and Enum.HighlightDepthMode.Occluded
-                or Enum.HighlightDepthMode.AlwaysOnTop
+            if e.useHl then
+                e.outline.DepthMode = opts.occluded and Enum.HighlightDepthMode.Occluded
+                    or Enum.HighlightDepthMode.AlwaysOnTop
+            else
+                e.outline.AlwaysOnTop = not opts.occluded
+            end
         end
 
         local function refreshColor(p, e)
             local color = teamColor(p)
-            e.hl.OutlineColor = color
+            setOutlineColor(e, color)
             e.nameLine.TextColor3 = color
             e.distLine.TextColor3 = color
             e.teamLine.TextColor3 = color
@@ -1863,17 +1724,46 @@ return function(ctx)
             end
         end
 
+        local function makeOutline(p, e, asHighlight)
+            if asHighlight then
+                return new("Highlight", {
+                    Name = "ESP_" .. p.Name,
+                    Adornee = e.char,
+                    DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+                    FillTransparency = 1,
+                    OutlineTransparency = 0,
+                    OutlineColor = WHITE,
+                }, folder)
+            end
+            -- Box around the whole character, positioned from the character's bounding box
+            local boxCf, boxSize = e.char:GetBoundingBox()
+            return new("BoxHandleAdornment", {
+                Name = "ESPBox_" .. p.Name,
+                Adornee = e.root,
+                CFrame = e.root.CFrame:ToObjectSpace(boxCf),
+                Size = boxSize,
+                Transparency = 0.75,
+                Color3 = WHITE,
+                AlwaysOnTop = true,
+                ZIndex = 1,
+            }, folder)
+        end
+
+        -- Switch one player's outline between Highlight and box (no-op when it already uses that method)
+        local function setOutlineMode(p, e, asHighlight)
+            if not folder or (e.outline and e.useHl == asHighlight) then return end
+            if e.outline then
+                e.outline:Destroy()
+                if e.useHl then hlCount -= 1 end
+            end
+            e.useHl = asHighlight
+            e.outline = makeOutline(p, e, asHighlight)
+            if asHighlight then hlCount += 1 end
+            refreshColor(p, e)
+        end
+
         local function buildVisuals(p, e)
             local char = e.char
-            e.hl = new("Highlight", {
-                Name = "ESP_" .. p.Name,
-                Adornee = char,
-                DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
-                FillTransparency = 1,
-                OutlineTransparency = 0,
-                OutlineColor = WHITE,
-            }, folder)
-
             e.bb = new("BillboardGui", {
                 Name = "ESPInfo_" .. p.Name,
                 Adornee = char:FindFirstChild("Head") or e.root,
@@ -1895,8 +1785,47 @@ return function(ctx)
         end
 
         local function destroyVisuals(e)
-            if e.hl then e.hl:Destroy() e.hl = nil end
+            if e.outline then
+                if e.useHl then hlCount -= 1 end
+                e.outline:Destroy()
+                e.outline = nil
+            end
             if e.bb then e.bb:Destroy() e.bb = nil end
+        end
+
+        local function countEntries()
+            local n = 0
+            for _ in pairs(entries) do n += 1 end
+            return n
+        end
+
+        local function getOrigin()
+            local cam = Workspace.CurrentCamera
+            local myRoot = Core.GetRoot()
+            return myRoot and myRoot.Position or (cam and cam.CFrame.Position) or Vector3.zero
+        end
+
+        -- Give the Highlights to the nearest HIGHLIGHT_BUDGET players, boxes to the rest. With few enough players
+        -- everybody simply gets a Highlight. Players that already have one are favoured by 10% of their distance,
+        -- so two players at about the same distance don't swap methods back and forth.
+        local function rebalance()
+            if not folder then return end
+            if countEntries() <= HIGHLIGHT_BUDGET then
+                for p, e in pairs(entries) do setOutlineMode(p, e, true) end
+                return
+            end
+            local origin = getOrigin()
+            local ranked = {}
+            for p, e in pairs(entries) do
+                if e.root.Parent then
+                    local d = (e.root.Position - origin).Magnitude
+                    ranked[#ranked + 1] = { p = p, e = e, key = e.useHl and d * 0.9 or d }
+                end
+            end
+            table.sort(ranked, function(a, b) return a.key < b.key end)
+            for i, it in ipairs(ranked) do
+                setOutlineMode(it.p, it.e, i <= HIGHLIGHT_BUDGET)
+            end
         end
 
         local function track(p)
@@ -1905,7 +1834,7 @@ return function(ctx)
                 local e = { char = char, hum = hum, root = root, dist = nil, hp = nil, maxHp = nil }
                 buildVisuals(p, e)
                 entries[p] = e
-                refreshColor(p, e)
+                setOutlineMode(p, e, hlCount < HIGHLIGHT_BUDGET)    -- also applies color + style
                 refreshHp(e)
 
                 local c1 = hum.HealthChanged:Connect(function() refreshHp(e) end)
@@ -1917,15 +1846,14 @@ return function(ctx)
                     c3:Disconnect()
                     destroyVisuals(e)
                     entries[p] = nil
+                    if not stopping then syncAll() end                -- a Highlight slot was freed
                 end
             end, { onDied = true })
         end
 
         -- 8 times per second: only update the distance text
         local function updateDistances()
-            local cam = Workspace.CurrentCamera
-            local myRoot = Core.GetRoot()
-            local origin = myRoot and myRoot.Position or (cam and cam.CFrame.Position) or Vector3.zero
+            local origin = getOrigin()
             for _, e in pairs(entries) do
                 if e.distLine and e.root.Parent then
                     local d = math.floor((e.root.Position - origin).Magnitude + 0.5)
@@ -1937,26 +1865,37 @@ return function(ctx)
             end
         end
 
-        local function syncDistanceLoop()
-            if opts.hide.dist or not folder then
+        -- The loop runs only while it has work: distance text is shown, or there are more players than Highlights
+        local function syncLoop()
+            local needed = folder ~= nil
+                and ((not opts.hide.dist) or countEntries() > HIGHLIGHT_BUDGET)
+            if not needed then
                 if stopLoop then stopLoop() stopLoop = nil end
             elseif not stopLoop then
                 local alive = true
                 stopLoop = function() alive = false end
                 task.spawn(function()
+                    local ticks = 0
                     while alive do
-                        pcall(updateDistances)
+                        if not opts.hide.dist then pcall(updateDistances) end
+                        ticks += 1
+                        if ticks % 4 == 0 then pcall(rebalance) end  -- re-rank every 0.5 s
                         task.wait(0.125)
                     end
                 end)
             end
         end
 
+        syncAll = function()
+            rebalance()
+            syncLoop()
+        end
+
         local C = {}
 
         function C.start()
             if folder then return end
-            folder = new("Folder", { Name = "ElyseraESP" }, CoreGui)
+            folder = new("Folder", { Name = "ElyseraESP" }, GuiRoot)
             for _, p in ipairs(Players:GetPlayers()) do track(p) end
             conns[1] = Players.PlayerAdded:Connect(track)
             conns[2] = Players.PlayerRemoving:Connect(function(p)
@@ -1968,10 +1907,11 @@ return function(ctx)
             conns[3] = LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
                 for p, e in pairs(entries) do refreshColor(p, e) end
             end)
-            syncDistanceLoop()
+            syncAll()
         end
 
         function C.stop()
+            stopping = true
             if stopLoop then stopLoop() stopLoop = nil end
             for _, c in ipairs(conns) do c:Disconnect() end
             table.clear(conns)
@@ -1980,13 +1920,14 @@ return function(ctx)
                 trackers[p] = nil
             end
             if folder then folder:Destroy() folder = nil end
+            hlCount, stopping = 0, false
         end
 
         -- Called by CreateEspOptions when the user changes a setting
         function C.refreshStyle()
             if not folder then return end
             for p, e in pairs(entries) do refreshColor(p, e) end
-            syncDistanceLoop()
+            syncLoop()
             if not opts.hide.dist then updateDistances() end
         end
 

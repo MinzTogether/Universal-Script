@@ -1,5 +1,5 @@
 --// ================= FPS TAB (module) =================
--- Loaded by MainLocal.lua with a ctx table (see "FPS TAB" there).
+-- Loaded by MainWeb.lua / MainLocal.lua with a ctx table (see "CTX" there).
 -- Layout: Performance monitor (FPS, frame time, ping, memory, graph)
 --         Optimize  : FPS Profile · FPS Cap · Auto Boost
 --         Screen    : White Screen · Black Screen · Idle Saver
@@ -9,6 +9,8 @@
 return function(ctx)
     local FPSTab, Theme, ScreenGui = ctx.Tab, ctx.Theme, ctx.ScreenGui
     local LocalPlayer, CoreGui, MainUI = ctx.LocalPlayer, ctx.CoreGui, ctx.MainUI
+    local GuiRoot = ctx.GuiRoot or CoreGui   -- where the UI is mounted (CoreGui, or PlayerGui as a fallback)
+    local UI = assert(ctx.UI, "FPS.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
     local Saved, saveSettings = ctx.Saved, ctx.saveSettings
     local ANCHOR_CENTER = ctx.ANCHOR_CENTER
     local EASE_QUAD, DIR_IN, DIR_OUT = ctx.EASE_QUAD, ctx.DIR_IN, ctx.DIR_OUT
@@ -129,177 +131,11 @@ return function(ctx)
     end
 
     --// ================= SHARED UI =================
-    -- UIStroke on a text object outlines the TEXT by default (Contextual); these strokes are meant to be borders
-    local function borderStroke(inst, color, thickness)
-        local s = stroke(inst, color, thickness)
-        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        return s
-    end
-
-    -- Down arrow drawn from two bars rotated ±45° (rotate the holder: 0 = down, -90 = right)
-    local function createChevron(parent, props, color, len, thick)
-        props.BackgroundTransparency = 1
-        local Holder = new("Frame", props, parent)
-        local dx = len * 0.3536
-        local bars = {}
-        for i, rot in ipairs({ 45, -45 }) do
-            bars[i] = new("Frame", {
-                AnchorPoint = ANCHOR_CENTER,
-                Position = UDim2.new(0.5, i == 1 and -dx or dx, 0.5, 0),
-                Size = UDim2.fromOffset(len, thick),
-                Rotation = rot,
-                BackgroundColor3 = color,
-                BorderSizePixel = 0,
-            }, Holder)
-            corner(bars[i], thick / 2)
-        end
-        return Holder, function(c)
-            for _, b in ipairs(bars) do b.BackgroundColor3 = c end
-        end
-    end
-
-    -- Collapsible group: title + short subtitle, accent bar, "N on" pill while something inside is on.
-    -- opts: { subtitle, collapsed } -> { Body, track(switch) }
-    local function createSection(parent, title, order, opts)
-        opts = opts or {}
-        local open = not opts.collapsed
-        local activeCount = 0
-        local api = {}
-
-        local Root = new("Frame", {
-            Name = "Section_" .. title,
-            LayoutOrder = order,
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
-        }, parent)
-        list(Root, 6)
-
-        local Header = new("TextButton", {
-            Name = "Header",
-            LayoutOrder = 0,
-            Size = UDim2.new(1, 0, 0, 52),
-            Text = "",
-            BackgroundColor3 = Theme.Header,
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-        }, Root)
-        corner(Header, 8)
-        borderStroke(Header)
-
-        local Bar = new("Frame", {
-            AnchorPoint = Vector2.new(0, 0.5),
-            Position = UDim2.new(0, 8, 0.5, 0),
-            Size = UDim2.fromOffset(3, 26),
-            BackgroundColor3 = Theme.Border,
-            BorderSizePixel = 0,
-        }, Header)
-        corner(Bar, 2)
-
-        label(Header, {
-            Position = UDim2.fromOffset(20, 8),
-            Size = UDim2.new(1, -118, 0, 20),
-            Text = title,
-            TextSize = 14,
-            TextColor3 = Theme.Text,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-        })
-        label(Header, {
-            Position = UDim2.fromOffset(20, 28),
-            Size = UDim2.new(1, -118, 0, 16),
-            Font = Enum.Font.Gotham,
-            Text = opts.subtitle or "",
-            TextSize = 11,
-            TextColor3 = Theme.SubText,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-        })
-
-        local Pill = new("Frame", {
-            Name = "ActivePill",
-            AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -40, 0.5, 0),
-            Size = UDim2.fromOffset(46, 20),
-            BackgroundColor3 = Color3.new(1, 1, 1), -- the gradient multiplies the base, so it stays white
-            BorderSizePixel = 0,
-            Visible = false,
-        }, Header)
-        corner(Pill, 10)
-        new("UIGradient", { Color = ColorSequence.new(Theme.AccentPurple, Theme.AccentPink) }, Pill)
-        local PillText = label(Pill, {
-            Size = UDim2.fromScale(1, 1),
-            TextSize = 11,
-            TextColor3 = Theme.ToggleKnobOn,
-            TextXAlignment = Enum.TextXAlignment.Center,
-            Text = "",
-        })
-        PillText:SetAttribute("OnAccent", true) -- refreshStateColors keeps it readable on any theme
-
-        local Chevron, setChevronColor = createChevron(Header, {
-            Name = "Chevron",
-            AnchorPoint = ANCHOR_CENTER,
-            Position = UDim2.new(1, -24, 0.5, 0),
-            Size = UDim2.fromOffset(20, 20),
-        }, Theme.SubText, 10, 2)
-
-        local Body = new("Frame", {
-            Name = "Body",
-            LayoutOrder = 1,
-            BackgroundTransparency = 1,
-            AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0),
-        }, Root)
-        list(Body, 6)
-
-        local function render(animate)
-            Body.Visible = open
-            local rot = open and 0 or -90
-            local barColor = (activeCount > 0) and Theme.AccentPink or Theme.Border
-            if animate then
-                tween(Chevron, 0.15, { Rotation = rot })
-                tween(Bar, 0.15, { BackgroundColor3 = barColor })
-            else
-                Chevron.Rotation = rot
-                Bar.BackgroundColor3 = barColor
-            end
-            setChevronColor(open and Theme.Text or Theme.SubText)
-            Pill.Visible = activeCount > 0
-            PillText.Text = activeCount .. " on"
-        end
-
-        Header.MouseEnter:Connect(function()
-            tween(Header, 0.12, { BackgroundColor3 = Theme.Header:Lerp(Theme.Border, 0.35) })
-        end)
-        Header.MouseLeave:Connect(function()
-            tween(Header, 0.12, { BackgroundColor3 = Theme.Header })
-        end)
-        Header.Activated:Connect(function()
-            if isLocked() then return end
-            open = not open
-            render(true)
-        end)
-
-        -- Count every toggle of this section so the header shows how many are on
-        function api.track(switch)
-            local was = switch:GetAttribute("Toggled") == true
-            if was then
-                activeCount += 1
-                render(false)
-            end
-            switch:GetAttributeChangedSignal("Toggled"):Connect(function()
-                local on = switch:GetAttribute("Toggled") == true
-                if on == was then return end -- e.g. attribute created as false: not a change of state
-                was = on
-                activeCount = math.max(0, activeCount + (on and 1 or -1))
-                render(true)
-            end)
-        end
-
-        render(false)
-        api.Body = Body
-        return api
-    end
+    -- Border stroke, chevron and collapsible section come from the shared UI kit (MainWeb.lua).
+    -- createSection(parent, title, order, { subtitle, collapsed }) -> { Body, track(switch) }
+    local borderStroke  = UI.BorderStroke
+    local createChevron = UI.CreateChevron
+    local createSection = UI.CreateSection
 
     --// ================= MODE SELECTOR (toggle + dropdown) =================
     -- Row: title + toggle on the first line, right-aligned winbox (mode name + arrow) below it.
@@ -564,7 +400,7 @@ return function(ctx)
         ResetOnSpawn = false,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
         Enabled = false,
-    }, CoreGui)
+    }, GuiRoot)
     local CoverFrame = new("Frame", {
         Size = UDim2.fromScale(1, 1),
         BorderSizePixel = 0,
@@ -1565,7 +1401,7 @@ return function(ctx)
             ResetOnSpawn = false,
             ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
             Enabled = false,
-        }, CoreGui)
+        }, GuiRoot)
 
         local Pill = new("Frame", {
             Name = "Pill",
