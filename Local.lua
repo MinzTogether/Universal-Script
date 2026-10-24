@@ -992,13 +992,51 @@ return function(ctx)
     --// =====================================================
 
     --// ---------------- Boost: one value on one instance (Speed, Jump, Gravity, FOV, Max Zoom) ----------------
-    -- The game's own value is snapshotted, restored when turned off, and re-applied if the game changes it
-    -- (at most 30 times per second, so we never fight the game).
+    -- The game's own value is snapshotted, restored when turned off, and put back whenever the game changes it.
+    -- Three layers keep our value in place, so a game that changes it now and then cannot switch the boost off for good:
+    --   1. The property signal answers the moment the game writes (at most Core.Boost.reapply times per
+    --      Core.Boost.window seconds, so we never fight the game).
+    --   2. A change that arrives while that budget is spent is postponed to the next window, never dropped.
+    --   3. A shared watchdog re-attaches when the game replaced the target without any event we listen to
+    --      (a new Humanoid, a new camera) and re-applies whatever the signal missed.
     -- cfg: { title, max, min, waitFor, props, getTarget, watch, waitTarget, snapshot, apply, restore, getValue,
     --        isApplied, fromSnapshot, presets }
     --   getTarget()  the instance to boost right now (nil while it does not exist)
     --   watch(cb)    optional: calls cb() whenever the target is replaced; returns an object with :Disconnect()
     --   waitTarget() optional: yields until the target exists (only used to prefill the input box)
+    Core.Boost = { reapply = 30, window = 1, step = 0.2 }          -- re-applies per window / window length / watchdog period (seconds)
+
+    -- One Heartbeat connection shared by every active boost; nothing runs while all of them are off
+    Core.Watchdog = { checks = {}, conn = nil, acc = 0 }
+
+    function Core.Watchdog.add(check)
+        local W = Core.Watchdog
+        W.checks[check] = true
+        if W.conn then return end
+        W.acc = 0
+        W.conn = RunService.Heartbeat:Connect(function(dt)
+            W.acc += dt
+            if W.acc < Core.Boost.step then return end
+            W.acc = 0
+            for fn in pairs(W.checks) do pcall(fn) end
+        end)
+    end
+
+    function Core.Watchdog.remove(check)
+        local W = Core.Watchdog
+        W.checks[check] = nil
+        if W.conn and next(W.checks) == nil then
+            W.conn:Disconnect()
+            W.conn = nil
+        end
+    end
+
+    Core.OnDestroy(function()
+        local W = Core.Watchdog
+        table.clear(W.checks)
+        if W.conn then W.conn:Disconnect() W.conn = nil end
+    end)
+
     function Features.CreateTargetBoost(parent, cfg)
         local row = Core.CreateToggleWithBox(parent, cfg.title, { max = cfg.max })
         local badge = Core.CreateStatusBadge(row)
@@ -1008,7 +1046,7 @@ return function(ctx)
         local active = false
         local applying = false                                     -- true while we write: our own writes are not "the game"
         local parsed = { status = "empty" }
-        local overrides = { n = 0, t = 0, pausedUntil = 0 }
+        local budget = { n = 0, t = 0 }                            -- re-applies used in the current window
         local onExternal                                           -- defined below; applyValue re-checks through it
 
         local function reparse()
@@ -1063,7 +1101,18 @@ return function(ctx)
             showActive(v)
         end
 
-        -- The game changed the value: its new value becomes the new "original" (even while we are paused, so
+        -- Takes one slot of the re-apply budget; false when this window's budget is already spent
+        local function takeBudget()
+            local now, B = os.clock(), Core.Boost
+            if now - budget.t >= B.window then
+                budget.t, budget.n = now, 0
+            end
+            if budget.n >= B.reapply then return false end
+            budget.n += 1
+            return true
+        end
+
+        -- The game changed the value: its new value becomes the new "original" (even while the budget is spent, so
         -- turning off always gives back what the game wants right now), then we apply ours again
         function onExternal(t)
             if applying or t ~= current or snaps[t] == nil then return end
@@ -1071,18 +1120,11 @@ return function(ctx)
             if not v or cfg.isApplied(t, v) then return end
 
             snaps[t] = cfg.snapshot(t)
-            local now = os.clock()
-            if now < overrides.pausedUntil then return end
-            if now - overrides.t > 1 then
-                overrides.t, overrides.n = now, 0
-            end
-            overrides.n += 1
-            if overrides.n > 30 then
-                overrides.pausedUntil = now + 1
+            if not takeBudget() then
+                -- Postponed, not dropped: the watchdog puts our value back as soon as the next window opens
                 badge.set("paused", "Overridden by game")
                 return
             end
-
             applyValue(t, v)
             showActive(v)
         end
@@ -1100,18 +1142,34 @@ return function(ctx)
         end
 
         local function attach()
-            unbind()
             local t = cfg.getTarget()
+            if t and t == current and #sigs > 0 then
+                applyTo(t)                                         -- already on this target: only make sure ours is in place
+                return
+            end
+            unbind()
             if not t then
                 badge.set("waiting", "Waiting for " .. (cfg.waitFor or "target"))
                 return
             end
+            budget.n, budget.t = 0, 0
             current = t
             applyTo(t)
             for _, prop in ipairs(cfg.props) do
                 sigs[#sigs + 1] = t:GetPropertyChangedSignal(prop):Connect(function()
                     onExternal(t)
                 end)
+            end
+        end
+
+        -- Watchdog: runs a few times per second while the feature is on
+        local function check()
+            if not active then return end
+            local t = cfg.getTarget()
+            if t ~= current then
+                attach()                                           -- the game swapped the target without an event we know
+            elseif t then
+                onExternal(t)                                      -- returns at once while our value is still in place
             end
         end
 
@@ -1125,10 +1183,12 @@ return function(ctx)
             active = true
             attach()
             if cfg.watch then watchConn = cfg.watch(attach) end
+            Core.Watchdog.add(check)
         end
 
         local function stop()
             active = false
+            Core.Watchdog.remove(check)
             if watchConn then watchConn:Disconnect() watchConn = nil end
             unbind()
             badge.set("off")
