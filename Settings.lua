@@ -1,9 +1,11 @@
 --// ============================================================================
 --//  Settings.lua  -  module cho tab "Settings" của Elysera MainUI
 --//
---//  Gồm 2 chức năng (A tách từ MainLocal.lua, B gộp từ Theme.lua):
---//    A) Anti Chat   công tắc chặn gửi tin nhắn chat (LayoutOrder = 1)
---//    B) Theme       hàng "Theme" + danh sách thả xuống để đổi bảng màu (LayoutOrder = 2)
+--//  Gồm 4 chức năng (A tách từ MainLocal.lua, B gộp từ Theme.lua, C và D thêm sau):
+--//    A) Anti Chat     công tắc chặn gửi tin nhắn chat (LayoutOrder = 1)
+--//    C) Auto Execute  công tắc nạp lại Elysera sau teleport (LayoutOrder = 2; cơ chế nằm ở core: ctx.AutoExecute)
+--//    B) Theme         hàng "Theme" + danh sách thả xuống để đổi bảng màu (LayoutOrder = 3)
+--//    D) Diagnostics   executor hỗ trợ API nào, module nạp từ đâu, Copy report, Unload (LayoutOrder = 4)
 --//
 --//  Đặt file này cạnh các module khác (Script.lua, Status_Server.lua, Local.lua, FPS.lua).
 --//  MainLocal.lua nạp bằng readModule("Settings.lua") + init({...}) ở CUỐI (sau FPS TAB), để lần áp theme
@@ -45,6 +47,10 @@ return function(D)
     local new, corner, stroke, padding = D.new, D.corner, D.stroke, D.padding
     local list, label, tween, pressScale = D.list, D.label, D.tween, D.pressScale
     local CreateToggleOption = D.CreateToggleOption
+    local CreateInfoRow, CreateStyledButton = D.CreateInfoRow, D.CreateStyledButton
+    local flashButtonFeedback = D.flashButtonFeedback
+    local UI, Loader, AutoExec = D.UI, D.Loader or {}, D.AutoExecute
+    local requestClose = D.requestClose
 
     local EASE_QUAD, EASE_BACK = D.EASE_QUAD, D.EASE_BACK
     local DIR_IN, DIR_OUT      = D.DIR_IN, D.DIR_OUT
@@ -282,11 +288,84 @@ return function(D)
             AccentPink = "1AFF9C", AccentPurple = "19D3FF", Sakura = "B6FFE0", Text = "CFF7E2", SubText = "7FBF9F",
             Danger = "FF5577", ToggleTrackOff = "1F4A30", ToggleKnobOn = "03110A",
         } },
-        -- 10. Porcelain Day: trắng lavender, nhấn hồng–violet (theme sáng duy nhất)
+        -- 10. Porcelain Day: trắng lavender, nhấn hồng–violet (theme sáng đầu tiên)
         { id = "porcelain", name = "Porcelain Day", mode = "light", colors = {
             Background = "F5F1FB", Panel = "FBF9FE", PanelAlt = "ECE6F7", Header = "DFD5F1", Border = "B9A7DB",
             AccentPink = "C0267A", AccentPurple = "9A74F8", Sakura = "8E0F50", Text = "2D1B4E", SubText = "65558A",
             Danger = "BE1F43", ToggleTrackOff = "CDC1E4", ToggleKnobOn = "FFFFFF",
+        } },
+        -- ===== Nhóm theme bổ sung (11-22): 7 tối + 5 sáng, phối màu hiện đại =====
+        -- 11. Aurora Veil: đen chàm sâu, nhấn mint → tím cực quang; núm ON tối
+        { id = "aurora", name = "Aurora Veil", mode = "dark", colors = {
+            Background = "0D0E1E", Panel = "0F1022", PanelAlt = "121329", Header = "191B3B", Border = "323776",
+            AccentPink = "4DF0C2", AccentPurple = "8F7CFF", Sakura = "C9FFEF", Text = "E3E9FF", SubText = "9BA7D8",
+            Danger = "FF6F91", ToggleTrackOff = "292D60", ToggleKnobOn = "08101C",
+        } },
+        -- 12. Cyber Neon: đen tím, nhấn magenta + cyan điện, chữ chọn vàng chanh; núm ON tối
+        { id = "cyber", name = "Cyber Neon", mode = "dark", colors = {
+            Background = "0E091D", Panel = "100A21", PanelAlt = "140D29", Header = "1D133C", Border = "3E2880",
+            AccentPink = "FF2E97", AccentPurple = "00E5FF", Sakura = "FFE45E", Text = "EFE9FF", SubText = "A99BD6",
+            Danger = "FF5A36", ToggleTrackOff = "35226D", ToggleKnobOn = "0B0716",
+        } },
+        -- 13. Royal Gold: chàm hoàng gia, nhấn vàng + cam san hô; núm ON tối
+        { id = "royal", name = "Royal Gold", mode = "dark", colors = {
+            Background = "101023", Panel = "111227", PanelAlt = "15152E", Header = "1C1E3F", Border = "343674",
+            AccentPink = "F5C451", AccentPurple = "F08A5D", Sakura = "FFE8A8", Text = "ECEBFA", SubText = "A7A6CF",
+            Danger = "FF6B7D", ToggleTrackOff = "2B2C5F", ToggleKnobOn = "100E1F",
+        } },
+        -- 14. Obsidian OLED: gần đen tuyền (hợp màn OLED), nhấn xanh điện + tím UV
+        { id = "oled", name = "Obsidian OLED", mode = "dark", colors = {
+            Background = "07080B", Panel = "0A0C10", PanelAlt = "0E1117", Header = "161B25", Border = "34405A",
+            AccentPink = "4C8DFF", AccentPurple = "A15CFF", Sakura = "C4DAFF", Text = "E6ECF7", SubText = "97A3BA",
+            Danger = "FF5E7A", ToggleTrackOff = "2A3348", ToggleKnobOn = "FFFFFF",
+        } },
+        -- 15. Matcha Moss: rêu ô liu sẫm, nhấn xanh matcha + xanh lá; núm ON tối
+        { id = "matcha", name = "Matcha Moss", mode = "dark", colors = {
+            Background = "14180F", Panel = "171B10", PanelAlt = "1C2114", Header = "2A311E", Border = "4C5936",
+            AccentPink = "B8E04A", AccentPurple = "6FCB7A", Sakura = "E4F7B0", Text = "E6EBD6", SubText = "A2AE8A",
+            Danger = "FF7B63", ToggleTrackOff = "3E492D", ToggleKnobOn = "0D1108",
+        } },
+        -- 16. Rose Gold Noir: than ấm, nhấn vàng hồng + mauve; núm ON tối
+        { id = "rosegold", name = "Rose Gold Noir", mode = "dark", colors = {
+            Background = "1E1715", Panel = "211917", PanelAlt = "271E1B", Header = "362926", Border = "5A453F",
+            AccentPink = "E9A68C", AccentPurple = "C98BA0", Sakura = "FFD9C9", Text = "F3E3DD", SubText = "BE9F98",
+            Danger = "F0605D", ToggleTrackOff = "4B3A34", ToggleKnobOn = "1A0F0D",
+        } },
+        -- 17. Dusk Pastel: xám tím chiều tà, nhấn pastel hồng + xanh trời; núm ON tối
+        { id = "dusk", name = "Dusk Pastel", mode = "dark", colors = {
+            Background = "1D1D2B", Panel = "1F1F2E", PanelAlt = "232334", Header = "2D2D43", Border = "4B4B71",
+            AccentPink = "F2A7C8", AccentPurple = "8DB8FF", Sakura = "FFD6E8", Text = "E4E6F8", SubText = "A9ADCF",
+            Danger = "FF8A8A", ToggleTrackOff = "3F3F5F", ToggleKnobOn = "15162A",
+        } },
+        -- 18. Latte Cream: kem sữa ấm, nhấn caramel + cà phê (theme sáng)
+        { id = "latte", name = "Latte Cream", mode = "light", colors = {
+            Background = "F6F1E9", Panel = "FBF8F4", PanelAlt = "F2E9DE", Header = "EADDCC", Border = "C6AC8B",
+            AccentPink = "A4561C", AccentPurple = "B8742A", Sakura = "5E2F0E", Text = "3A2618", SubText = "75604C",
+            Danger = "B3261E", ToggleTrackOff = "D7C5AD", ToggleKnobOn = "FFFFFF",
+        } },
+        -- 19. Mint Breeze: trắng bạc hà, nhấn ngọc bích + xanh ngọc (theme sáng)
+        { id = "mint", name = "Mint Breeze", mode = "light", colors = {
+            Background = "EDF7F3", Panel = "F8FCFA", PanelAlt = "E3F2EC", Header = "D1EAE0", Border = "9CC9B6",
+            AccentPink = "0A7F62", AccentPurple = "119A88", Sakura = "07533F", Text = "12302A", SubText = "4B6B60",
+            Danger = "C0304B", ToggleTrackOff = "C3DFD3", ToggleKnobOn = "FFFFFF",
+        } },
+        -- 20. Sky Cloud: trắng trời, nhấn xanh azure (theme sáng)
+        { id = "sky", name = "Sky Cloud", mode = "light", colors = {
+            Background = "EBF2F9", Panel = "F7FAFD", PanelAlt = "DFE9F6", Header = "CBDCF0", Border = "9FBADB",
+            AccentPink = "1B66E3", AccentPurple = "4F7DF0", Sakura = "0B3A8A", Text = "112440", SubText = "4A6286",
+            Danger = "C4283F", ToggleTrackOff = "C4D4E9", ToggleKnobOn = "FFFFFF",
+        } },
+        -- 21. Rose Quartz: trắng phớt hồng, nhấn mâm xôi (theme sáng)
+        { id = "quartz", name = "Rose Quartz", mode = "light", colors = {
+            Background = "FAEFF2", Panel = "FEFBFC", PanelAlt = "F6E4E9", Header = "F0D0D8", Border = "DAA9B6",
+            AccentPink = "C2255C", AccentPurple = "E0558A", Sakura = "7D1237", Text = "3A1220", SubText = "7A4A5B",
+            Danger = "C2410C", ToggleTrackOff = "E8C9D1", ToggleKnobOn = "FFFFFF",
+        } },
+        -- 22. Paper Ink: giấy trung tính, nhấn mực than chì (theme sáng đơn sắc)
+        { id = "paper", name = "Paper Ink", mode = "light", colors = {
+            Background = "F1F1F3", Panel = "FAFAFA", PanelAlt = "E9E9EC", Header = "DCDCE0", Border = "B5B5C0",
+            AccentPink = "2B2B33", AccentPurple = "6B6B78", Sakura = "0C0C10", Text = "1D1D24", SubText = "5E5E6B",
+            Danger = "C62828", ToggleTrackOff = "CDCDD5", ToggleKnobOn = "FFFFFF",
         } },
     }
 
@@ -928,7 +1007,7 @@ return function(D)
     local function createThemeRow()
         Row = new("Frame", {
             Name = "ThemeRow",
-            LayoutOrder = 2, -- ngay dưới Anti Chat (LayoutOrder = 1)
+            LayoutOrder = 3, -- dưới Anti Chat (1) và Auto Execute (2); Diagnostics là 4
             Size = UDim2.new(1, 0, 0, 50),
             BackgroundColor3 = Theme.Panel,
             BorderSizePixel = 0,
@@ -1022,6 +1101,215 @@ return function(D)
         refreshItems()
     end)
     if not okUI then warn("[Elysera/Theme] Không dựng được hàng Theme: " .. tostring(errUI)) end
+
+    --// =====================================================================
+    --// PHẦN C. AUTO EXECUTE  (cơ chế nằm ở core: ctx.AutoExecute; ở đây chỉ dựng công tắc)
+    --// =====================================================================
+    if AutoExec and CreateToggleOption then
+        local okC, errC = pcall(function()
+            local reason = AutoExec.reason()
+            local startOn = AutoExec.isOn() and reason == nil
+            local Switch, setState, toggleApi = CreateToggleOption(Tab, "Auto Execute", 56, { initial = startOn })
+            local Row = Switch.Parent
+            Row.LayoutOrder = 2
+
+            -- tiêu đề + dòng phụ (hàng cao 56 để chứa 2 dòng)
+            for _, child in ipairs(Row:GetChildren()) do
+                if child:IsA("TextLabel") and child.Text == "Auto Execute" then
+                    child.Position = UDim2.fromOffset(14, 8)
+                    child.Size = UDim2.new(1, -80, 0, 22)
+                end
+            end
+            local Sub = label(Row, {
+                Position = UDim2.fromOffset(14, 31),
+                Size = UDim2.new(1, -80, 0, 16),
+                Font = Enum.Font.Gotham,
+                TextSize = 11,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextColor3 = Theme.SubText,
+                Text = "",
+            })
+            local function showReason(why)
+                if why then
+                    Sub.Text = "Not supported: " .. why
+                    Sub.TextColor3 = Theme.Danger
+                else
+                    Sub.Text = "Reload Elysera after teleport (Server Hop, Rejoin)"
+                    Sub.TextColor3 = Theme.SubText
+                end
+            end
+            showReason(reason)
+
+            toggleApi.onChanged(function(on)
+                local ok, why = AutoExec.set(on)
+                if on and not ok then
+                    showReason(why)
+                    task.defer(setState, false, true) -- trả công tắc về OFF (silent: không gọi lại hàm này)
+                end
+            end)
+        end)
+        if not okC then warn("[Elysera/Settings] Không dựng được Auto Execute: " .. tostring(errC)) end
+    end
+
+    --// =====================================================================
+    --// PHẦN D. DIAGNOSTICS  (executor hỗ trợ API nào, module nạp từ đâu, Copy report, Unload)
+    --// =====================================================================
+    if UI and UI.CreateSection and CreateInfoRow and CreateStyledButton then
+        local okD, errD = pcall(function()
+            local Section = UI.CreateSection(Tab, "Diagnostics", 4, {
+                subtitle = "Executor features and loaded modules",
+                collapsed = true,
+            })
+            local Body = Section.Body
+
+            local function isFn(v) return typeof(v) == "function" end
+
+            -- Danh sách này khớp đúng cách từng tính năng tự dò API (xem Status_Server / FPS / Anti Chat ở trên)
+            local caps = {
+                { title = "File access", affects = "Settings, scripts, cache",
+                  ok = D.canFS == true },
+                { title = "HTTP request", affects = "Server Hop",
+                  ok = (typeof(syn) == "table" and isFn(syn.request)) or isFn(http_request) or isFn(request)
+                      or (typeof(http) == "table" and isFn(http.request))
+                      or (typeof(fluxus) == "table" and isFn(fluxus.request)) },
+                { title = "Clipboard", affects = "Copy buttons",
+                  ok = isFn(setclipboard) or isFn(toclipboard) or isFn(set_clipboard)
+                      or (typeof(Clipboard) == "table" and isFn(Clipboard.set))
+                      or (typeof(syn) == "table" and isFn(syn.write_clipboard)) },
+                { title = "Clipboard read", affects = "Script import", ok = isFn(getclipboard) },
+                { title = "loadstring", affects = "Script run", ok = isFn(loadstring) },
+                { title = "Chat hook", affects = "Anti Chat",
+                  ok = (isFn(hookmetamethod) and isFn(getnamecallmethod) and isFn(newcclosure))
+                      or (isFn(hookfunction) and isFn(newcclosure)) },
+                { title = "Notify hook", affects = "Remove Notification",
+                  ok = isFn(hookfunction) and isFn(newcclosure) and isFn(checkcaller) },
+                { title = "FPS cap", affects = "FPS Cap", ok = isFn(setfpscap) },
+                { title = "Hidden props", affects = "FPS Profile",
+                  ok = isFn(gethiddenproperty) and isFn(sethiddenproperty) },
+                { title = "Queue on teleport", affects = "Auto Execute",
+                  ok = isFn(queue_on_teleport) or isFn(queueonteleport)
+                      or (typeof(syn) == "table" and isFn(syn.queue_on_teleport))
+                      or (typeof(fluxus) == "table" and isFn(fluxus.queue_on_teleport)) },
+            }
+
+            local execName = "Unknown"
+            if isFn(identifyexecutor) then
+                local ok, name, ver = pcall(identifyexecutor)
+                if ok and name then execName = tostring(name) .. (ver and (" " .. tostring(ver)) or "") end
+            end
+
+            -- Hàng: tiêu đề (+ "· phần bị ảnh hưởng" màu phụ) bên trái, giá trị bên phải
+            local function addRow(title, affects)
+                local Frame = CreateInfoRow(Body, title)
+                local Left = Frame:FindFirstChild("Left")
+                if Left then
+                    Left.Size = UDim2.new(1, -158, 1, 0) -- Value chiếm 150px bên phải
+                    if affects then
+                        label(Left, {
+                            LayoutOrder = 2,
+                            Size = UDim2.new(0, 0, 1, 0),
+                            AutomaticSize = Enum.AutomaticSize.X,
+                            Text = "· " .. affects,
+                            Font = Enum.Font.Gotham,
+                            TextSize = 12,
+                            TextXAlignment = Enum.TextXAlignment.Left,
+                            TextColor3 = Theme.SubText,
+                        })
+                    end
+                end
+                local Value = label(Frame, {
+                    AnchorPoint = Vector2.new(1, 0.5),
+                    Position = UDim2.new(1, 0, 0.5, 0),
+                    Size = UDim2.fromOffset(150, 24),
+                    Text = "--",
+                    TextSize = 15,
+                    TextXAlignment = Enum.TextXAlignment.Right,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    TextColor3 = Theme.AccentPink,
+                })
+                return Frame, Value
+            end
+
+            local _, execValue = addRow("Executor")
+            execValue.Text = execName
+
+            for _, cap in ipairs(caps) do
+                local _, value = addRow(cap.title, cap.affects)
+                value.Text = cap.ok and "Yes" or "No"
+                value.TextColor3 = cap.ok and Theme.AccentPink or Theme.Danger
+            end
+
+            -- Module nạp từ đâu (web = bản mới tải về, cache = bản lưu lần chạy tốt gần nhất, error = không nạp được)
+            local _, modValue = addRow("Modules", "web / cache / error")
+            local function refreshModules()
+                local web, cache, err = 0, 0, 0
+                for _, file in ipairs(Loader.files or {}) do
+                    local src = Loader.sources and Loader.sources[file]
+                    if src == "web" then web += 1 elseif src == "cache" then cache += 1 elseif src == "error" then err += 1 end
+                end
+                local parts = {}
+                if web > 0 then parts[#parts + 1] = web .. " web" end
+                if cache > 0 then parts[#parts + 1] = cache .. " cache" end
+                if err > 0 then parts[#parts + 1] = err .. " error" end
+                modValue.Text = (#parts > 0) and table.concat(parts, ", ") or "--"
+                modValue.TextColor3 = (err > 0 and Theme.Danger) or (cache > 0 and Theme.AccentPurple) or Theme.AccentPink
+            end
+            refreshModules()
+            -- Settings được nạp cuối cùng nên lúc dựng chưa tính chính nó: cập nhật lại khi mở tab
+            Tab:GetPropertyChangedSignal("Visible"):Connect(function()
+                if Tab.Visible then refreshModules() end
+            end)
+
+            -- Báo cáo để gửi khi cần hỗ trợ (không chứa JobId / UserId)
+            local function buildReport()
+                local out = { "Elysera diagnostics", "Executor: " .. execName }
+                for _, cap in ipairs(caps) do
+                    out[#out + 1] = cap.title .. ": " .. (cap.ok and "yes" or "no")
+                end
+                local src = {}
+                for _, file in ipairs(Loader.files or {}) do
+                    src[#src + 1] = file .. "=" .. tostring(Loader.sources and Loader.sources[file] or "?")
+                end
+                out[#out + 1] = "Modules (" .. tostring(Loader.ref or "?") .. "): " .. table.concat(src, ", ")
+                out[#out + 1] = "GUI root: " .. GuiRoot.Name
+                out[#out + 1] = "PlaceId: " .. tostring(game.PlaceId)
+                return table.concat(out, "\n")
+            end
+
+            local CopyFrame = CreateInfoRow(Body, "Copy report")
+            local CopyBtn = CreateStyledButton(CopyFrame, "Copy", 70)
+            CopyBtn.MouseButton1Click:Connect(function()
+                if isLocked() then return end
+                local ok = UI.CopyText(buildReport())
+                flashButtonFeedback(CopyBtn, "Copy", ok and "Copied" or "Failed", not ok)
+            end)
+
+            if requestClose then
+                local UnloadFrame = CreateInfoRow(Body, "Unload Elysera")
+                local UnloadLeft = UnloadFrame:FindFirstChild("Left")
+                if UnloadLeft then
+                    label(UnloadLeft, {
+                        LayoutOrder = 2,
+                        Size = UDim2.new(0, 0, 1, 0),
+                        AutomaticSize = Enum.AutomaticSize.X,
+                        Text = "· also turns Auto Execute off",
+                        Font = Enum.Font.Gotham,
+                        TextSize = 12,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        TextColor3 = Theme.SubText,
+                    })
+                end
+                local UnloadBtn = CreateStyledButton(UnloadFrame, "Unload", 80)
+                UnloadBtn.TextColor3 = Theme.Danger
+                UnloadBtn.MouseButton1Click:Connect(function()
+                    if isLocked() then return end
+                    requestClose() -- cùng hộp thoại "Close script" với nút đóng trên thanh trên
+                end)
+            end
+        end)
+        if not okD then warn("[Elysera/Settings] Không dựng được Diagnostics: " .. tostring(errD)) end
+    end
 
     ScreenGui.Destroying:Connect(function() closeList(true) end)
 

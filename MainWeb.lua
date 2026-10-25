@@ -337,6 +337,7 @@ local function saveSettings()
             toggle = { t.X.Scale, t.X.Offset, t.Y.Scale, t.Y.Offset },
             fpsMode = ScreenGui:GetAttribute("FpsMode"), -- mode FPS Profile đã chọn (không tự áp khi nạp)
             theme = ScreenGui:GetAttribute("Theme") or Saved.theme, -- id theme đang dùng (Settings.lua tự áp khi nạp)
+            autoExecute = Saved.autoExecute == true, -- Auto Execute (xem mục AUTO EXECUTE); mã queue_on_teleport đọc lại khoá này ở server mới
         }
         pcall(writefile, dataPath(SAVE_FILE), HttpService:JSONEncode(data))
     end)
@@ -1051,9 +1052,15 @@ CloseBtn.MouseButton1Click:Connect(function()
     if uiLocked then return end
     CloseDialog.show()
 end)
-CloseDialog.Yes.MouseButton1Click:Connect(function()
+-- Đóng script = gỡ hẳn: tắt luôn Auto Execute để script không tự quay lại sau lần teleport kế tiếp
+local function unloadUI()
+    if Saved.autoExecute == true then
+        Saved.autoExecute = false
+        saveSettings()
+    end
     ScreenGui:Destroy()
-end)
+end
+CloseDialog.Yes.MouseButton1Click:Connect(unloadUI)
 
 --// ---- Reset ----
 local function resetLayout()
@@ -1665,6 +1672,17 @@ do
         return s
     end
 
+    -- Ghi chuỗi vào clipboard bằng hàm của executor (mỗi executor một tên). Trả về true nếu ghi được
+    function UI.CopyText(text)
+        local fn = (typeof(setclipboard) == "function" and setclipboard)
+            or (typeof(toclipboard) == "function" and toclipboard)
+            or (typeof(set_clipboard) == "function" and set_clipboard)
+            or (typeof(Clipboard) == "table" and typeof(Clipboard.set) == "function" and Clipboard.set)
+            or (typeof(syn) == "table" and typeof(syn.write_clipboard) == "function" and syn.write_clipboard)
+        if not fn then return false end
+        return (pcall(fn, text))
+    end
+
     -- Mũi tên xuống vẽ bằng hai thanh xoay ±45° (xoay Holder: 0 = xuống, -90 = sang phải)
     -- Trả về: Holder, setColor(color)
     function UI.CreateChevron(parent, props, color, len, thick)
@@ -1859,17 +1877,29 @@ end
 --   * Không có bản dự phòng thì tab hiện thẻ lỗi kèm nút Retry thay vì để trống.
 -- Mọi helper của bộ nạp nằm gọn trong khối do...end bên dưới (đỡ tốn biến local của chunk chính, giới hạn 200);
 -- bên ngoài chỉ còn mountModule.
+-- Thông tin bộ nạp đưa cho module qua ctx.Loader:
+--   ref, files, bootUrl / bootCode (Auto Execute dùng để nạp lại Elysera sau teleport),
+--   sources[file] = "web" | "cache" | "error" (Diagnostics ở tab Settings hiển thị)
+local Loader = { sources = {} }
 local mountModule
 do
     local MODULE_BASE    = "https://raw.githubusercontent.com/MinzTogether/Universal-Script/"
     local MODULE_REF     = "refs/heads/main"
     local MODULE_FILES   = { "Status_Server.lua", "Local.lua", "Script.lua", "FPS.lua", "Settings.lua" }
     local MODULE_TIMEOUT = 20 -- tổng số giây chờ tối đa để tải xong các module
+    -- File chính (chính file này) trong cùng repo + ref. Auto Execute nạp lại nó sau mỗi lần teleport:
+    -- nếu bạn đặt file ở chỗ khác, sửa BOOT_FILE (hoặc Loader.bootCode bên dưới) cho đúng.
+    local BOOT_FILE      = "MainWeb.lua"
 
     local MODULE_URLS = {}
     for _, file in ipairs(MODULE_FILES) do
         MODULE_URLS[file] = MODULE_BASE .. MODULE_REF .. "/" .. file
     end
+
+    Loader.ref = MODULE_REF
+    Loader.files = MODULE_FILES
+    Loader.bootUrl = MODULE_BASE .. MODULE_REF .. "/" .. BOOT_FILE
+    Loader.bootCode = ("loadstring(game:HttpGet(%q))()"):format(Loader.bootUrl)
 
     -- Tải nội dung một URL: ưu tiên game:HttpGet, dự phòng request / http_request / syn.request
     local function httpGet(url)
@@ -1963,13 +1993,6 @@ do
         end
     end
 
-    local function copyText(text)
-        local fn = (typeof(setclipboard) == "function" and setclipboard)
-            or (typeof(toclipboard) == "function" and toclipboard)
-        if not fn then return false end
-        return (pcall(fn, text))
-    end
-
     -- Thẻ lỗi trong tab: lý do + nút Retry (tải lại và dựng lại tab) + nút Copy error
     local function showModuleError(tab, file, message, retry)
         local text = tostring(message)
@@ -2008,7 +2031,7 @@ do
 
         CopyBtn.MouseButton1Click:Connect(function()
             if uiLocked then return end
-            local ok = copyText(file .. ": " .. tostring(message))
+            local ok = UI.CopyText(file .. ": " .. tostring(message))
             flashButtonFeedback(CopyBtn, "Copy error", ok and "Copied" or "Failed", not ok)
         end)
 
@@ -2043,6 +2066,7 @@ do
 
         if fresh and attempt(fresh, "bản tải mới") then
             if readCache(file) ~= fresh then writeCache(file, fresh) end -- chỉ lưu bản đã chạy tốt
+            Loader.sources[file] = "web"
             return true
         end
 
@@ -2051,6 +2075,7 @@ do
             clearTab(tab) -- bỏ phần dựng dở của bản mới
             if attempt(cached, "bản cache") then
                 warn(("[Elysera] %s: dùng bản lưu của lần chạy tốt gần nhất (%s)"):format(file, problems[1] or "?"))
+                Loader.sources[file] = "cache"
                 return true
             end
         end
@@ -2058,11 +2083,78 @@ do
         clearTab(tab)
         local message = table.concat(problems, " | ")
         warn("[Elysera] Không nạp được " .. file .. ": " .. message)
+        Loader.sources[file] = "error"
         showModuleError(tab, file, message, function()
             clearTab(tab)
             mountModule(file, tab, build, true)
         end)
         return false
+    end
+end
+
+--// ================= AUTO EXECUTE (nạp lại Elysera sau teleport) =================
+-- queue_on_teleport xếp một đoạn mã chạy ở server kế tiếp sau khi teleport (Server Hop, Rejoin, Spam Join...).
+-- Đoạn mã đó đọc lại file cấu hình và chỉ nạp Elysera khi công tắc vẫn đang BẬT, nên tắt công tắc có hiệu lực
+-- ngay cả khi mã đã được xếp hàng. Mỗi lần Elysera nạp xong ở server mới sẽ tự xếp hàng lại (cần file cấu hình
+-- để nhớ công tắc). Cơ chế nằm ở lõi để vẫn chạy kể cả khi tab Settings nạp lỗi; Settings.lua chỉ dựng công tắc.
+local AutoExec = {}
+do
+    local queued = false -- mỗi phiên chỉ xếp hàng một lần (tránh nhân đôi mã nếu bật/tắt nhiều lần)
+
+    local function queueFn()
+        return (typeof(queue_on_teleport) == "function" and queue_on_teleport)
+            or (typeof(queueonteleport) == "function" and queueonteleport)
+            or (typeof(syn) == "table" and typeof(syn.queue_on_teleport) == "function" and syn.queue_on_teleport)
+            or (typeof(fluxus) == "table" and typeof(fluxus.queue_on_teleport) == "function" and fluxus.queue_on_teleport)
+            or nil
+    end
+
+    -- nil nếu dùng được, ngược lại là lý do ngắn
+    function AutoExec.reason()
+        if not queueFn() then return "no queue_on_teleport" end
+        if not canFS then return "needs file access" end
+        if type(Loader.bootCode) ~= "string" then return "no boot script" end
+        return nil
+    end
+
+    function AutoExec.supported() return AutoExec.reason() == nil end
+    function AutoExec.isOn() return Saved.autoExecute == true end
+
+    -- Mã chạy ở server mới. __ElyseraBoot chống chạy hai lần trong cùng một server (executor giữ hàng đợi lâu)
+    local function payload()
+        return ([[
+if not game:IsLoaded() then game.Loaded:Wait() end
+local env = getgenv and getgenv() or _G
+if env.__ElyseraBoot == game.JobId then return end
+local ok, data = pcall(function()
+    return game:GetService("HttpService"):JSONDecode(readfile(%q))
+end)
+if ok and type(data) == "table" and data.autoExecute == true then
+    env.__ElyseraBoot = game.JobId
+    local okRun, err = pcall(function() %s end)
+    if not okRun then warn("[Elysera] Auto Execute failed: " .. tostring(err)) end
+end]]):format(dataPath(SAVE_FILE), Loader.bootCode)
+    end
+
+    function AutoExec.queue()
+        if queued then return true end
+        local fn = queueFn()
+        if not fn or AutoExec.reason() then return false end
+        queued = (pcall(fn, payload()))
+        return queued
+    end
+
+    -- Bật/tắt và lưu. Trả về true, hoặc false + lý do khi executor không hỗ trợ
+    function AutoExec.set(on)
+        on = on and true or false
+        if on then
+            local why = AutoExec.reason()
+            if why then return false, why end
+        end
+        Saved.autoExecute = on
+        saveSettings()
+        if on then AutoExec.queue() end
+        return true
     end
 end
 
@@ -2094,7 +2186,11 @@ do
         CreateCard = CreateCard, CreateInfoRow = CreateInfoRow, CreateStyledButton = CreateStyledButton,
         CreateToggleOption = CreateToggleOption, flashButtonFeedback = flashButtonFeedback,
         flashStrokeError = flashStrokeError, bindBoxFocus = bindBoxFocus, guarded = guarded,
-        UI = UI,
+        UI = UI, Loader = Loader, AutoExecute = AutoExec,
+        requestClose = function() -- mở hộp thoại "Close script" (cùng luồng với nút đóng trên thanh trên)
+            if uiLocked then return end
+            CloseDialog.show()
+        end,
         isOpen = function() return isOpen end,
         isLocked = function() return uiLocked end,
         setLocked = function(v) uiLocked = v end,
@@ -2133,15 +2229,17 @@ mountModule("FPS.lua", FPSTab, function(init)
 end)
 
 --// ================= SETTINGS TAB =================
--- Code của tab nằm ở file riêng, nạp từ GitHub: Settings.lua (Anti Chat + Theme)
--- Nạp CUỐI CÙNG để lần áp theme đầu tiên (theme đã lưu) bao trùm cả các tab ở trên,
--- và hàng "Theme" nằm ngay dưới Anti Chat (LayoutOrder = 2).
+-- Code của tab nằm ở file riêng, nạp từ GitHub: Settings.lua (Anti Chat, Auto Execute, Theme, Diagnostics)
+-- Nạp CUỐI CÙNG để lần áp theme đầu tiên (theme đã lưu) bao trùm cả các tab ở trên.
 -- Không tải được hoặc lỗi -> tab Settings hiện thẻ lỗi (Retry), UI vẫn chạy bằng theme mặc định.
 -- Module trả về API Theme (ThemeAPI khai báo sẵn ở phần OPEN / CLOSE để closeUI dùng)
 mountModule("Settings.lua", SettingsTab, function(init)
     ThemeAPI = init(makeCtx(SettingsTab))
     if Elysera then Elysera.Themes = ThemeAPI.Themes end -- chỉ xảy ra khi Retry (lần nạp đầu Elysera chưa tồn tại)
 end)
+
+-- Lần trước đã bật Auto Execute: xếp hàng ngay (kể cả khi tab Settings nạp lỗi)
+if AutoExec.isOn() and AutoExec.supported() then AutoExec.queue() end
 
 --// ================= EXPOSED API =================
 Elysera = {
@@ -2153,6 +2251,8 @@ Elysera = {
     CreateToggleOption = CreateToggleOption,
     CreateSectionLabel = CreateSectionLabel,
     SelectTab = selectTab,
+    Unload = unloadUI,       -- gỡ hẳn Elysera (giống nút đóng script) và tắt Auto Execute
+    AutoExecute = AutoExec,  -- supported() / isOn() / set(on) / reason()
 
     -- Theme (do Settings.lua cung cấp; nếu module không nạp được thì SetTheme trả về false)
     Themes = ThemeAPI and ThemeAPI.Themes or {},

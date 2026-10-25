@@ -1,6 +1,13 @@
 --// ================= STATUS & SERVER TAB (module) =================
 -- File này được script chính (MainLocal.lua / MainWeb.lua) nạp vào và gọi với 1 bảng ctx
 -- chứa các hàm/biến dùng chung của UI.
+--
+-- Công cụ server:
+--   * Join JobId   : ô nhập nhận JobId trần hoặc link có gameInstanceId (roblox://..., https://www.roblox.com/games/...)
+--   * Copy Join Link, Rejoin Server
+--   * Previous Server : quay lại server gần nhất đã có Elysera chạy (lịch sử lưu trong Elysera_Servers.json;
+--                       bật Auto Execute ở Settings để Elysera tự chạy lại và ghi tiếp sau mỗi lần teleport)
+--   * Server Hop / Less People / Best Ping (ping và fps do API danh sách server trả kèm)
 
 return function(ctx)
     local StatusServerTab     = ctx.Tab
@@ -28,6 +35,8 @@ return function(ctx)
     local bindBoxFocus        = ctx.bindBoxFocus
     local guarded             = ctx.guarded
     local isLocked            = ctx.isLocked -- thay cho biến uiLocked của file chính
+    local canFS               = ctx.canFS == true
+    local dataPath            = ctx.dataPath or function(name) return name end
 
     --// ---------- Cấu hình ----------
     local SPAM_JOIN_DELAY  = 1.5  -- giây giữa 2 lần Spam Join (tự tăng khi bị lỗi liên tiếp)
@@ -59,6 +68,26 @@ return function(ctx)
             and jobId:match("^%x+%-%x+%-%x+%-%x+%-%x+$") ~= nil
     end
 
+    -- Ô Join chấp nhận JobId trần hoặc link có gameInstanceId:
+    --   roblox://experiences/start?placeId=123&gameInstanceId=<JobId>
+    --   https://www.roblox.com/games/start?placeId=123&gameInstanceId=<JobId>
+    --   https://www.roblox.com/games/123/Ten-Game?gameInstanceId=<JobId>   (cả dạng đã mã hoá %3D, %26...)
+    -- Trả về jobId, placeId (nil nếu link không nêu), hoặc nil, nil, lý do ("Invalid" | "Private")
+    local function parseJoinInput(raw)
+        if type(raw) ~= "string" then return nil, nil, "Invalid" end
+        local text = raw:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
+        text = text:gsub("[%s\"']", ""):lower()
+        if text == "" then return nil, nil, "Invalid" end
+        if isValidJobId(text) then return text, nil end
+        -- link server riêng tư đi bằng mã, không có JobId để teleport trực tiếp
+        if text:find("privateserverlinkcode=", 1, true) then return nil, nil, "Private" end
+
+        local jobId = text:match("gameinstanceid=([%x%-]+)")
+        if not isValidJobId(jobId) then return nil, nil, "Invalid" end
+        local placeId = text:match("placeid=(%d+)") or text:match("/games/(%d+)")
+        return jobId, tonumber(placeId)
+    end
+
     --// ---------- Trạng thái teleport dùng chung ----------
     -- teleportPending = true khi vừa gọi teleport và chưa biết kết quả.
     -- Nếu thành công, client sẽ rời server (script dừng); nếu thất bại,
@@ -87,16 +116,73 @@ return function(ctx)
         failedConn:Disconnect()
     end)
 
-    -- Trả về ok, lý do (ngắn, vừa nút 70px)
-    local function joinServer(jobId)
+    -- Trả về ok, lý do (ngắn, vừa nút 70px). placeId = nil: dùng place hiện tại
+    local function joinServer(jobId, placeId)
         if not isValidJobId(jobId) then return false, "Invalid" end
         if jobId == game.JobId then return false, "Same" end
         if teleportPending then return false, "Busy" end
-        local ok = pcall(TeleportService.TeleportToPlaceInstance, TeleportService, game.PlaceId, jobId, LocalPlayer)
+        local ok = pcall(TeleportService.TeleportToPlaceInstance, TeleportService, placeId or game.PlaceId, jobId, LocalPlayer)
         if not ok then return false, "Failed" end
         markPending()
         return true
     end
+
+    --// ---------- Lịch sử server (cho "Previous Server") ----------
+    -- Mỗi lần Elysera chạy ở một server thì ghi lại (place, JobId, thời điểm) vào file để còn nhớ sau khi teleport.
+    local HISTORY_FILE, HISTORY_MAX = "Elysera_Servers.json", 10
+    local history = {} -- mới nhất trước: { place = number, id = string, t = os.time() }
+
+    local function loadHistory()
+        if not canFS then return end
+        local ok, data = pcall(function()
+            local path = dataPath(HISTORY_FILE)
+            if isfile(path) then return HttpService:JSONDecode(readfile(path)) end
+        end)
+        if not (ok and type(data) == "table" and type(data.history) == "table") then return end
+        for _, e in ipairs(data.history) do
+            if type(e) == "table" and type(e.place) == "number" and isValidJobId(e.id) and type(e.t) == "number" then
+                history[#history + 1] = { place = e.place, id = e.id, t = e.t }
+                if #history >= HISTORY_MAX then break end
+            end
+        end
+    end
+
+    local function saveHistory()
+        if not canFS then return end
+        pcall(function()
+            writefile(dataPath(HISTORY_FILE), HttpService:JSONEncode({ v = 1, history = history }))
+        end)
+    end
+
+    local function recordCurrentServer()
+        local id = game.JobId
+        if not isValidJobId(id) then return end
+        for i = #history, 1, -1 do
+            if history[i].id == id then table.remove(history, i) end -- một bản ghi / server, đưa lên đầu
+        end
+        table.insert(history, 1, { place = game.PlaceId, id = id, t = os.time() })
+        while #history > HISTORY_MAX do table.remove(history) end
+        saveHistory()
+    end
+
+    -- Server gần nhất của game này mà không phải server hiện tại
+    local function previousServer()
+        for _, e in ipairs(history) do
+            if e.place == game.PlaceId and e.id ~= game.JobId then return e end
+        end
+        return nil
+    end
+
+    local function formatAgo(t)
+        local d = math.max(0, os.time() - t)
+        if d < 60 then return "<1m ago" end
+        if d < 3600 then return (d // 60) .. "m ago" end
+        if d < 86400 then return (d // 3600) .. "h ago" end
+        return (d // 86400) .. "d ago"
+    end
+
+    loadHistory()
+    recordCurrentServer()
 
     --// ---------- Các dòng thông tin cập nhật liên tục ----------
     local liveRows = {}
@@ -236,7 +322,7 @@ return function(ctx)
 
         local Placeholder = label(Box, {
             Size = UDim2.fromScale(1, 1),
-            Text = "Paste your JobId here",
+            Text = "Paste a JobId or join link here",
             Font = Enum.Font.Gotham,
             TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Left,
@@ -254,8 +340,10 @@ return function(ctx)
         end)
         Box:GetPropertyChangedSignal("Text"):Connect(refreshPlaceholder)
 
-        local function getJobId()
-            return (Box.Text:gsub("[%s\"']", ""))
+        -- Trả về jobId, placeId, lý do (xem parseJoinInput); ô rỗng -> nil, nil, "Empty"
+        local function getTarget()
+            if (Box.Text:gsub("%s", "")) == "" then return nil, nil, "Empty" end
+            return parseJoinInput(Box.Text)
         end
 
         -- Join JobId
@@ -267,14 +355,14 @@ return function(ctx)
         local joinBusy = false
         JoinBtn.Activated:Connect(function()
             if isLocked() or joinBusy then return end
-            local jobId = getJobId()
-            if jobId == "" then
+            local jobId, placeId, why = getTarget()
+            if not jobId then
                 flashStrokeError(BoxStroke)
-                flashButtonFeedback(JoinBtn, "Join", "Empty", true, 0.8)
+                flashButtonFeedback(JoinBtn, "Join", why or "Invalid", true, 0.8)
                 return
             end
 
-            local ok, reason = joinServer(jobId)
+            local ok, reason = joinServer(jobId, placeId)
             if not ok then
                 if reason == "Invalid" or reason == "Same" then
                     flashStrokeError(BoxStroke)
@@ -304,8 +392,8 @@ return function(ctx)
             if not Switch:GetAttribute("Toggled") then return end
 
             -- JobId rỗng / sai / trùng server hiện tại: báo lỗi và tự tắt, không chạy vòng lặp vô ích
-            local firstId = getJobId()
-            if not isValidJobId(firstId) or firstId == game.JobId then
+            local firstId = getTarget()
+            if not firstId or firstId == game.JobId then
                 flashStrokeError(BoxStroke)
                 stopSpam()
                 return
@@ -315,15 +403,15 @@ return function(ctx)
             local myRun = runId
             task.spawn(function()
                 while Switch:GetAttribute("Toggled") and myRun == runId and ScreenGui.Parent do
-                    local jobId = getJobId()
-                    if not isValidJobId(jobId) or jobId == game.JobId then
+                    local jobId, placeId = getTarget()
+                    if not jobId or jobId == game.JobId then
                         flashStrokeError(BoxStroke)
                         stopSpam()
                         break
                     end
 
                     if not isLocked() then
-                        joinServer(jobId) -- tự bỏ qua nếu teleport trước đó chưa có kết quả
+                        joinServer(jobId, placeId) -- tự bỏ qua nếu teleport trước đó chưa có kết quả
                     end
 
                     -- lỗi liên tiếp thì giãn dần để khỏi bị Roblox giới hạn
@@ -334,6 +422,12 @@ return function(ctx)
     end
 
     CreateCopyRow(StatusServerTab, "Copy Server JobId", function() return game.JobId end, false)
+
+    -- Link mở thẳng server này (dán vào ô Join của người khác, hoặc mở bằng trình duyệt có cài Roblox)
+    CreateCopyRow(StatusServerTab, "Copy Join Link", function()
+        if game.JobId == "" then return "" end
+        return ("roblox://experiences/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
+    end, false)
 
     --// ---------- Rejoin ----------
     do
@@ -352,6 +446,39 @@ return function(ctx)
                 if ok then markPending() end
             end
             flashButtonFeedback(RejoinBtn, "Rejoin", ok and "Rejoining..." or "Failed", not ok)
+            done()
+        end))
+    end
+
+    --// ---------- Previous Server ----------
+    do
+        local Frame, Left = CreateInfoRow(StatusServerTab, "Previous Server")
+        local AgoLabel = label(Left, {
+            LayoutOrder = 2,
+            Size = UDim2.new(0, 0, 1, 0),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Text = "",
+            TextSize = 15,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextColor3 = Theme.AccentPink,
+        })
+        local function describe()
+            local prev = previousServer()
+            return prev and formatAgo(prev.t) or "--"
+        end
+        AgoLabel.Text = describe()
+        table.insert(liveRows, { Value = AgoLabel, get = describe }) -- "x ago" cập nhật cùng vòng lặp live
+
+        local Btn = CreateStyledButton(Frame, "Join", 70)
+        Btn.Activated:Connect(guarded(function(done)
+            local prev = previousServer()
+            if not prev then
+                flashButtonFeedback(Btn, "Join", "None", true, 0.8)
+                done()
+                return
+            end
+            local ok, reason = joinServer(prev.id, prev.place)
+            flashButtonFeedback(Btn, "Join", ok and "Joining..." or (reason or "Failed"), not ok)
             done()
         end))
     end
@@ -432,8 +559,23 @@ return function(ctx)
             end
         end
 
-        local function pickServers(pickLeast)
-            if pickLeast then
+        -- mode: "random" | "least" (ít người) | "ping" (ping thấp nhất)
+        local function pickServers(mode)
+            if mode == "ping" then
+                -- API danh sách server trả kèm ping và fps của từng server. Dò tối đa 5 trang (500 server, đông người
+                -- trước), bỏ server chưa có ping và server gần đầy; ping bằng nhau thì ưu tiên fps cao hơn.
+                local list, err = collectServers(2, 5, 200, function(srv)
+                    return type(srv.ping) == "number" and srv.ping > 0
+                        and srv.playing <= math.max(0, srv.maxPlayers - 2)
+                end)
+                table.sort(list, function(a, b)
+                    if a.ping ~= b.ping then return a.ping < b.ping end
+                    return (type(a.fps) == "number" and a.fps or 0) > (type(b.fps) == "number" and b.fps or 0)
+                end)
+                return list, err
+            end
+
+            if mode == "least" then
                 -- Asc: server ít người nằm ở các trang đầu. Bỏ server 0 người (thường sắp đóng).
                 local list, err = collectServers(1, 2, 20, function(srv)
                     return srv.playing >= 1
@@ -452,9 +594,9 @@ return function(ctx)
         end
 
         -- Trả về true nếu đang teleport, hoặc false + lý do ngắn
-        local function hopServer(pickLeast)
+        local function hopServer(mode)
             failedJobIds = {} -- mỗi lần bấm Hop là một lần mới: không để danh sách server lỗi tích tụ vô hạn
-            local candidates, err = pickServers(pickLeast)
+            local candidates, err = pickServers(mode)
             if #candidates == 0 then return false, err or "No server" end
 
             local tried = 0
@@ -480,13 +622,13 @@ return function(ctx)
             return false, "Failed"
         end
 
-        local function bindHopButton(title, pickLeast)
+        local function bindHopButton(title, mode)
             local Frame = CreateInfoRow(StatusServerTab, title)
             local Btn = CreateStyledButton(Frame, "Hop", 70)
             Btn.Activated:Connect(guarded(function(done)
                 flashButtonFeedback(Btn, "Hop", "Finding...", false, math.huge, Theme.SubText)
                 task.spawn(function()
-                    local ok, result, reason = pcall(hopServer, pickLeast)
+                    local ok, result, reason = pcall(hopServer, mode)
                     if ok and result then
                         flashButtonFeedback(Btn, "Hop", "Hopping...", false)
                     else
@@ -497,7 +639,8 @@ return function(ctx)
             end))
         end
 
-        bindHopButton("Server Hop", false)
-        bindHopButton("Server Hop With Less People", true)
+        bindHopButton("Server Hop", "random")
+        bindHopButton("Server Hop With Less People", "least")
+        bindHopButton("Server Hop With Best Ping", "ping")
     end
 end
