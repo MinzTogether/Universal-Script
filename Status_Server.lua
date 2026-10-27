@@ -17,6 +17,7 @@ return function(ctx)
     local LocalPlayer         = ctx.LocalPlayer
     local TeleportService     = ctx.TeleportService
     local HttpService         = ctx.HttpService
+    local UI                  = assert(ctx.UI, "Status_Server.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
     local Players             = game:GetService("Players")
     local Stats               = game:GetService("Stats")
 
@@ -54,13 +55,8 @@ return function(ctx)
         return string.format("%dh%dm%ds", seconds // 3600, seconds % 3600 // 60, seconds % 60)
     end
 
-    local function copyToClipboard(text)
-        local fn = setclipboard or toclipboard or set_clipboard
-            or (Clipboard and Clipboard.set)
-            or (syn and syn.write_clipboard)
-        if not fn then return false end
-        return (pcall(fn, text))
-    end
+    -- Shared clipboard helper from the core UI kit (tries every executor's clipboard function); true when copied
+    local copyToClipboard = UI.CopyText
 
     -- JobId của Roblox luôn có dạng GUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     local function isValidJobId(jobId)
@@ -266,26 +262,39 @@ return function(ctx)
     end)
 
     -- 1 vòng lặp duy nhất cho tất cả các dòng live (thay vì mỗi dòng 1 vòng).
-    -- Chỉ cập nhật khi UI đang mở và tab này đang hiện; mở lại UI / quay về tab này thì cập nhật ngay.
+    -- Vòng lặp chỉ chạy khi cửa sổ và tab này đang hiện (lúc ẩn không có gì thức dậy); mở lại UI / quay về tab này
+    -- thì cập nhật ngay và chạy lại vòng lặp.
+    -- Điều kiện lặp dùng thuộc tính Visible (có signal) chứ không dùng isOpen(): đóng rồi mở lại ngay trong lúc UI còn
+    -- đang mờ dần sẽ không làm vòng lặp dừng hẳn.
     -- (Core cũ không truyền isOpen -> coi như luôn mở, hành vi như trước.)
     local isOpen = ctx.isOpen or function() return true end
+    local MainUI = ctx.MainUI
     local function tabShowing()
         return isOpen() and StatusServerTab.Visible
     end
-    task.spawn(function()
-        while ScreenGui.Parent do
-            if tabShowing() then refreshLiveRows() end
-            task.wait(0.5)
-        end
-    end)
-    StatusServerTab:GetPropertyChangedSignal("Visible"):Connect(function()
-        if tabShowing() then refreshLiveRows() end
-    end)
-    if ctx.MainUI then
-        ctx.MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
-            if tabShowing() then refreshLiveRows() end
+    local function windowVisible()
+        return StatusServerTab.Visible and (not MainUI or MainUI.Visible)
+    end
+
+    local liveRun = 0
+    local function startLiveLoop()
+        liveRun += 1
+        local myRun = liveRun -- vòng lặp cũ (nếu còn) tự thoát ở lần kiểm tra kế tiếp
+        task.spawn(function()
+            while ScreenGui.Parent and myRun == liveRun and windowVisible() do
+                if isOpen() then refreshLiveRows() end
+                task.wait(0.5)
+            end
         end)
     end
+
+    local function onVisibilityChanged()
+        if tabShowing() then refreshLiveRows() end
+        if windowVisible() then startLiveLoop() end
+    end
+    StatusServerTab:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged)
+    if MainUI then MainUI:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged) end
+    onVisibilityChanged()
 
     CreateCopyRow(StatusServerTab, "PlaceID", function() return tostring(game.PlaceId) end, true)
 

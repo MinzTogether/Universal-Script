@@ -618,17 +618,13 @@ return function(ctx)
             Text = "",
         }, Winbox)
 
-        new("TextLabel", {
+        -- Arrow drawn from two rotated bars (the same chevron the other dropdowns use), centred in the arrow zone
+        UI.CreateChevron(Winbox, {
             Name = "Arrow",
-            AnchorPoint = Vector2.new(1, 0),
-            Position = UDim2.new(1, 0, 0, 0),
-            Size = UDim2.new(0, DD_ARROW_W, 1, 0),
-            BackgroundTransparency = 1,
-            Font = Enum.Font.GothamBold,
-            TextSize = 16,
-            TextColor3 = Theme.SubText,
-            Text = "▼",
-        }, Winbox)
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(1, -DD_ARROW_W / 2, 0.5, -0.5), -- half a pixel up: optically centred
+            Size = UDim2.fromOffset(12, 12),
+        }, Theme.SubText, 7, 2)
 
         local Hit = new("TextButton", {
             Name = "Hit",
@@ -721,15 +717,11 @@ return function(ctx)
     -- these strokes are meant to draw the border, so the mode is set explicitly.
     Core.BorderStroke = UI.BorderStroke   -- shared UI kit (MainWeb.lua)
 
-    local tweenInfos = {} -- duration -> TweenInfo (hover and press effects start a tween on every event)
+    -- The core tween already caches TweenInfo and tracks colour tweens for theme changes, so use it directly.
+    -- The local cache below is only a fallback for an older main script that does not pass ctx.tween.
+    local tweenInfos = {} -- duration -> TweenInfo (fallback only)
     function Core.Tween(inst, time, props)
-        if coreTween then
-            for key in pairs(props) do
-                if key == "Color" or string.sub(key, -6) == "Color3" then
-                    return coreTween(inst, time, props)
-                end
-            end
-        end
+        if coreTween then return coreTween(inst, time, props) end
         local info = tweenInfos[time]
         if not info then
             info = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)

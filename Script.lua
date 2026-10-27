@@ -80,12 +80,6 @@ return function(ctx)
     local OutputPanel, StatusLabel, SearchRow, SearchBox, EmptyLabel, ScriptDialog
     local applyListView, CreateScriptRow, fitListPanel
 
-    local function labelRef(parent, props)
-        local inst = label(parent, props)
-        if typeof(inst) == "Instance" then return inst end
-        return parent:FindFirstChild(props.Name)
-    end
-
     local function shorten(text, n)
         return #text > n and (text:sub(1, n) .. "...") or text
     end
@@ -798,8 +792,7 @@ return function(ctx)
             end
             if not pcall(writefile, fileName, json) then fileName = nil end
         end
-        local clip = setclipboard or toclipboard
-        local copied = typeof(clip) == "function" and pcall(clip, json)
+        local copied = UI.CopyText(json)
 
         if fileName then
             local tail = copied and " (copied)" or ""
@@ -974,8 +967,7 @@ return function(ctx)
 
         local function copyAll()
             if #plain == 0 then return end
-            local clip = setclipboard or toclipboard
-            if typeof(clip) == "function" and pcall(clip, table.concat(plain, "\n")) then
+            if UI.CopyText(table.concat(plain, "\n")) then
                 showToast("Output copied", "success", { duration = 1.5 })
             else
                 showToast("Clipboard is not available", "warn")
@@ -1059,7 +1051,7 @@ return function(ctx)
             ZIndex = 52,
         }, Box))
 
-        local TitleLabel = labelRef(Box, {
+        local TitleLabel = label(Box, {
             Name = "DialogTitle",
             Size = UDim2.new(1, -32, 0, 20),
             Position = UDim2.fromOffset(16, 14),
@@ -1071,7 +1063,7 @@ return function(ctx)
         })
 
         local function fieldLabel(name, text, y)
-            return labelRef(Box, {
+            return label(Box, {
                 Name = name,
                 Size = UDim2.new(1, -32, 0, 16),
                 Position = UDim2.fromOffset(16, y),
@@ -1716,7 +1708,7 @@ return function(ctx)
             TextTruncate = Enum.TextTruncate.AtEnd,
             TextColor3 = Theme.Text,
         })
-        StatusLabel = labelRef(Pinned, {
+        StatusLabel = label(Pinned, {
             Name = "SaveStatus",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -114, 0.5, 0),

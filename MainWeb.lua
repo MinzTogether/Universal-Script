@@ -141,17 +141,42 @@ end
 -- Theme: các tween có thuộc tính màu ĐANG CHẠY được ghi lại để Settings.lua (phần Theme) chốt chúng về màu đích của theme mới
 -- khi đổi theme giữa chừng (nếu không, tween sẽ kéo thuộc tính về màu theme cũ lúc kết thúc).
 local liveColorTweens = setmetatable({}, { __mode = "k" }) -- [tween] = { inst, props }
-local function tween(inst, time, props, style, dir)
-    local t = TweenService:Create(inst, TweenInfo.new(time, style or EASE_QUAD, dir or DIR_OUT), props)
-    for k in pairs(props) do
-        if k == "Color" or string.sub(k, -6) == "Color3" then
-            liveColorTweens[t] = { inst, props }
-            t.Completed:Once(function() liveColorTweens[t] = nil end)
-            break
+local tween
+do
+    -- TweenInfo không đổi sau khi tạo nên dùng chung 1 đối tượng cho mỗi bộ (style, direction, duration).
+    -- Hiệu ứng hover/nhấn tạo tween ở MỌI sự kiện; cache này tránh cấp phát TweenInfo mới mỗi lần.
+    local infoCache, infoCount = {}, 0 -- [style][direction][duration] = TweenInfo
+    local function infoFor(time, style, dir)
+        local byStyle = infoCache[style]
+        if not byStyle then byStyle = {}; infoCache[style] = byStyle end
+        local byDir = byStyle[dir]
+        if not byDir then byDir = {}; byStyle[dir] = byDir end
+        local info = byDir[time]
+        if not info then
+            if infoCount >= 128 then -- thời lượng tính lúc chạy có thể làm cache phình mãi: quá ngưỡng thì xóa làm lại
+                infoCache, infoCount = {}, 0
+                byDir = {}
+                infoCache[style] = { [dir] = byDir }
+            end
+            info = TweenInfo.new(time, style, dir)
+            byDir[time] = info
+            infoCount += 1
         end
+        return info
     end
-    t:Play()
-    return t
+
+    function tween(inst, time, props, style, dir)
+        local t = TweenService:Create(inst, infoFor(time, style or EASE_QUAD, dir or DIR_OUT), props)
+        for k in pairs(props) do
+            if k == "Color" or string.sub(k, -6) == "Color3" then
+                liveColorTweens[t] = { inst, props }
+                t.Completed:Once(function() liveColorTweens[t] = nil end)
+                break
+            end
+        end
+        t:Play()
+        return t
+    end
 end
 -- Hủy các tween màu đang chạy và đặt thẳng giá trị đích; translate(Color3) trả về Color3 mới hoặc nil (giữ nguyên)
 local function settleColorTweens(translate)
@@ -237,7 +262,7 @@ do
     local DATA_FOLDER = "Elysera"
     -- File .json cũ ở thư mục gốc workspace: chuyển vào thư mục mới một lần để không mất dữ liệu đã lưu
     local LEGACY_FILES = {
-        "Elysera_Settings.json", "Elysera_Fps.json", "Elysera_Waypoints.json",
+        "Elysera_Settings.json", "Elysera_Fps.json", "Elysera_Waypoints.json", "Elysera_Servers.json",
         "L-scr.json", "L-scr.bak.json", "L-scr.state.json",
     }
 
@@ -1645,9 +1670,18 @@ local function guarded(fn)
     return function()
         if uiLocked or busy then return end
         busy = true
-        fn(function()
+        local released = false
+        local function done()
+            if released then return end
+            released = true
             task.delay(1.2, function() busy = false end)
-        end)
+        end
+        -- fn lỗi trước khi gọi done() thì vẫn phải nhả khóa, nếu không nút bị kẹt busy đến hết phiên
+        local ok, err = pcall(fn, done)
+        if not ok then
+            warn("[Elysera] " .. tostring(err))
+            done()
+        end
     end
 end
 
