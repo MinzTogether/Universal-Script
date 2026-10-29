@@ -1,13 +1,21 @@
+--// ##########################################################################################
+--// ##                                                                                      ##
+--// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
+--// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
+--// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
+--// ##                                                                                      ##
+--// ##########################################################################################
+
 --// ================= STATUS & SERVER TAB (module) =================
--- File này được script chính (MainLocal.lua / MainWeb.lua) nạp vào và gọi với 1 bảng ctx
--- chứa các hàm/biến dùng chung của UI.
+-- This file is loaded by the main script (MainLocal.lua / MainWeb.lua) and called with a ctx table
+-- containing the shared UI functions/variables.
 --
--- Công cụ server:
---   * Join JobId   : ô nhập nhận JobId trần hoặc link có gameInstanceId (roblox://..., https://www.roblox.com/games/...)
+-- Server tools:
+--   * Join JobId   : the input box accepts a bare JobId or a link with gameInstanceId (roblox://..., https://www.roblox.com/games/...)
 --   * Copy Join Link, Rejoin Server
---   * Previous Server : quay lại server gần nhất đã có Elysera chạy (lịch sử lưu trong Elysera_Servers.json;
---                       bật Auto Execute ở Settings để Elysera tự chạy lại và ghi tiếp sau mỗi lần teleport)
---   * Server Hop / Less People / Best Ping (ping và fps do API danh sách server trả kèm)
+--   * Previous Server : go back to the most recent server where Elysera ran (history is stored in Elysera_Servers.json;
+--                       turn on Auto Execute in Settings so Elysera runs again and keeps recording after every teleport)
+--   * Server Hop / Less People / Best Ping (ping and fps come with the server list API)
 
 return function(ctx)
     local StatusServerTab     = ctx.Tab
@@ -35,20 +43,20 @@ return function(ctx)
     local flashStrokeError    = ctx.flashStrokeError
     local bindBoxFocus        = ctx.bindBoxFocus
     local guarded             = ctx.guarded
-    local isLocked            = ctx.isLocked -- thay cho biến uiLocked của file chính
+    local isLocked            = ctx.isLocked -- replaces the main file's uiLocked variable
     local canFS               = ctx.canFS == true
     local dataPath            = ctx.dataPath or function(name) return name end
 
-    --// ---------- Cấu hình ----------
-    local SPAM_JOIN_DELAY  = 1.5  -- giây giữa 2 lần Spam Join (tự tăng khi bị lỗi liên tiếp)
-    local PENDING_TIMEOUT  = 10   -- sau bấy nhiêu giây coi như teleport trước đó đã xong/hết hạn
-    local HOP_WAIT_RESULT  = 6    -- chờ tối đa bấy nhiêu giây xem teleport có bị từ chối không
-    local HOP_MAX_ATTEMPTS = 3    -- số server thử tối đa cho mỗi lần Hop
-    local PAGE_DELAY       = 0.3  -- nghỉ giữa các trang API để tránh 429
+    --// ---------- Config ----------
+    local SPAM_JOIN_DELAY  = 1.5  -- seconds between two Spam Join attempts (grows automatically after repeated errors)
+    local PENDING_TIMEOUT  = 10   -- after this many seconds the previous teleport counts as finished/expired
+    local HOP_WAIT_RESULT  = 6    -- wait at most this many seconds to see whether the teleport gets rejected
+    local HOP_MAX_ATTEMPTS = 3    -- maximum number of servers to try per Hop
+    local PAGE_DELAY       = 0.3  -- pause between API pages to avoid HTTP 429
 
-    local ScriptStartTime = os.time() -- os.clock() là CPU time, không phải thời gian thực
+    local ScriptStartTime = os.time() -- os.clock() is CPU time, not real time
 
-    --// ---------- Tiện ích ----------
+    --// ---------- Utilities ----------
     local function formatTime(seconds)
         if type(seconds) ~= "number" then return "--" end
         seconds = math.max(0, math.floor(seconds))
@@ -58,24 +66,24 @@ return function(ctx)
     -- Shared clipboard helper from the core UI kit (tries every executor's clipboard function); true when copied
     local copyToClipboard = UI.CopyText
 
-    -- JobId của Roblox luôn có dạng GUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    -- A Roblox JobId is always a GUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     local function isValidJobId(jobId)
         return type(jobId) == "string"
             and jobId:match("^%x+%-%x+%-%x+%-%x+%-%x+$") ~= nil
     end
 
-    -- Ô Join chấp nhận JobId trần hoặc link có gameInstanceId:
+    -- The Join box accepts a bare JobId or a link with gameInstanceId:
     --   roblox://experiences/start?placeId=123&gameInstanceId=<JobId>
     --   https://www.roblox.com/games/start?placeId=123&gameInstanceId=<JobId>
-    --   https://www.roblox.com/games/123/Ten-Game?gameInstanceId=<JobId>   (cả dạng đã mã hoá %3D, %26...)
-    -- Trả về jobId, placeId (nil nếu link không nêu), hoặc nil, nil, lý do ("Invalid" | "Private")
+    --   https://www.roblox.com/games/123/Game-Name?gameInstanceId=<JobId>   (including the encoded forms %3D, %26...)
+    -- Returns jobId, placeId (nil when the link does not state it), or nil, nil, reason ("Invalid" | "Private")
     local function parseJoinInput(raw)
         if type(raw) ~= "string" then return nil, nil, "Invalid" end
         local text = raw:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
         text = text:gsub("[%s\"']", ""):lower()
         if text == "" then return nil, nil, "Invalid" end
         if isValidJobId(text) then return text, nil end
-        -- link server riêng tư đi bằng mã, không có JobId để teleport trực tiếp
+        -- private server links use a code, so there is no JobId to teleport to directly
         if text:find("privateserverlinkcode=", 1, true) then return nil, nil, "Private" end
 
         local jobId = text:match("gameinstanceid=([%x%-]+)")
@@ -84,10 +92,10 @@ return function(ctx)
         return jobId, tonumber(placeId)
     end
 
-    --// ---------- Trạng thái teleport dùng chung ----------
-    -- teleportPending = true khi vừa gọi teleport và chưa biết kết quả.
-    -- Nếu thành công, client sẽ rời server (script dừng); nếu thất bại,
-    -- TeleportInitFailed sẽ báo về và ta mở khoá lại.
+    --// ---------- Shared teleport state ----------
+    -- teleportPending = true right after a teleport was requested and the result is not known yet.
+    -- If it succeeds, the client leaves the server (the script stops); if it fails,
+    -- TeleportInitFailed reports back and we unlock again.
     local teleportPending = false
     local pendingToken    = 0
     local failStreak      = 0
@@ -112,7 +120,7 @@ return function(ctx)
         failedConn:Disconnect()
     end)
 
-    -- Trả về ok, lý do (ngắn, vừa nút 70px). placeId = nil: dùng place hiện tại
+    -- Returns ok, reason (short, fits a 70px button). placeId = nil: use the current place
     local function joinServer(jobId, placeId)
         if not isValidJobId(jobId) then return false, "Invalid" end
         if jobId == game.JobId then return false, "Same" end
@@ -123,10 +131,10 @@ return function(ctx)
         return true
     end
 
-    --// ---------- Lịch sử server (cho "Previous Server") ----------
-    -- Mỗi lần Elysera chạy ở một server thì ghi lại (place, JobId, thời điểm) vào file để còn nhớ sau khi teleport.
+    --// ---------- Server history (for "Previous Server") ----------
+    -- Every time Elysera runs on a server, record (place, JobId, time) in the file so it is remembered after the teleport.
     local HISTORY_FILE, HISTORY_MAX = "Elysera_Servers.json", 10
-    local history = {} -- mới nhất trước: { place = number, id = string, t = os.time() }
+    local history = {} -- newest first: { place = number, id = string, t = os.time() }
 
     local function loadHistory()
         if not canFS then return end
@@ -154,14 +162,14 @@ return function(ctx)
         local id = game.JobId
         if not isValidJobId(id) then return end
         for i = #history, 1, -1 do
-            if history[i].id == id then table.remove(history, i) end -- một bản ghi / server, đưa lên đầu
+            if history[i].id == id then table.remove(history, i) end -- one record per server, moved to the top
         end
         table.insert(history, 1, { place = game.PlaceId, id = id, t = os.time() })
         while #history > HISTORY_MAX do table.remove(history) end
         saveHistory()
     end
 
-    -- Server gần nhất của game này mà không phải server hiện tại
+    -- The most recent server of this game that is not the current server
     local function previousServer()
         for _, e in ipairs(history) do
             if e.place == game.PlaceId and e.id ~= game.JobId then return e end
@@ -180,13 +188,13 @@ return function(ctx)
     loadHistory()
     recordCurrentServer()
 
-    --// ---------- Các dòng thông tin cập nhật liên tục ----------
+    --// ---------- Continuously updating info rows ----------
     local liveRows = {}
 
     local function CreateLiveRow(parent, title, getText)
         local Frame = CreateInfoRow(parent, title)
 
-        -- Value chiếm 110px bên phải; thu hẹp Left (mặc định -90) để title không chồng lên Value
+        -- Value takes 110px on the right; shrink Left (default -90) so the title does not overlap Value
         local Left = Frame:FindFirstChild("Left")
         if Left then Left.Size = UDim2.new(1, -118, 1, 0) end
 
@@ -243,7 +251,7 @@ return function(ctx)
         return formatTime(os.time() - ScriptStartTime)
     end)
 
-    -- time() = số giây kể từ khi client vào server này (reset khi teleport sang server khác)
+    -- time() = seconds since the client entered this server (resets when teleporting to another server)
     CreateLiveRow(StatusServerTab, "Time Played", function()
         return formatTime(time())
     end)
@@ -261,12 +269,12 @@ return function(ctx)
         return string.format("%d ms", math.floor(pingItem:GetValue() + 0.5))
     end)
 
-    -- 1 vòng lặp duy nhất cho tất cả các dòng live (thay vì mỗi dòng 1 vòng).
-    -- Vòng lặp chỉ chạy khi cửa sổ và tab này đang hiện (lúc ẩn không có gì thức dậy); mở lại UI / quay về tab này
-    -- thì cập nhật ngay và chạy lại vòng lặp.
-    -- Điều kiện lặp dùng thuộc tính Visible (có signal) chứ không dùng isOpen(): đóng rồi mở lại ngay trong lúc UI còn
-    -- đang mờ dần sẽ không làm vòng lặp dừng hẳn.
-    -- (Core cũ không truyền isOpen -> coi như luôn mở, hành vi như trước.)
+    -- A single loop for all live rows (instead of one loop per row).
+    -- The loop only runs while the window and this tab are visible (nothing wakes up while hidden); reopening the UI / returning to this tab
+    -- updates right away and restarts the loop.
+    -- The loop condition uses the Visible property (it has a signal) rather than isOpen(): closing and reopening right while the UI is still
+    -- fading out will not stop the loop for good.
+    -- (An old core does not pass isOpen -> treated as always open, same behavior as before.)
     local isOpen = ctx.isOpen or function() return true end
     local MainUI = ctx.MainUI
     local function tabShowing()
@@ -279,7 +287,7 @@ return function(ctx)
     local liveRun = 0
     local function startLiveLoop()
         liveRun += 1
-        local myRun = liveRun -- vòng lặp cũ (nếu còn) tự thoát ở lần kiểm tra kế tiếp
+        local myRun = liveRun -- an old loop (if still alive) exits by itself on its next check
         task.spawn(function()
             while ScreenGui.Parent and myRun == liveRun and windowVisible() do
                 if isOpen() then refreshLiveRows() end
@@ -349,7 +357,7 @@ return function(ctx)
         end)
         Box:GetPropertyChangedSignal("Text"):Connect(refreshPlaceholder)
 
-        -- Trả về jobId, placeId, lý do (xem parseJoinInput); ô rỗng -> nil, nil, "Empty"
+        -- Returns jobId, placeId, reason (see parseJoinInput); empty box -> nil, nil, "Empty"
         local function getTarget()
             if (Box.Text:gsub("%s", "")) == "" then return nil, nil, "Empty" end
             return parseJoinInput(Box.Text)
@@ -400,7 +408,7 @@ return function(ctx)
             runId += 1
             if not Switch:GetAttribute("Toggled") then return end
 
-            -- JobId rỗng / sai / trùng server hiện tại: báo lỗi và tự tắt, không chạy vòng lặp vô ích
+            -- JobId empty / wrong / same as the current server: report the error and switch off, do not run a pointless loop
             local firstId = getTarget()
             if not firstId or firstId == game.JobId then
                 flashStrokeError(BoxStroke)
@@ -420,10 +428,10 @@ return function(ctx)
                     end
 
                     if not isLocked() then
-                        joinServer(jobId, placeId) -- tự bỏ qua nếu teleport trước đó chưa có kết quả
+                        joinServer(jobId, placeId) -- skips itself if the previous teleport has no result yet
                     end
 
-                    -- lỗi liên tiếp thì giãn dần để khỏi bị Roblox giới hạn
+                    -- on consecutive errors, back off gradually so Roblox does not rate-limit us
                     task.wait(SPAM_JOIN_DELAY + math.min(failStreak, 5) * 0.5)
                 end
             end)
@@ -432,7 +440,7 @@ return function(ctx)
 
     CreateCopyRow(StatusServerTab, "Copy Server JobId", function() return game.JobId end, false)
 
-    -- Link mở thẳng server này (dán vào ô Join của người khác, hoặc mở bằng trình duyệt có cài Roblox)
+    -- Link that opens this server directly (paste it into someone else's Join box, or open it in a browser with Roblox installed)
     CreateCopyRow(StatusServerTab, "Copy Join Link", function()
         if game.JobId == "" then return "" end
         return ("roblox://experiences/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
@@ -476,7 +484,7 @@ return function(ctx)
             return prev and formatAgo(prev.t) or "--"
         end
         AgoLabel.Text = describe()
-        table.insert(liveRows, { Value = AgoLabel, get = describe }) -- "x ago" cập nhật cùng vòng lặp live
+        table.insert(liveRows, { Value = AgoLabel, get = describe }) -- "x ago" is updated by the same live loop
 
         local Btn = CreateStyledButton(Frame, "Join", 70)
         Btn.Activated:Connect(guarded(function(done)
@@ -494,7 +502,7 @@ return function(ctx)
 
     --// ---------- Server Hop ----------
     do
-        local failedJobIds = {} -- server đã thử mà bị từ chối, không chọn lại
+        local failedJobIds = {} -- servers that were tried and rejected; never picked again
 
         local function httpRequest(url)
             local fn = (syn and syn.request) or http_request or request
@@ -522,8 +530,8 @@ return function(ctx)
                 and srv.playing < srv.maxPlayers
         end
 
-        -- sortOrder: 1 = ít người trước (Asc), 2 = đông người trước (Desc)
-        -- Dừng sớm khi đã đủ `enough` ứng viên để bớt request.
+        -- sortOrder: 1 = fewest players first (Asc), 2 = most players first (Desc)
+        -- Stop early once there are enough candidates (`enough`) to save requests.
         local function collectServers(sortOrder, maxPages, enough, accept)
             local list, cursor, lastErr = {}, "", nil
 
@@ -560,7 +568,7 @@ return function(ctx)
             return list, lastErr
         end
 
-        -- xáo trộn n phần tử đầu của list
+        -- shuffle the first n elements of the list
         local function shuffle(list, n)
             for i = math.min(n, #list), 2, -1 do
                 local j = math.random(1, i)
@@ -568,11 +576,11 @@ return function(ctx)
             end
         end
 
-        -- mode: "random" | "least" (ít người) | "ping" (ping thấp nhất)
+        -- mode: "random" | "least" (fewest players) | "ping" (lowest ping)
         local function pickServers(mode)
             if mode == "ping" then
-                -- API danh sách server trả kèm ping và fps của từng server. Dò tối đa 5 trang (500 server, đông người
-                -- trước), bỏ server chưa có ping và server gần đầy; ping bằng nhau thì ưu tiên fps cao hơn.
+                -- The server list API returns the ping and fps of every server. Scan at most 5 pages (500 servers, most players
+                -- first), skip servers without a ping and nearly full servers; on equal ping, prefer the higher fps.
                 local list, err = collectServers(2, 5, 200, function(srv)
                     return type(srv.ping) == "number" and srv.ping > 0
                         and srv.playing <= math.max(0, srv.maxPlayers - 2)
@@ -585,16 +593,16 @@ return function(ctx)
             end
 
             if mode == "least" then
-                -- Asc: server ít người nằm ở các trang đầu. Bỏ server 0 người (thường sắp đóng).
+                -- Asc: servers with few players are on the first pages. Skip servers with 0 players (they are usually about to close).
                 local list, err = collectServers(1, 2, 20, function(srv)
                     return srv.playing >= 1
                 end)
                 table.sort(list, function(a, b) return a.playing < b.playing end)
-                shuffle(list, 5) -- xáo 5 server ít người nhất để nhiều người dùng khỏi đụng nhau
+                shuffle(list, 5) -- shuffle the 5 emptiest servers so many users do not collide
                 return list, err
             end
 
-            -- Hop ngẫu nhiên: tránh server gần đầy (dễ bị GameFull)
+            -- Random hop: avoid nearly full servers (they easily fail with GameFull)
             local list, err = collectServers(2, 5, 30, function(srv)
                 return srv.playing <= math.max(0, srv.maxPlayers - 2)
             end)
@@ -602,9 +610,9 @@ return function(ctx)
             return list, err
         end
 
-        -- Trả về true nếu đang teleport, hoặc false + lý do ngắn
+        -- Returns true while teleporting, or false + a short reason
         local function hopServer(mode)
-            failedJobIds = {} -- mỗi lần bấm Hop là một lần mới: không để danh sách server lỗi tích tụ vô hạn
+            failedJobIds = {} -- every Hop press starts fresh: do not let the list of failed servers grow forever
             local candidates, err = pickServers(mode)
             if #candidates == 0 then return false, err or "No server" end
 
@@ -618,13 +626,13 @@ return function(ctx)
                     if reason == "Busy" then return false, "Busy" end
                     failedJobIds[srv.id] = true
                 else
-                    -- chờ xem Roblox có từ chối không (server đầy / đã đóng...)
+                    -- wait to see whether Roblox rejects it (server full / closed...)
                     for _ = 1, math.ceil(HOP_WAIT_RESULT / 0.2) do
                         if not teleportPending then break end
                         task.wait(0.2)
                     end
-                    if teleportPending then return true end -- vẫn đang teleport: coi như thành công
-                    failedJobIds[srv.id] = true             -- bị từ chối: thử server kế tiếp
+                    if teleportPending then return true end -- still teleporting: counts as success
+                    failedJobIds[srv.id] = true             -- rejected: try the next server
                 end
             end
 

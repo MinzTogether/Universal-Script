@@ -1,45 +1,53 @@
+--// ##########################################################################################
+--// ##                                                                                      ##
+--// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
+--// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
+--// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
+--// ##                                                                                      ##
+--// ##########################################################################################
+
 --// ============================================================================
---//  Settings.lua  -  module cho tab "Settings" của Elysera MainUI
+--//  Settings.lua  -  module for the "Settings" tab of the Elysera MainUI
 --//
---//  Gồm 4 chức năng (A tách từ MainLocal.lua, B gộp từ Theme.lua, C và D thêm sau):
---//    A) Anti Chat     công tắc chặn gửi tin nhắn chat (LayoutOrder = 1)
---//    C) Auto Execute  công tắc nạp lại Elysera sau teleport (LayoutOrder = 2; cơ chế nằm ở core: ctx.AutoExecute)
---//    B) Theme         hàng "Theme" + danh sách thả xuống để đổi bảng màu (LayoutOrder = 3)
---//    D) Diagnostics   executor hỗ trợ API nào, module nạp từ đâu, Copy report, Unload (LayoutOrder = 4)
+--//  Four features (A split out of MainLocal.lua, B merged from Theme.lua, C and D added later):
+--//    A) Anti Chat     switch that blocks sending chat messages (LayoutOrder = 1)
+--//    C) Auto Execute  switch that reloads Elysera after a teleport (LayoutOrder = 2; the mechanism lives in the core: ctx.AutoExecute)
+--//    B) Theme         "Theme" row + dropdown list to change the color palette (LayoutOrder = 3)
+--//    D) Diagnostics   which APIs the executor supports, where each module was loaded from, Copy report, Unload (LayoutOrder = 4)
 --//
---//  Đặt file này cạnh các module khác (Script.lua, Status_Server.lua, Local.lua, FPS.lua).
---//  MainLocal.lua nạp bằng readModule("Settings.lua") + init({...}) ở CUỐI (sau FPS TAB), để lần áp theme
---//  đầu tiên (theme đã lưu) bao trùm cả các tab ở trên. Theme.lua cũ đã gộp vào file này, không nạp riêng nữa.
+--//  Put this file next to the other modules (Script.lua, Status_Server.lua, Local.lua, FPS.lua).
+--//  MainLocal.lua loads it with readModule("Settings.lua") + init({...}) at the END (after the FPS TAB), so the first theme
+--//  application (the saved theme) also covers the tabs above. The old Theme.lua was merged into this file and is no longer loaded separately.
 --//
---//  Cách hoạt động của Theme (phương án C trong báo cáo, không dựng lại UI):
---//    1) Dựng bảng ánh xạ  "màu của Theme hiện tại" -> "màu theme mới"  theo từng token.
---//    2) Ghi màu mới vào bảng Theme TẠI CHỖ (cùng tham chiếu mà các module đang giữ).
---//    3) Chốt các tween màu đang chạy dở, rồi quét cây ElyseraUI, thay các thuộc tính màu khớp chính xác
---//       (kể cả từng keypoint UIGradient).
---//    4) Chạy refreshStateColors() của core (tab đang chọn, công tắc, Resize mode...).
---//    5) Đặt Attribute "Theme" trên ScreenGui, lưu cấu hình, gọi các listener onChanged.
+--//  How Theme works (option C in the report, the UI is not rebuilt):
+--//    1) Build a mapping table  "current Theme color" -> "new theme color"  for every token.
+--//    2) Write the new colors into the Theme table IN PLACE (the same reference the modules are holding).
+--//    3) Settle the color tweens that are still running, then sweep the ElyseraUI tree and replace the color properties that match exactly
+--//       (including every UIGradient keypoint).
+--//    4) Run the core's refreshStateColors() (selected tab, switches, Resize mode...).
+--//    5) Set the "Theme" Attribute on the ScreenGui, save the settings, call the onChanged listeners.
 --//
---//  API Theme (init trả về, MainLocal.lua gán vào ThemeAPI):
---//    Themes                 danh sách { id, name, mode, colors }
---//    SetTheme(id)           -> true | false, lỗi
---//    GetTheme()             -> id, tên
---//    OnThemeChanged(fn)     fn(id, Theme, entry); trả về hàm huỷ đăng ký
---//    Stats                  { scanned, changed, ms } của lần remap gần nhất
---//    isListOpen(), hideList()  dành riêng cho core (closeUI đóng danh sách đang mở)
+--//  Theme API (returned by init, MainLocal.lua assigns it to ThemeAPI):
+--//    Themes                 list of { id, name, mode, colors }
+--//    SetTheme(id)           -> true | false, error
+--//    GetTheme()             -> id, name
+--//    OnThemeChanged(fn)     fn(id, Theme, entry); returns the unsubscribe function
+--//    Stats                  { scanned, changed, ms } of the most recent remap
+--//    isListOpen(), hideList()  reserved for the core (closeUI closes the list that is open)
 --//
---//  Quy ước: Instance có Attribute NoTheme = true (cả nhánh con) bị remap bỏ qua.
---//  Quy tắc bảng màu: đủ 13 token; 12 token (trừ ToggleKnobOn) khác nhau từng đôi một và
---//  không phải #FFFFFF / #000000 (trắng là nền của các khung gradient, đen là lớp phủ).
+--//  Convention: an Instance with the Attribute NoTheme = true (the whole subtree) is skipped by the remap.
+--//  Palette rules: all 13 tokens present; the 12 tokens (except ToggleKnobOn) differ from each other pairwise and
+--//  are not #FFFFFF / #000000 (white is the base of gradient frames, black is the overlay).
 --// ============================================================================
 
 return function(D)
-    --// ================= DEPS (từ MainWeb.lua / MainLocal.lua) =================
+    --// ================= DEPS (from MainWeb.lua / MainLocal.lua) =================
     local Theme        = D.Theme
     local ScreenGui    = D.ScreenGui
     local MainUI       = D.MainUI
     local Tab          = D.Tab
     local CoreGui      = D.CoreGui
-    local GuiRoot      = D.GuiRoot or CoreGui   -- nơi GUI thực sự được gắn (CoreGui, hoặc PlayerGui khi dự phòng)
+    local GuiRoot      = D.GuiRoot or CoreGui   -- where the GUI is really mounted (CoreGui, or PlayerGui as a fallback)
     local LocalPlayer  = D.LocalPlayer
     local Saved        = D.Saved or {}
     local saveSettings = D.saveSettings or function() end
@@ -61,7 +69,7 @@ return function(D)
     local refreshStateColors          = D.refreshStateColors or function() end
 
     --// =====================================================================
-    --// PHẦN A. ANTI CHAT  (tách từ MainLocal.lua)
+    --// PART A. ANTI CHAT  (split out of MainLocal.lua)
     --// =====================================================================
     do
         local function setProp(inst, prop, value)
@@ -80,8 +88,8 @@ return function(D)
         local antiChatBoxes = {}
         local chatBarConfig, chatBarOriginal
 
-        -- Chặn tin nhắn gửi từ script (game hoặc executor) ở tầng __namecall / hookfunction.
-        -- Hook không gỡ được nên dùng cờ antiChatOn: tắt toggle thì hook chỉ đi qua.
+        -- Block messages sent from scripts (game or executor) at the __namecall / hookfunction level.
+        -- The hook cannot be removed, so the antiChatOn flag is used: with the toggle off, the hook only passes calls through.
         local function isChatCall(self, method)
             if typeof(self) ~= "Instance" then return false end
             if method == "FireServer" then
@@ -110,7 +118,7 @@ return function(D)
                 end)
             end
 
-            -- Bắt thêm trường hợp gọi kiểu remote.FireServer(remote, ...) / channel.SendAsync(channel, ...)
+            -- Also catch calls made as remote.FireServer(remote, ...) / channel.SendAsync(channel, ...)
             if hookfunction and newcclosure then
                 pcall(function()
                     local oldFire
@@ -131,7 +139,7 @@ return function(D)
             end
         end
 
-        -- Chặn ở giao diện. Khung chat cũ (Legacy): không cho ChatBar nhận focus -> không gõ/gửi được
+        -- Block at the interface level. Legacy chat window: the ChatBar cannot get focus -> nothing can be typed or sent
         local function blockLegacyChatBar(box)
             if antiChatBoxes[box] then return end
             antiChatBoxes[box] = true
@@ -166,7 +174,7 @@ return function(D)
             antiChatOn = true
             installChatHook()
 
-            -- Khung chat mới (TextChatService): tắt thanh nhập tin nhắn
+            -- New chat window (TextChatService): turn off the message input bar
             pcall(function()
                 local cfg = TextChatService:FindFirstChildOfClass("ChatInputBarConfiguration")
                 if cfg then
@@ -203,165 +211,165 @@ return function(D)
     end
 
     --// =====================================================================
-    --// PHẦN B. THEME  (gộp từ Theme.lua)
+    --// PART B. THEME  (merged from Theme.lua)
     --// =====================================================================
     local V2          = Vector2.new
     local TextService = game:GetService("TextService")
 
     local function clamp(x, lo, hi) return math.max(lo, math.min(hi, x)) end
 
-    --// ================= CẤU HÌNH =================
+    --// ================= CONFIG =================
     local DEFAULT_ID  = "sakura"
-    local HEAL        = true   -- tự "chữa" màu cũ còn sót (xem makeLookup)
-    local FADE_OUT_T  = 0.12   -- mờ xuống
-    local FADE_IN_T   = 0.22   -- hiện lại
-    local FADE_ALPHA  = 0.55   -- độ mờ tại điểm mờ nhất (remap chạy ở đây)
-    local YIELD_EVERY = 700    -- chia lô: nhường 1 frame sau mỗi ngần này Instance (chỉ khi UI đang hiện)
+    local HEAL        = true   -- automatically "heal" leftover old colors (see makeLookup)
+    local FADE_OUT_T  = 0.12   -- fade out
+    local FADE_IN_T   = 0.22   -- fade back in
+    local FADE_ALPHA  = 0.55   -- transparency at the faintest point (the remap runs here)
+    local YIELD_EVERY = 700    -- batching: yield one frame after this many Instances (only while the UI is visible)
 
-    local WIN_H, ARROW_ZONE      = 28, 26         -- winbox cao 28; vùng nút mũi tên 26
+    local WIN_H, ARROW_ZONE      = 28, 26         -- winbox is 28 tall; the arrow button zone is 26
     local WIN_MIN_W, WIN_MAX_W   = 112, 190
     local ITEM_H, ITEM_GAP, LIST_PAD = 34, 4, 4
     local LIST_MIN_W, LIST_MAX_ROWS  = 200, 6
     local LIST_OPEN_T, LIST_CLOSE_T  = 0.15, 0.12
-    local Z_CATCHER, Z_LIST          = 25, 30     -- trên InteractionBlocker (20), dưới hộp thoại (51)
+    local Z_CATCHER, Z_LIST          = 25, 30     -- above InteractionBlocker (20), below the dialogs (51)
 
     --// =====================================================================
-    --// 1. DỮ LIỆU THEME
+    --// 1. THEME DATA
     --// =====================================================================
     local TOKENS = {
         "Background", "Panel", "PanelAlt", "Header", "Border",
         "AccentPink", "AccentPurple", "Sakura", "Text", "SubText",
         "Danger", "ToggleTrackOff", "ToggleKnobOn",
     }
-    local KNOB = "ToggleKnobOn" -- bị loại khỏi remap (được phép trắng/đen thuần), do refreshStateColors lo
+    local KNOB = "ToggleKnobOn" -- excluded from the remap (may be pure white/black), handled by refreshStateColors
 
-    -- Tên token giữ nguyên để không phải sửa các module. AccentPink / AccentPurple / Sakura chỉ là
-    -- "vai trò": nhấn chính / nhấn phụ / chữ nhấn, không nhất thiết là màu hồng hay tím.
+    -- Token names are kept so the modules need no changes. AccentPink / AccentPurple / Sakura are only
+    -- "roles": primary accent / secondary accent / accent text, not necessarily pink or purple.
     local RAW = {
-        -- 1. Elysera Sakura: tím neon và hồng sakura (mặc định, = bảng Theme hiện tại của core)
+        -- 1. Elysera Sakura: neon purple and sakura pink (default, = the core's current Theme table)
         { id = "sakura", name = "Elysera Sakura", mode = "dark", snapshot = true },
-        -- 2. Midnight Ocean: xanh navy sâu, nhấn cyan/azure
+        -- 2. Midnight Ocean: deep navy blue, cyan/azure accents
         { id = "ocean", name = "Midnight Ocean", mode = "dark", colors = {
             Background = "0D1D2F", Panel = "0E1F33", PanelAlt = "10243B", Header = "122A45", Border = "1F4775",
             AccentPink = "2FB9F7", AccentPurple = "4F7DFF", Sakura = "A8E9FF", Text = "D3E8FA", SubText = "8FB2D6",
             Danger = "FF6F8A", ToggleTrackOff = "1C3F68", ToggleKnobOn = "FFFFFF",
         } },
-        -- 3. Emerald Forest: xanh rừng sẫm, nhấn ngọc lục bảo; núm ON tối
+        -- 3. Emerald Forest: dark forest green, emerald accents; dark ON knob
         { id = "emerald", name = "Emerald Forest", mode = "dark", colors = {
             Background = "11261D", Panel = "132920", PanelAlt = "153025", Header = "19382B", Border = "2B5F49",
             AccentPink = "34D399", AccentPurple = "7BD66B", Sakura = "C6F8E0", Text = "D6F3E4", SubText = "8FBCA6",
             Danger = "FF7B7B", ToggleTrackOff = "265441", ToggleKnobOn = "07140D",
         } },
-        -- 4. Crimson Ember: đỏ than hồng, nhấn vermilion
+        -- 4. Crimson Ember: glowing-coal red, vermilion accents
         { id = "crimson", name = "Crimson Ember", mode = "dark", colors = {
             Background = "261013", Panel = "2A1115", PanelAlt = "301318", Header = "38171D", Border = "5F2730",
             AccentPink = "FF6B4A", AccentPurple = "E8334F", Sakura = "FFC9B8", Text = "F6DAD3", SubText = "C79A93",
             Danger = "FF5C8A", ToggleTrackOff = "54222B", ToggleKnobOn = "FFFFFF",
         } },
-        -- 5. Golden Sunset: nâu hổ phách, nhấn vàng–cam; núm ON tối
+        -- 5. Golden Sunset: amber brown, gold–orange accents; dark ON knob
         { id = "sunset", name = "Golden Sunset", mode = "dark", colors = {
             Background = "261A0F", Panel = "291C10", PanelAlt = "2F2112", Header = "382716", Border = "5E4124",
             AccentPink = "FFB020", AccentPurple = "FF7A33", Sakura = "FFE0A3", Text = "F4E5CD", SubText = "C2A783",
             Danger = "FF5D5D", ToggleTrackOff = "533A20", ToggleKnobOn = "1A130C",
         } },
-        -- 6. Coral Lagoon: xanh ngọc thẫm, nhấn san hô
+        -- 6. Coral Lagoon: dark teal, coral accents
         { id = "lagoon", name = "Coral Lagoon", mode = "dark", colors = {
             Background = "0F272B", Panel = "102A2F", PanelAlt = "133036", Header = "16393F", Border = "26606B",
             AccentPink = "FF7F8A", AccentPurple = "FFA06B", Sakura = "FFDDD2", Text = "D5EEEE", SubText = "8FBDBF",
             Danger = "FF5470", ToggleTrackOff = "21555F", ToggleKnobOn = "FFFFFF",
         } },
-        -- 7. Arctic Frost: xám xanh lạnh, nhấn băng nhạt; núm ON tối
+        -- 7. Arctic Frost: cold blue-gray, pale ice accents; dark ON knob
         { id = "arctic", name = "Arctic Frost", mode = "dark", colors = {
             Background = "1B222A", Panel = "1D242E", PanelAlt = "222A35", Header = "28313E", Border = "435369",
             AccentPink = "8BD3F0", AccentPurple = "7C9CFF", Sakura = "D4F0FB", Text = "E1E9F2", SubText = "9DAEC4",
             Danger = "F2788C", ToggleTrackOff = "3B4A5D", ToggleKnobOn = "0F151D",
         } },
-        -- 8. Carbon Mono: đơn sắc than chì và bạc; núm ON tối
+        -- 8. Carbon Mono: monochrome graphite and silver; dark ON knob
         { id = "carbon", name = "Carbon Mono", mode = "dark", colors = {
             Background = "212123", Panel = "232325", PanelAlt = "29292B", Header = "303033", Border = "515156",
             AccentPink = "E4E4E4", AccentPurple = "A0A0A0", Sakura = "F5F5F5", Text = "D6D6D6", SubText = "A3A3A3",
             Danger = "FF6B7A", ToggleTrackOff = "47474C", ToggleKnobOn = "121212",
         } },
-        -- 9. Neon Matrix: gần đen, xanh neon kiểu terminal; núm ON tối
+        -- 9. Neon Matrix: near black, terminal-style neon green; dark ON knob
         { id = "matrix", name = "Neon Matrix", mode = "dark", colors = {
             Background = "09150D", Panel = "0A170E", PanelAlt = "0C1A11", Header = "0E1F14", Border = "2A5A40",
             AccentPink = "1AFF9C", AccentPurple = "19D3FF", Sakura = "B6FFE0", Text = "CFF7E2", SubText = "7FBF9F",
             Danger = "FF5577", ToggleTrackOff = "1F4A30", ToggleKnobOn = "03110A",
         } },
-        -- 10. Porcelain Day: trắng lavender, nhấn hồng–violet (theme sáng đầu tiên)
+        -- 10. Porcelain Day: lavender white, pink–violet accents (the first light theme)
         { id = "porcelain", name = "Porcelain Day", mode = "light", colors = {
             Background = "F5F1FB", Panel = "FBF9FE", PanelAlt = "ECE6F7", Header = "DFD5F1", Border = "B9A7DB",
             AccentPink = "C0267A", AccentPurple = "9A74F8", Sakura = "8E0F50", Text = "2D1B4E", SubText = "65558A",
             Danger = "BE1F43", ToggleTrackOff = "CDC1E4", ToggleKnobOn = "FFFFFF",
         } },
-        -- ===== Nhóm theme bổ sung (11-22): 7 tối + 5 sáng, phối màu hiện đại =====
-        -- 11. Aurora Veil: đen chàm sâu, nhấn mint → tím cực quang; núm ON tối
+        -- ===== Additional themes (11-22): 7 dark + 5 light, modern color combinations =====
+        -- 11. Aurora Veil: deep indigo black, mint → aurora purple accents; dark ON knob
         { id = "aurora", name = "Aurora Veil", mode = "dark", colors = {
             Background = "0D0E1E", Panel = "0F1022", PanelAlt = "121329", Header = "191B3B", Border = "323776",
             AccentPink = "4DF0C2", AccentPurple = "8F7CFF", Sakura = "C9FFEF", Text = "E3E9FF", SubText = "9BA7D8",
             Danger = "FF6F91", ToggleTrackOff = "292D60", ToggleKnobOn = "08101C",
         } },
-        -- 12. Cyber Neon: đen tím, nhấn magenta + cyan điện, chữ chọn vàng chanh; núm ON tối
+        -- 12. Cyber Neon: purple black, magenta + electric cyan accents, lime-yellow selected text; dark ON knob
         { id = "cyber", name = "Cyber Neon", mode = "dark", colors = {
             Background = "0E091D", Panel = "100A21", PanelAlt = "140D29", Header = "1D133C", Border = "3E2880",
             AccentPink = "FF2E97", AccentPurple = "00E5FF", Sakura = "FFE45E", Text = "EFE9FF", SubText = "A99BD6",
             Danger = "FF5A36", ToggleTrackOff = "35226D", ToggleKnobOn = "0B0716",
         } },
-        -- 13. Royal Gold: chàm hoàng gia, nhấn vàng + cam san hô; núm ON tối
+        -- 13. Royal Gold: royal indigo, gold + coral-orange accents; dark ON knob
         { id = "royal", name = "Royal Gold", mode = "dark", colors = {
             Background = "101023", Panel = "111227", PanelAlt = "15152E", Header = "1C1E3F", Border = "343674",
             AccentPink = "F5C451", AccentPurple = "F08A5D", Sakura = "FFE8A8", Text = "ECEBFA", SubText = "A7A6CF",
             Danger = "FF6B7D", ToggleTrackOff = "2B2C5F", ToggleKnobOn = "100E1F",
         } },
-        -- 14. Obsidian OLED: gần đen tuyền (hợp màn OLED), nhấn xanh điện + tím UV
+        -- 14. Obsidian OLED: near pure black (suits OLED screens), electric blue + UV purple accents
         { id = "oled", name = "Obsidian OLED", mode = "dark", colors = {
             Background = "07080B", Panel = "0A0C10", PanelAlt = "0E1117", Header = "161B25", Border = "34405A",
             AccentPink = "4C8DFF", AccentPurple = "A15CFF", Sakura = "C4DAFF", Text = "E6ECF7", SubText = "97A3BA",
             Danger = "FF5E7A", ToggleTrackOff = "2A3348", ToggleKnobOn = "FFFFFF",
         } },
-        -- 15. Matcha Moss: rêu ô liu sẫm, nhấn xanh matcha + xanh lá; núm ON tối
+        -- 15. Matcha Moss: dark olive moss, matcha green + leaf green accents; dark ON knob
         { id = "matcha", name = "Matcha Moss", mode = "dark", colors = {
             Background = "14180F", Panel = "171B10", PanelAlt = "1C2114", Header = "2A311E", Border = "4C5936",
             AccentPink = "B8E04A", AccentPurple = "6FCB7A", Sakura = "E4F7B0", Text = "E6EBD6", SubText = "A2AE8A",
             Danger = "FF7B63", ToggleTrackOff = "3E492D", ToggleKnobOn = "0D1108",
         } },
-        -- 16. Rose Gold Noir: than ấm, nhấn vàng hồng + mauve; núm ON tối
+        -- 16. Rose Gold Noir: warm charcoal, rose gold + mauve accents; dark ON knob
         { id = "rosegold", name = "Rose Gold Noir", mode = "dark", colors = {
             Background = "1E1715", Panel = "211917", PanelAlt = "271E1B", Header = "362926", Border = "5A453F",
             AccentPink = "E9A68C", AccentPurple = "C98BA0", Sakura = "FFD9C9", Text = "F3E3DD", SubText = "BE9F98",
             Danger = "F0605D", ToggleTrackOff = "4B3A34", ToggleKnobOn = "1A0F0D",
         } },
-        -- 17. Dusk Pastel: xám tím chiều tà, nhấn pastel hồng + xanh trời; núm ON tối
+        -- 17. Dusk Pastel: dusk purple-gray, pastel pink + sky blue accents; dark ON knob
         { id = "dusk", name = "Dusk Pastel", mode = "dark", colors = {
             Background = "1D1D2B", Panel = "1F1F2E", PanelAlt = "232334", Header = "2D2D43", Border = "4B4B71",
             AccentPink = "F2A7C8", AccentPurple = "8DB8FF", Sakura = "FFD6E8", Text = "E4E6F8", SubText = "A9ADCF",
             Danger = "FF8A8A", ToggleTrackOff = "3F3F5F", ToggleKnobOn = "15162A",
         } },
-        -- 18. Latte Cream: kem sữa ấm, nhấn caramel + cà phê (theme sáng)
+        -- 18. Latte Cream: warm milk cream, caramel + coffee accents (light theme)
         { id = "latte", name = "Latte Cream", mode = "light", colors = {
             Background = "F6F1E9", Panel = "FBF8F4", PanelAlt = "F2E9DE", Header = "EADDCC", Border = "C6AC8B",
             AccentPink = "A4561C", AccentPurple = "B8742A", Sakura = "5E2F0E", Text = "3A2618", SubText = "75604C",
             Danger = "B3261E", ToggleTrackOff = "D7C5AD", ToggleKnobOn = "FFFFFF",
         } },
-        -- 19. Mint Breeze: trắng bạc hà, nhấn ngọc bích + xanh ngọc (theme sáng)
+        -- 19. Mint Breeze: mint white, jade + turquoise accents (light theme)
         { id = "mint", name = "Mint Breeze", mode = "light", colors = {
             Background = "EDF7F3", Panel = "F8FCFA", PanelAlt = "E3F2EC", Header = "D1EAE0", Border = "9CC9B6",
             AccentPink = "0A7F62", AccentPurple = "119A88", Sakura = "07533F", Text = "12302A", SubText = "4B6B60",
             Danger = "C0304B", ToggleTrackOff = "C3DFD3", ToggleKnobOn = "FFFFFF",
         } },
-        -- 20. Sky Cloud: trắng trời, nhấn xanh azure (theme sáng)
+        -- 20. Sky Cloud: sky white, azure blue accents (light theme)
         { id = "sky", name = "Sky Cloud", mode = "light", colors = {
             Background = "EBF2F9", Panel = "F7FAFD", PanelAlt = "DFE9F6", Header = "CBDCF0", Border = "9FBADB",
             AccentPink = "1B66E3", AccentPurple = "4F7DF0", Sakura = "0B3A8A", Text = "112440", SubText = "4A6286",
             Danger = "C4283F", ToggleTrackOff = "C4D4E9", ToggleKnobOn = "FFFFFF",
         } },
-        -- 21. Rose Quartz: trắng phớt hồng, nhấn mâm xôi (theme sáng)
+        -- 21. Rose Quartz: pinkish white, raspberry accents (light theme)
         { id = "quartz", name = "Rose Quartz", mode = "light", colors = {
             Background = "FAEFF2", Panel = "FEFBFC", PanelAlt = "F6E4E9", Header = "F0D0D8", Border = "DAA9B6",
             AccentPink = "C2255C", AccentPurple = "E0558A", Sakura = "7D1237", Text = "3A1220", SubText = "7A4A5B",
             Danger = "C2410C", ToggleTrackOff = "E8C9D1", ToggleKnobOn = "FFFFFF",
         } },
-        -- 22. Paper Ink: giấy trung tính, nhấn mực than chì (theme sáng đơn sắc)
+        -- 22. Paper Ink: neutral paper, graphite ink accents (monochrome light theme)
         { id = "paper", name = "Paper Ink", mode = "light", colors = {
             Background = "F1F1F3", Panel = "FAFAFA", PanelAlt = "E9E9EC", Header = "DCDCE0", Border = "B5B5C0",
             AccentPink = "2B2B33", AccentPurple = "6B6B78", Sakura = "0C0C10", Text = "1D1D24", SubText = "5E5E6B",
@@ -376,29 +384,29 @@ return function(D)
             tonumber(h:sub(5, 6), 16))
     end
 
-    -- khoá số nguyên của một màu: r*65536 + g*256 + b (làm tròn từng kênh về 0..255)
+    -- integer key of a color: r*65536 + g*256 + b (every channel rounded to 0..255)
     local function colorKey(c)
         return math.floor(c.R * 255 + 0.5) * 65536
             + math.floor(c.G * 255 + 0.5) * 256
             + math.floor(c.B * 255 + 0.5)
     end
 
-    -- Q1 + Q2 + Q3: đủ 13 token Color3; 12 token khác nhau; không token nào (trừ ToggleKnobOn) là trắng/đen
+    -- Q1 + Q2 + Q3: all 13 Color3 tokens present; the 12 tokens differ from each other; no token (except ToggleKnobOn) is white/black
     local function validatePalette(p)
-        if type(p) ~= "table" then return false, "không phải table" end
+        if type(p) ~= "table" then return false, "not a table" end
         local seen = {}
         for _, k in ipairs(TOKENS) do
             local c = p[k]
             if typeof(c) ~= "Color3" then
-                return false, "token " .. k .. " thiếu hoặc không phải Color3"
+                return false, "token " .. k .. " is missing or is not a Color3"
             end
             if k ~= KNOB then
                 local key = colorKey(c)
                 if key == 0xFFFFFF or key == 0x000000 then
-                    return false, "token " .. k .. " không được là #FFFFFF hoặc #000000"
+                    return false, "token " .. k .. " must not be #FFFFFF or #000000"
                 end
                 if seen[key] then
-                    return false, "token " .. k .. " trùng màu với " .. seen[key]
+                    return false, "token " .. k .. " has the same color as " .. seen[key]
                 end
                 seen[key] = k
             end
@@ -406,7 +414,7 @@ return function(D)
         return true
     end
 
-    -- Theme 1 (sakura) lấy từ ảnh chụp bảng Theme hiện tại của core -> giống hệt bản gốc
+    -- Theme 1 (sakura) is taken from a snapshot of the core's current Theme table -> identical to the original
     local function buildThemes()
         local out = {}
         for _, raw in ipairs(RAW) do
@@ -422,7 +430,7 @@ return function(D)
             if ok then
                 out[#out + 1] = { id = raw.id, name = raw.name, mode = raw.mode, colors = colors }
             else
-                warn("[Elysera/Theme] Bỏ qua theme '" .. tostring(raw.id) .. "': " .. tostring(why))
+                warn("[Elysera/Theme] Skipping theme '" .. tostring(raw.id) .. "': " .. tostring(why))
             end
         end
         return out
@@ -431,9 +439,9 @@ return function(D)
     local THEMES = buildThemes()
     local byId = {}
     for _, t in ipairs(THEMES) do byId[t.id] = t end
-    assert(byId[DEFAULT_ID], "Settings.lua: thiếu theme mặc định '" .. DEFAULT_ID .. "'")
+    assert(byId[DEFAULT_ID], "Settings.lua: missing default theme '" .. DEFAULT_ID .. "'")
 
-    -- Chỉ mục "chữa màu cũ": khoá màu của MỌI theme -> tên token, bỏ khoá mơ hồ (cùng màu nhưng khác vai trò).
+    -- "Heal old colors" index: the color key of EVERY theme -> token name, ambiguous keys dropped (same color but a different role).
     local function buildHealIndex(themes)
         local role, ambiguous = {}, {}
         for _, t in ipairs(themes) do
@@ -456,16 +464,16 @@ return function(D)
     --// =====================================================================
     --// 2. ENGINE
     --// =====================================================================
-    local currentId = DEFAULT_ID -- core dựng UI bằng bảng màu mặc định
+    local currentId = DEFAULT_ID -- the core builds the UI with the default palette
     local applying, pendingId, pendingOpts = false, nil, nil
     local stats = { scanned = 0, changed = 0, ms = 0 }
 
-    -- Hàm UI khai báo trước (gán ở phần 3); bản rỗng để engine chạy được trước khi dựng UI
+    -- UI functions declared ahead (assigned in part 3); no-op versions so the engine can run before the UI is built
     local function noop() end
     local closeList, refreshItems, updateWinbox = noop, noop, noop
     local applyTheme
 
-    -- Khoá UI bằng bộ đếm, nhớ trạng thái khoá trước đó (ví dụ Resize mode đang bật)
+    -- Lock the UI with a counter, remembering the previous lock state (for example Resize mode being on)
     local holds, prevLocked = 0, false
     local function hold()
         if holds == 0 then
@@ -499,11 +507,11 @@ return function(D)
         for i = 1, #listeners do snapshot[i] = listeners[i] end
         for i = 1, #snapshot do
             local ok, err = pcall(snapshot[i], entry.id, Theme, entry)
-            if not ok then warn("[Elysera/Theme] onChanged lỗi: " .. tostring(err)) end
+            if not ok then warn("[Elysera/Theme] onChanged error: " .. tostring(err)) end
         end
     end
 
-    -- khoá màu CŨ (đúng thứ Instance đang giữ = giá trị hiện tại của bảng Theme) -> Color3 MỚI
+    -- OLD color key (exactly what the Instances hold = the current value of the Theme table) -> NEW Color3
     local function buildColorMap(from, to)
         local map = {}
         for _, k in ipairs(TOKENS) do
@@ -512,10 +520,10 @@ return function(D)
         return map
     end
 
-    -- Trả về hàm tra: Color3 -> Color3 mới | nil (giữ nguyên).
-    -- Màu không phải token (trắng, đen, màu Lerp, hard-code) -> nil.
-    -- HEAL: màu khớp một token của theme KHÁC (còn sót do closure giữ màu cũ) cũng được đưa về đúng vai trò
-    -- trong theme mới; khoá mơ hồ đã bị loại ở buildHealIndex.
+    -- Returns the lookup function: Color3 -> new Color3 | nil (keep as is).
+    -- A color that is not a token (white, black, a Lerp color, a hard-coded one) -> nil.
+    -- HEAL: a color that matches a token of ANOTHER theme (left over because a closure kept the old color) is also moved to its proper role
+    -- in the new theme; ambiguous keys were dropped in buildHealIndex.
     local function makeLookup(map, target)
         return function(c)
             local key = colorKey(c)
@@ -527,7 +535,7 @@ return function(D)
         end
     end
 
-    -- Thay từng keypoint của ColorSequence; trả về ColorSequence mới hoặc nil nếu không đổi gì
+    -- Replace every keypoint of a ColorSequence; returns the new ColorSequence, or nil if nothing changed
     local function remapSequence(seq, lookup)
         local kps, out, changed = seq.Keypoints, {}, false
         for i = 1, #kps do
@@ -544,7 +552,7 @@ return function(D)
         return nil
     end
 
-    -- Các thuộc tính màu cần xét theo ClassName
+    -- Color properties to check per ClassName
     local BG   = { "BackgroundColor3", "BorderColor3" }
     local TXT  = { "BackgroundColor3", "BorderColor3", "TextColor3", "TextStrokeColor3" }
     local IMG  = { "BackgroundColor3", "BorderColor3", "ImageColor3" }
@@ -585,7 +593,7 @@ return function(D)
         return n
     end
 
-    -- duyệt cây, bỏ cả nhánh có Attribute NoTheme
+    -- walk the tree, skipping every branch that has the NoTheme Attribute
     local function gather(inst, out)
         if inst:GetAttribute("NoTheme") then return end
         out[#out + 1] = inst
@@ -605,7 +613,7 @@ return function(D)
         return #nodes, changed
     end
 
-    -- ScreenGui riêng của Elysera nằm ngoài ScreenGui chính: lớp phủ White/Black Screen và FPS Overlay
+    -- Elysera's own extra ScreenGuis outside the main ScreenGui: the White/Black Screen cover and the FPS Overlay
     local EXTRA_ROOTS = { "ElyseraCover", "ElyseraFpsOverlay" }
 
     local function getRoots()
@@ -621,19 +629,19 @@ return function(D)
         return roots
     end
 
-    -- Áp theme thật sự: ánh xạ -> ghi bảng Theme -> quét -> hook -> lưu -> tín hiệu
+    -- Actually apply the theme: map -> write the Theme table -> sweep -> hook -> save -> signal
     local function commit(entry, opts)
         local t0 = os.clock()
         local lookup = makeLookup(buildColorMap(Theme, entry.colors), entry.colors)
 
-        -- Ghi bảng Theme TRƯỚC khi quét: hover/tween phát sinh giữa chừng đã dùng màu mới
+        -- Write the Theme table BEFORE sweeping: hover/tweens that start meanwhile already use the new colors
         for _, k in ipairs(TOKENS) do Theme[k] = entry.colors[k] end
         currentId = entry.id
 
-        -- tween màu còn đang chạy sẽ kéo thuộc tính về màu CŨ khi kết thúc: hủy và chốt về màu đích đã dịch sang theme mới
+        -- a color tween that is still running would pull the property back to the OLD color when it ends: cancel it and snap to the target color translated to the new theme
         if D.settleColorTweens then
             local okS, errS = pcall(D.settleColorTweens, lookup)
-            if not okS then warn("[Elysera/Theme] settleColorTweens lỗi: " .. tostring(errS)) end
+            if not okS then warn("[Elysera/Theme] settleColorTweens error: " .. tostring(errS)) end
         end
 
         local scanned, changed = remapTree(getRoots(), lookup, opts.yieldEvery)
@@ -642,7 +650,7 @@ return function(D)
         Saved.theme = entry.id
 
         local ok, err = pcall(refreshStateColors)
-        if not ok then warn("[Elysera/Theme] refreshStateColors lỗi: " .. tostring(err)) end
+        if not ok then warn("[Elysera/Theme] refreshStateColors error: " .. tostring(err)) end
         pcall(refreshItems)
         pcall(updateWinbox)
 
@@ -657,13 +665,13 @@ return function(D)
         if nextId and nextId ~= currentId then applyTheme(nextId, nextOpts) end
     end
 
-    -- opts: animate (mặc định true, chỉ có hiệu lực khi UI đang hiện), noSave, force
+    -- opts: animate (default true, only effective while the UI is visible), noSave, force
     function applyTheme(id, opts)
         opts = opts or {}
         local entry = byId[id]
-        if not entry then return false, "Theme không tồn tại: " .. tostring(id) end
+        if not entry then return false, "Theme does not exist: " .. tostring(id) end
 
-        if applying then -- lần chọn sau được nhận khi lần trước xong
+        if applying then -- the next pick is accepted when the previous one is done
             pendingId, pendingOpts = id, opts
             return true
         end
@@ -676,28 +684,28 @@ return function(D)
             applying = true
             local ok, err = pcall(commit, entry, opts)
             applying = false
-            if not ok then warn("[Elysera/Theme] Lỗi khi áp '" .. id .. "': " .. tostring(err)) end
+            if not ok then warn("[Elysera/Theme] Error while applying '" .. id .. "': " .. tostring(err)) end
             drainPending()
             return ok, err
         end
 
         applying = true
-        hold() -- giữ khoá UI suốt hiệu ứng để không có thao tác chen vào giữa
+        hold() -- keep the UI locked during the whole effect so no action can slip in between
         task.spawn(function()
-            -- mỗi bước bọc pcall riêng: dù lỗi ở đâu vẫn phải đi tới release(), nếu không UI sẽ bị khoá vĩnh viễn
+            -- every step is wrapped in its own pcall: wherever an error happens we must still reach release(), otherwise the UI would stay locked forever
             local ok, err = pcall(function()
                 fadeMainUI(FADE_OUT_T, FADE_ALPHA, DIR_OUT)
                 task.wait(FADE_OUT_T)
             end)
-            if not ok then warn("[Elysera/Theme] Lỗi khi làm mờ: " .. tostring(err)) end
+            if not ok then warn("[Elysera/Theme] Error while fading out: " .. tostring(err)) end
 
             ok, err = pcall(commit, entry, { noSave = opts.noSave, yieldEvery = YIELD_EVERY })
-            if not ok then warn("[Elysera/Theme] Lỗi khi áp '" .. id .. "': " .. tostring(err)) end
+            if not ok then warn("[Elysera/Theme] Error while applying '" .. id .. "': " .. tostring(err)) end
 
             ok, err = pcall(function()
                 if isOpen() then fadeMainUI(FADE_IN_T, 0, DIR_OUT) end
             end)
-            if not ok then warn("[Elysera/Theme] Lỗi khi hiện lại: " .. tostring(err)) end
+            if not ok then warn("[Elysera/Theme] Error while fading back in: " .. tostring(err)) end
 
             applying = false
             release()
@@ -707,7 +715,7 @@ return function(D)
     end
 
     --// =====================================================================
-    --// 3. GIAO DIỆN (hàng Theme + danh sách thả xuống)
+    --// 3. INTERFACE (Theme row + dropdown list)
     --// =====================================================================
     local function measure(text, size)
         local ok, v = pcall(TextService.GetTextSize, TextService, text, size,
@@ -716,7 +724,7 @@ return function(D)
         return #text * size * 0.6
     end
 
-    -- đoạn thẳng bo tròn đầu, cùng kỹ thuật với Icons / svgStroke của core
+    -- line segment with round caps, same technique as the core's Icons / svgStroke
     local function drawLine(parent, a, b, thick, color)
         local d, mid = b - a, (a + b) / 2
         local f = new("Frame", {
@@ -731,8 +739,8 @@ return function(D)
         return f
     end
 
-    -- nhấn: thu nhỏ nhẹ. Không dùng pressScale của core vì nó bỏ qua khi UI đang khoá,
-    -- mà danh sách luôn mở trong lúc UI bị khoá
+    -- press: shrink slightly. The core's pressScale is not used because it is skipped while the UI is locked,
+    -- and the list is always open while the UI is locked
     local function pressItem(btn, downScale)
         local scale = new("UIScale", {}, btn)
         local function up() tween(scale, 0.2, { Scale = 1 }, EASE_BACK, DIR_OUT) end
@@ -742,25 +750,25 @@ return function(D)
     end
 
     local Row, Winbox, WinLabel, Arrow, ArrowBars
-    local Catcher, List, ListScroll, ListScrollPad
+    local Catcher, List, ListScroll, ListScrollPad, ListStroke
     local items = {}
     local titleW, listW = 50, LIST_MIN_W
     local listOpen, listToken = false, 0
-    local lastRight, lastTop, lastFlip = 0, 0, false
+    local lastRight, lastTop, lastFlip, lastW, lastH = 0, 0, false, 0, 0
 
-    local DOTS_W  = 4 * 10 + 3 * 3   -- 4 chấm 10px, khe 3px
+    local DOTS_W  = 4 * 10 + 3 * 3   -- 4 dots of 10px, 3px gaps
     local DOTS_X  = 12
     local NAME_X  = DOTS_X + DOTS_W + 9
-    local RIGHT_Z = 28               -- vùng dấu ✓ bên phải mỗi mục
+    local RIGHT_Z = 28               -- area of the ✓ mark on the right of every item
 
     function updateWinbox()
         if not Winbox then return end
         local entry = byId[currentId]
         WinLabel.Text = entry.name
-        -- rộng chữ + 20 + vùng mũi tên; mở rộng về phía trái vì winbox neo sát lề phải
+        -- text width + 20 + arrow zone; grows toward the left because the winbox is anchored to the right edge
         local w = clamp(math.ceil(measure(entry.name, 13)) + 20 + ARROW_ZONE, WIN_MIN_W, WIN_MAX_W)
         local rowW = Row.AbsoluteSize.X
-        if rowW > 0 then -- UI nhỏ nhất: chừa chỗ cho tiêu đề (14 + chữ), khe 8, lề phải 12
+        if rowW > 0 then -- smallest UI: leave room for the title (14 + text), a gap of 8, and a right margin of 12
             w = math.min(w, math.max(64, rowW - 14 - titleW - 8 - 12))
         end
         Winbox.Size = UDim2.fromOffset(w, WIN_H)
@@ -783,8 +791,14 @@ return function(D)
         end
     end
 
-    -- Vị trí danh sách: mép trên cách đáy hàng 6px, mép phải thẳng hàng mép phải hàng (mở về bên trái).
-    -- Cao tối đa 6 mục hoặc phần còn lại trong cửa sổ trừ lề 8px; thiếu chỗ (< 3 mục) thì dùng phía có nhiều chỗ hơn.
+    -- Asks the core to repaint the visible tab (see repaintContent in MainWeb.lua). Optional, so the module still runs with an older core.
+    local function repaintTab()
+        local fn = D.repaintContent
+        if fn then fn() end
+    end
+
+    -- List position: the top edge is 6px below the bottom of the row, the right edge lines up with the row's right edge (opens toward the left).
+    -- At most 6 items tall, or the space left in the window minus an 8px margin; when there is not enough room (< 3 items), use the side with more room.
     local function positionList()
         local rp = Row.AbsolutePosition - MainUI.AbsolutePosition
         local rs = Row.AbsoluteSize
@@ -801,9 +815,20 @@ return function(D)
         local h = math.max(ITEM_H + LIST_PAD * 2, math.min(fullH, maxH, room))
         local top = flip and (rp.Y - 6 - h) or (rp.Y + rs.Y + 6)
 
-        List.Size = UDim2.fromOffset(math.min(listW, rs.X), h)
-        ListScrollPad.PaddingRight = UDim.new(0, fullH > h and 6 or 0) -- chừa chỗ thanh cuộn
+        ListScrollPad.PaddingRight = UDim.new(0, fullH > h and 6 or 0) -- leave room for the scrollbar
         lastRight, lastTop, lastFlip = rp.X + rs.X, top, flip
+        lastW, lastH = math.min(listW, rs.X), h
+    end
+
+    -- Put the list at its final rectangle. The list is a plain Frame, not a CanvasGroup: a CanvasGroup nested inside the
+    -- MainUI CanvasGroup made the engine drop the cached render of the tab behind it, which hid every function in the
+    -- panel until the next touch. The items keep their final size and are only revealed by the clipping of the growing frame.
+    local function placeList()
+        List.AnchorPoint = Vector2.new(1, lastFlip and 1 or 0)
+        List.Position = UDim2.fromOffset(lastRight, lastFlip and (lastTop + lastH) or lastTop)
+        ListScroll.AnchorPoint = Vector2.new(0, lastFlip and 1 or 0)
+        ListScroll.Position = UDim2.fromScale(0, lastFlip and 1 or 0)
+        ListScroll.Size = UDim2.new(1, 0, 0, lastH - LIST_PAD * 2)
     end
 
     local function openList()
@@ -813,17 +838,21 @@ return function(D)
         hold()
         refreshItems()
         positionList()
+        placeList()
 
-        local dy = lastFlip and 6 or -6
-        List.Position = UDim2.fromOffset(lastRight, lastTop + dy)
-        List.GroupTransparency = 1
+        -- unfold: the frame grows from zero height to its final height while its background fades in
+        List.Size = UDim2.fromOffset(lastW, 0)
+        List.BackgroundTransparency = 1
+        ListStroke.Transparency = 1
         List.Visible = true
         Catcher.Visible = true
         tween(List, LIST_OPEN_T, {
-            Position = UDim2.fromOffset(lastRight, lastTop),
-            GroupTransparency = 0,
+            Size = UDim2.fromOffset(lastW, lastH),
+            BackgroundTransparency = 0,
         }, EASE_QUAD, DIR_OUT)
+        tween(ListStroke, LIST_OPEN_T, { Transparency = 0 }, EASE_QUAD, DIR_OUT)
         setArrow(true)
+        repaintTab() -- an overlay just appeared: make sure the panel behind it stays painted
     end
 
     function closeList(instant)
@@ -831,30 +860,34 @@ return function(D)
         listOpen = false
         listToken = listToken + 1
         local token = listToken
-        release() -- hoàn khoá UI
+        release() -- release the UI lock
         Catcher.Visible = false
         setArrow(false)
 
         if instant then
             List.Visible = false
+            repaintTab()
             return
         end
+        -- fold: the frame shrinks back to zero height while its background fades out
         local t = tween(List, LIST_CLOSE_T, {
-            Position = UDim2.fromOffset(lastRight, lastTop + (lastFlip and 6 or -6)),
-            GroupTransparency = 1,
+            Size = UDim2.fromOffset(lastW, 0),
+            BackgroundTransparency = 1,
         }, EASE_QUAD, DIR_IN)
+        tween(ListStroke, LIST_CLOSE_T, { Transparency = 1 }, EASE_QUAD, DIR_IN)
         t.Completed:Connect(function(state)
             if state == Enum.PlaybackState.Completed and token == listToken then
                 List.Visible = false
+                repaintTab() -- the overlay is gone: make sure the panel is painted again
             end
         end)
     end
 
     local function pick(id)
         if id == currentId then
-            closeList(false) -- chọn lại mục đang chọn: chỉ đóng
+            closeList(false) -- the current item was picked again: just close
         else
-            applyTheme(id, { animate = true }) -- tự đóng danh sách rồi mờ -> remap -> hiện lại
+            applyTheme(id, { animate = true }) -- closes the list by itself, then fade -> remap -> fade back in
         end
     end
 
@@ -872,7 +905,7 @@ return function(D)
         corner(Item, 6)
         pressItem(Item, 0.97)
 
-        -- thanh nhấn bên trái cho mục đang chọn (cùng ngôn ngữ với TabPill)
+        -- accent bar on the left for the selected item (same visual language as the TabPill)
         local Bar = new("Frame", {
             Name = "AccentBar",
             AnchorPoint = Vector2.new(0, 0.5),
@@ -884,7 +917,7 @@ return function(D)
         }, Item)
         corner(Bar, 2)
 
-        -- dải 4 chấm xem trước: màu CỐ ĐỊNH của chính theme đó -> gắn NoTheme để remap bỏ qua cả nhánh
+        -- strip of 4 preview dots: FIXED colors of that very theme -> tagged NoTheme so the remap skips the whole branch
         local Dots = new("Frame", {
             Name = "Swatch",
             AnchorPoint = Vector2.new(0, 0.5),
@@ -907,7 +940,7 @@ return function(D)
                 BorderSizePixel = 0,
             }, Dots)
             corner(dot, 5)
-            if key == "Background" then stroke(dot, c.Border, 1) end -- chấm nền cần viền mới nhìn thấy
+            if key == "Background" then stroke(dot, c.Border, 1) end -- the background dot needs a border to be visible
         end
 
         local NameLabel = label(Item, {
@@ -921,7 +954,7 @@ return function(D)
             TextTruncate = Enum.TextTruncate.AtEnd,
         })
 
-        -- dấu ✓ vẽ bằng 2 đoạn thẳng (không phụ thuộc font có glyph ✓ hay không)
+        -- the ✓ mark is drawn with 2 line segments (independent of whether the font has a ✓ glyph)
         local Check = new("Frame", {
             Name = "Check",
             AnchorPoint = Vector2.new(1, 0.5),
@@ -946,7 +979,7 @@ return function(D)
     end
 
     local function createList()
-        -- lớp bắt chạm: trong suốt, phủ toàn MainUI, chặn mọi thao tác phía sau; chạm vào là đóng
+        -- touch catcher: transparent, covers the whole MainUI, blocks every action behind it; touching it closes the list
         Catcher = new("TextButton", {
             Name = "ThemeListCatcher",
             Size = UDim2.fromScale(1, 1),
@@ -959,24 +992,26 @@ return function(D)
         }, MainUI)
         Catcher.MouseButton1Click:Connect(function() closeList(false) end)
 
-        -- đủ rộng để tên dài nhất không bị cắt, nhưng không vượt quá bề rộng hàng (xem positionList)
+        -- wide enough that the longest name is not cut off, but never wider than the row (see positionList)
         local widest = 0
         for _, t in ipairs(THEMES) do widest = math.max(widest, measure(t.name, 13)) end
         listW = math.max(LIST_MIN_W, math.ceil(widest) + NAME_X + RIGHT_Z + LIST_PAD * 2 + 8)
 
-        List = new("CanvasGroup", {
+        List = new("Frame", {
             Name = "ThemeList",
             Visible = false,
-            Active = true, -- chạm vào khoảng trống trong danh sách không bị lớp bắt chạm nuốt mất
+            Active = true, -- touching an empty spot in the list is not swallowed by the touch catcher
+            ClipsDescendants = true, -- the unfold animation reveals the items by clipping
             AnchorPoint = Vector2.new(1, 0),
             Size = UDim2.fromOffset(listW, 120),
             BackgroundColor3 = Theme.Panel,
+            BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            GroupTransparency = 1,
             ZIndex = Z_LIST,
         }, MainUI)
         corner(List, 8)
-        stroke(List, Theme.Border, 1)
+        ListStroke = stroke(List, Theme.Border, 1)
+        ListStroke.Transparency = 1
         padding(List, LIST_PAD, LIST_PAD, LIST_PAD, LIST_PAD)
 
         ListScroll = new("ScrollingFrame", {
@@ -995,11 +1030,12 @@ return function(D)
 
         for index, entry in ipairs(THEMES) do createListItem(entry, index) end
 
-        -- cửa sổ đổi cỡ khi danh sách đang mở -> đặt lại vị trí
+        -- the window changed size while the list is open -> reposition
         MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
             if listOpen then
                 positionList()
-                List.Position = UDim2.fromOffset(lastRight, lastTop)
+                placeList()
+                List.Size = UDim2.fromOffset(lastW, lastH)
             end
         end)
     end
@@ -1007,7 +1043,7 @@ return function(D)
     local function createThemeRow()
         Row = new("Frame", {
             Name = "ThemeRow",
-            LayoutOrder = 3, -- dưới Anti Chat (1) và Auto Execute (2); Diagnostics là 4
+            LayoutOrder = 3, -- below Anti Chat (1) and Auto Execute (2); Diagnostics is 4
             Size = UDim2.new(1, 0, 0, 50),
             BackgroundColor3 = Theme.Panel,
             BorderSizePixel = 0,
@@ -1026,7 +1062,7 @@ return function(D)
             TextColor3 = Theme.Text,
         })
 
-        -- winbox: hiển thị theme đang chọn, neo sát lề phải
+        -- winbox: shows the selected theme, anchored to the right edge
         Winbox = new("TextButton", {
             Name = "Winbox",
             AnchorPoint = Vector2.new(1, 0.5),
@@ -1038,11 +1074,11 @@ return function(D)
             Text = "",
         }, Row)
         corner(Winbox, 6)
-        -- TextButton: chế độ Contextual mặc định sẽ viền CHỮ (mà Text rỗng nên mất viền), phải ép viền khung
+        -- TextButton: the default Contextual mode would outline the TEXT (and the Text is empty, so the border would vanish), so the frame border must be forced
         stroke(Winbox, Theme.Border, 1).ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         pressScale(Winbox, 0.97)
 
-        -- tên theme canh giữa trong toàn bộ chiều ngang winbox; đệm 20 hai bên để không chạm mũi tên
+        -- theme name centered across the whole winbox width; 20px padding on both sides so it never touches the arrow
         WinLabel = label(Winbox, {
             Name = "Name",
             Size = UDim2.fromScale(1, 1),
@@ -1054,7 +1090,7 @@ return function(D)
         })
         padding(WinLabel, 20, 20)
 
-        -- mũi tên: 2 đoạn thẳng xoay ±45°, xoay 180° + đổi sang Sakura khi danh sách mở
+        -- arrow: 2 line segments rotated ±45°, rotated 180° + switched to Sakura while the list is open
         Arrow = new("Frame", {
             Name = "Arrow",
             AnchorPoint = ANCHOR_CENTER,
@@ -1084,26 +1120,26 @@ return function(D)
     end
 
     --// =====================================================================
-    --// 4. KHỞI TẠO + API
+    --// 4. INIT + API
     --// =====================================================================
-    -- Theme đã lưu: áp NGAY (không hiệu ứng, UI chưa hiện) trước khi dựng hàng Theme,
-    -- nên người dùng không thấy nháy màu và hàng Theme được dựng sẵn bằng màu mới
+    -- Saved theme: apply it RIGHT AWAY (no effect, the UI is not visible yet) before building the Theme row,
+    -- so the user sees no color flash and the Theme row is built with the new colors from the start
     local savedId = Saved.theme
     if type(savedId) == "string" and savedId ~= currentId and byId[savedId] then
         local ok, err = pcall(applyTheme, savedId, { animate = false, noSave = true })
-        if not ok then warn("[Elysera/Theme] Không áp được theme đã lưu: " .. tostring(err)) end
+        if not ok then warn("[Elysera/Theme] Could not apply the saved theme: " .. tostring(err)) end
     end
-    ScreenGui:SetAttribute("Theme", currentId) -- id không hợp lệ đã lưu sẽ bị ghi đè bằng id đang dùng
+    ScreenGui:SetAttribute("Theme", currentId) -- an invalid saved id gets overwritten by the id in use
 
     local okUI, errUI = pcall(function()
         createList()
         createThemeRow()
         refreshItems()
     end)
-    if not okUI then warn("[Elysera/Theme] Không dựng được hàng Theme: " .. tostring(errUI)) end
+    if not okUI then warn("[Elysera/Theme] Could not build the Theme row: " .. tostring(errUI)) end
 
     --// =====================================================================
-    --// PHẦN C. AUTO EXECUTE  (cơ chế nằm ở core: ctx.AutoExecute; ở đây chỉ dựng công tắc)
+    --// PART C. AUTO EXECUTE  (the mechanism lives in the core: ctx.AutoExecute; only the switch is built here)
     --// =====================================================================
     if AutoExec and CreateToggleOption then
         local okC, errC = pcall(function()
@@ -1113,7 +1149,7 @@ return function(D)
             local Row = Switch.Parent
             Row.LayoutOrder = 2
 
-            -- tiêu đề + dòng phụ (hàng cao 56 để chứa 2 dòng)
+            -- title + subtitle line (the row is 56 tall to hold 2 lines)
             for _, child in ipairs(Row:GetChildren()) do
                 if child:IsA("TextLabel") and child.Text == "Auto Execute" then
                     child.Position = UDim2.fromOffset(14, 8)
@@ -1145,15 +1181,15 @@ return function(D)
                 local ok, why = AutoExec.set(on)
                 if on and not ok then
                     showReason(why)
-                    task.defer(setState, false, true) -- trả công tắc về OFF (silent: không gọi lại hàm này)
+                    task.defer(setState, false, true) -- put the switch back to OFF (silent: does not call this function again)
                 end
             end)
         end)
-        if not okC then warn("[Elysera/Settings] Không dựng được Auto Execute: " .. tostring(errC)) end
+        if not okC then warn("[Elysera/Settings] Could not build Auto Execute: " .. tostring(errC)) end
     end
 
     --// =====================================================================
-    --// PHẦN D. DIAGNOSTICS  (executor hỗ trợ API nào, module nạp từ đâu, Copy report, Unload)
+    --// PART D. DIAGNOSTICS  (which APIs the executor supports, where each module was loaded from, Copy report, Unload)
     --// =====================================================================
     if UI and UI.CreateSection and CreateInfoRow and CreateStyledButton then
         local okD, errD = pcall(function()
@@ -1165,7 +1201,7 @@ return function(D)
 
             local function isFn(v) return typeof(v) == "function" end
 
-            -- Danh sách này khớp đúng cách từng tính năng tự dò API (xem Status_Server / FPS / Anti Chat ở trên)
+            -- This list matches exactly how each feature probes for APIs (see Status_Server / FPS / Anti Chat above)
             local caps = {
                 { title = "File access", affects = "Settings, scripts, cache",
                   ok = D.canFS == true },
@@ -1199,12 +1235,12 @@ return function(D)
                 if ok and name then execName = tostring(name) .. (ver and (" " .. tostring(ver)) or "") end
             end
 
-            -- Hàng: tiêu đề (+ "· phần bị ảnh hưởng" màu phụ) bên trái, giá trị bên phải
+            -- Row: title (+ "· affected part" in the secondary color) on the left, value on the right
             local function addRow(title, affects)
                 local Frame = CreateInfoRow(Body, title)
                 local Left = Frame:FindFirstChild("Left")
                 if Left then
-                    Left.Size = UDim2.new(1, -158, 1, 0) -- Value chiếm 150px bên phải
+                    Left.Size = UDim2.new(1, -158, 1, 0) -- Value takes 150px on the right
                     if affects then
                         label(Left, {
                             LayoutOrder = 2,
@@ -1240,7 +1276,7 @@ return function(D)
                 value.TextColor3 = cap.ok and Theme.AccentPink or Theme.Danger
             end
 
-            -- Module nạp từ đâu (web = bản mới tải về, cache = bản lưu lần chạy tốt gần nhất, error = không nạp được)
+            -- Where each module was loaded from (web = fresh download, cache = copy saved from the most recent good run, error = could not be loaded)
             local _, modValue = addRow("Modules", "web / cache / error")
             local function refreshModules()
                 local web, cache, err = 0, 0, 0
@@ -1256,12 +1292,12 @@ return function(D)
                 modValue.TextColor3 = (err > 0 and Theme.Danger) or (cache > 0 and Theme.AccentPurple) or Theme.AccentPink
             end
             refreshModules()
-            -- Settings được nạp cuối cùng nên lúc dựng chưa tính chính nó: cập nhật lại khi mở tab
+            -- Settings is loaded last, so it does not count itself yet when built: update again when the tab opens
             Tab:GetPropertyChangedSignal("Visible"):Connect(function()
                 if Tab.Visible then refreshModules() end
             end)
 
-            -- Báo cáo để gửi khi cần hỗ trợ (không chứa JobId / UserId)
+            -- Report to send when support is needed (contains no JobId / UserId)
             local function buildReport()
                 local out = { "Elysera diagnostics", "Executor: " .. execName }
                 for _, cap in ipairs(caps) do
@@ -1304,11 +1340,11 @@ return function(D)
                 UnloadBtn.TextColor3 = Theme.Danger
                 UnloadBtn.MouseButton1Click:Connect(function()
                     if isLocked() then return end
-                    requestClose() -- cùng hộp thoại "Close script" với nút đóng trên thanh trên
+                    requestClose() -- same "Close script" dialog as the close button in the top bar
                 end)
             end
         end)
-        if not okD then warn("[Elysera/Settings] Không dựng được Diagnostics: " .. tostring(errD)) end
+        if not okD then warn("[Elysera/Settings] Could not build Diagnostics: " .. tostring(errD)) end
     end
 
     ScreenGui.Destroying:Connect(function() closeList(true) end)
@@ -1326,7 +1362,7 @@ return function(D)
         GetTheme       = function() local e = byId[currentId] return e.id, e.name end,
         OnThemeChanged = onChanged,
         Stats          = stats,
-        -- dành cho core (closeUI)
+        -- reserved for the core (closeUI)
         isListOpen     = function() return listOpen end,
         hideList       = function() closeList(true) end,
     }

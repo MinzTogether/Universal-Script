@@ -1,3 +1,11 @@
+--// ##########################################################################################
+--// ##                                                                                      ##
+--// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
+--// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
+--// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
+--// ##                                                                                      ##
+--// ##########################################################################################
+
 --// ================= SERVICES =================
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -11,13 +19,13 @@ local Workspace        = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
 --// ================= CLEANUP PREVIOUS INSTANCE =================
--- GUI nằm ở CoreGui, hoặc ở PlayerGui khi executor không cho ghi vào CoreGui (xem mục ROOT) -> dọn cả hai nơi
+-- The GUI lives in CoreGui, or in PlayerGui when the executor cannot write to CoreGui (see ROOT) -> clean up both places
 do
     local roots = { CoreGui }
     local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if playerGui then roots[#roots + 1] = playerGui end
     for _, root in ipairs(roots) do
-        for _, name in ipairs({ "ElyseraUI", "ElyseraCover" }) do
+        for _, name in ipairs({ "ElyseraUI", "ElyseraCover", "ElyseraFpsOverlay" }) do
             local old = root:FindFirstChild(name)
             if old then pcall(old.Destroy, old) end
         end
@@ -76,17 +84,17 @@ ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.ResetOnSpawn = false
 ScreenGui.DisplayOrder = 10
 
--- Gắn GUI: ưu tiên CoreGui; executor không cho ghi vào CoreGui thì rơi về PlayerGui.
--- GuiRoot là nơi thực sự chứa GUI: module gắn GUI riêng của mình (lớp phủ, ESP...) vào ctx.GuiRoot,
--- còn ctx.CoreGui vẫn là dịch vụ CoreGui thật (để tìm RobloxGui...).
+-- Mount the GUI: prefer CoreGui; fall back to PlayerGui when the executor cannot write to CoreGui.
+-- GuiRoot is where the GUI really lives: modules mount their own GUI (cover, ESP...) into ctx.GuiRoot,
+-- while ctx.CoreGui stays the real CoreGui service (used to find RobloxGui...).
 local GuiRoot = CoreGui
 do
     local okParent = pcall(function() ScreenGui.Parent = CoreGui end)
     if not okParent or ScreenGui.Parent ~= CoreGui then
         GuiRoot = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5)
-        assert(GuiRoot, "[Elysera] Không tìm thấy nơi gắn GUI (CoreGui và PlayerGui đều không dùng được)")
+        assert(GuiRoot, "[Elysera] No place to mount the GUI (neither CoreGui nor PlayerGui is usable)")
         ScreenGui.Parent = GuiRoot
-        warn("[Elysera] Không ghi được vào CoreGui, dùng PlayerGui")
+        warn("[Elysera] Cannot write to CoreGui, using PlayerGui")
     end
 end
 
@@ -138,13 +146,13 @@ local function label(parent, props)
     return new("TextLabel", props, parent)
 end
 
--- Theme: các tween có thuộc tính màu ĐANG CHẠY được ghi lại để Settings.lua (phần Theme) chốt chúng về màu đích của theme mới
--- khi đổi theme giữa chừng (nếu không, tween sẽ kéo thuộc tính về màu theme cũ lúc kết thúc).
+-- Theme: tweens of color properties that are RUNNING are recorded so Settings.lua (Theme part) can snap them to the new theme's target color
+-- when the theme changes mid-tween (otherwise the tween would pull the property back to the old theme's color when it ends).
 local liveColorTweens = setmetatable({}, { __mode = "k" }) -- [tween] = { inst, props }
 local tween
 do
-    -- TweenInfo không đổi sau khi tạo nên dùng chung 1 đối tượng cho mỗi bộ (style, direction, duration).
-    -- Hiệu ứng hover/nhấn tạo tween ở MỌI sự kiện; cache này tránh cấp phát TweenInfo mới mỗi lần.
+    -- A TweenInfo never changes after creation, so one object is shared per (style, direction, duration) set.
+    -- Hover/press effects create a tween on EVERY event; this cache avoids allocating a new TweenInfo each time.
     local infoCache, infoCount = {}, 0 -- [style][direction][duration] = TweenInfo
     local function infoFor(time, style, dir)
         local byStyle = infoCache[style]
@@ -153,7 +161,7 @@ do
         if not byDir then byDir = {}; byStyle[dir] = byDir end
         local info = byDir[time]
         if not info then
-            if infoCount >= 128 then -- thời lượng tính lúc chạy có thể làm cache phình mãi: quá ngưỡng thì xóa làm lại
+            if infoCount >= 128 then -- durations computed at runtime could grow the cache forever: past the limit, clear it and start over
                 infoCache, infoCount = {}, 0
                 byDir = {}
                 infoCache[style] = { [dir] = byDir }
@@ -178,7 +186,7 @@ do
         return t
     end
 end
--- Hủy các tween màu đang chạy và đặt thẳng giá trị đích; translate(Color3) trả về Color3 mới hoặc nil (giữ nguyên)
+-- Cancel running color tweens and set the target values directly; translate(Color3) returns a new Color3 or nil (keep as is)
 local function settleColorTweens(translate)
     for t, rec in pairs(liveColorTweens) do
         liveColorTweens[t] = nil
@@ -254,13 +262,13 @@ local canFS = typeof(writefile) == "function"
     and typeof(readfile) == "function"
     and typeof(isfile) == "function"
 
---// ---- Thư mục dữ liệu: workspace/Elysera/ ----
--- Mọi file .json của script và của các module nằm trong thư mục này (không để rải ở thư mục gốc workspace).
--- Module nhận hàm dataPath qua ctx. Executor không hỗ trợ thư mục -> dataPath trả về tên file trơn như cũ.
+--// ---- Data folder: workspace/Elysera/ ----
+-- Every .json file of the script and its modules lives in this folder (nothing is scattered in the workspace root).
+-- Modules receive the dataPath function through ctx. If the executor has no folder support, dataPath returns the plain file name as before.
 local dataPath
 do
     local DATA_FOLDER = "Elysera"
-    -- File .json cũ ở thư mục gốc workspace: chuyển vào thư mục mới một lần để không mất dữ liệu đã lưu
+    -- Old .json files in the workspace root: move them into the new folder once so saved data is not lost
     local LEGACY_FILES = {
         "Elysera_Settings.json", "Elysera_Fps.json", "Elysera_Waypoints.json", "Elysera_Servers.json",
         "L-scr.json", "L-scr.bak.json", "L-scr.state.json",
@@ -283,7 +291,7 @@ do
 
     dataPath = function(name)
         if not useFolder then return name end
-        ensureFolder() -- tạo lại nếu thư mục bị xóa trong lúc đang chạy
+        ensureFolder() -- recreate the folder if it was deleted while running
         return DATA_FOLDER .. "/" .. name
     end
 
@@ -360,9 +368,9 @@ local function saveSettings()
             w = curW, h = curH,
             uiX = uiPosition.X.Offset, uiY = uiPosition.Y.Offset,
             toggle = { t.X.Scale, t.X.Offset, t.Y.Scale, t.Y.Offset },
-            fpsMode = ScreenGui:GetAttribute("FpsMode"), -- mode FPS Profile đã chọn (không tự áp khi nạp)
-            theme = ScreenGui:GetAttribute("Theme") or Saved.theme, -- id theme đang dùng (Settings.lua tự áp khi nạp)
-            autoExecute = Saved.autoExecute == true, -- Auto Execute (xem mục AUTO EXECUTE); mã queue_on_teleport đọc lại khoá này ở server mới
+            fpsMode = ScreenGui:GetAttribute("FpsMode"), -- selected FPS Profile mode (not applied automatically on load)
+            theme = ScreenGui:GetAttribute("Theme") or Saved.theme, -- id of the theme in use (Settings.lua applies it on load)
+            autoExecute = Saved.autoExecute == true, -- Auto Execute (see the AUTO EXECUTE section); the queue_on_teleport code reads this key again on the new server
         }
         pcall(writefile, dataPath(SAVE_FILE), HttpService:JSONEncode(data))
     end)
@@ -585,7 +593,7 @@ function Icons.reset(h, c)
     end
 end
 
--- Icon vẽ theo SVG (viewBox 48x48, nét 4, đầu/khớp bo tròn)
+-- Icons drawn from SVG data (viewBox 48x48, stroke 4, round caps and joins)
 local function svgStroke(h, pts, color, closed)
     local unit  = h.Size.X.Offset / 48
     local thick = 4 * unit
@@ -742,7 +750,7 @@ do
             NumberSequenceKeypoint.new(1.00, 1),
         }),
     }, HighlightStroke)
-    -- Viền xoay vô hạn: tạm dừng khi UI đang ẩn để khỏi cập nhật thuộc tính mỗi khung hình vô ích
+    -- Endless spinning border: paused while the UI is hidden so no property is updated every frame for nothing
     local spin = TweenService:Create(Gradient, TweenInfo.new(2, EASE_LINEAR, DIR_IN, -1), { Rotation = 360 })
     spin:Play()
     MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
@@ -810,7 +818,7 @@ end
 
 makeDraggable(TopBar, MainUI, commitUIState)
 
-local OVERLAY_TRANSPARENCY = 0.45 -- 0 = đen đặc, 1 = trong suốt hoàn toàn
+local OVERLAY_TRANSPARENCY = 0.45 -- 0 = solid black, 1 = fully transparent
 
 local InteractionBlocker = new("Frame", {
     Name = "InteractionBlocker",
@@ -848,8 +856,8 @@ local function setOverlay(on)
     end
 end
 
--- yesToken là TÊN token màu của nút Yes ("Danger", "AccentPink"...), không phải Color3:
--- màu được tra lại từ Theme mỗi lần cần (hover/leave) nên vẫn đúng sau khi đổi theme.
+-- yesToken is the NAME of the Yes button's color token ("Danger", "AccentPink"...), not a Color3:
+-- the color is looked up from Theme every time it is needed (hover/leave), so it stays correct after a theme change.
 local function createDialog(name, title, message, yesToken, yesText, noText)
     local Box = new("CanvasGroup", {
         Name = name,
@@ -864,8 +872,8 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
     }, ScreenGui)
     corner(Box, 12)
 
-    -- nền chuyển sắc nhẹ: PanelAlt (trên) -> Panel (dưới)
-    -- (đặt trên Frame riêng, vì UIGradient trên CanvasGroup sẽ nhuộm luôn cả chữ và nút bên trong)
+    -- soft gradient background: PanelAlt (top) -> Panel (bottom)
+    -- (placed on its own Frame, because a UIGradient on a CanvasGroup would also tint the text and buttons inside)
     Box.BackgroundTransparency = 1
     local Bg = new("Frame", {
         Name = "Bg",
@@ -880,14 +888,14 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
         Rotation = 90,
     }, Bg)
 
-    -- viền gradient tím -> màu nhấn của hộp
+    -- gradient border: purple -> the box's accent color
     local BoxStroke = stroke(Box, WHITE, 1.5)
     new("UIGradient", {
         Color = ColorSequence.new(Theme.AccentPurple, Theme[yesToken]),
         Rotation = 45,
     }, BoxStroke)
 
-    -- thanh accent phía trên
+    -- accent bar at the top
     local Accent = new("Frame", {
         Size = UDim2.new(1, 0, 0, 3),
         BackgroundColor3 = WHITE,
@@ -898,7 +906,7 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
         Color = ColorSequence.new(Theme.AccentPurple, Theme[yesToken]),
     }, Accent)
 
-    -- tiêu đề
+    -- title
     label(Box, {
         Size = UDim2.new(1, -32, 0, 20),
         Position = UDim2.fromOffset(16, 16),
@@ -909,7 +917,7 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
         ZIndex = 52,
     })
 
-    -- nội dung
+    -- message
     local MessageLabel = label(Box, {
         Size = UDim2.new(1, -32, 0, 44),
         Position = UDim2.fromOffset(16, 40),
@@ -922,7 +930,7 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
         ZIndex = 52,
     })
 
-    -- đường kẻ phân cách
+    -- divider line
     new("Frame", {
         Size = UDim2.new(1, -32, 0, 1),
         Position = UDim2.new(0, 16, 1, -60),
@@ -932,7 +940,7 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
         ZIndex = 52,
     }, Box)
 
-    -- bgToken / textToken là TÊN token; Theme[...] được tra lại lúc hover/leave (không chụp màu lúc tạo)
+    -- bgToken / textToken are token NAMES; Theme[...] is looked up again on hover/leave (colors are not captured at creation time)
     local function button(text, pos, bgToken, textToken, outlined)
         local Btn = new("TextButton", {
             Size = UDim2.new(0.5, -22, 0, 34),
@@ -1002,14 +1010,14 @@ end
 
 local CloseDialog = createDialog("ConfirmBox", "Close script", "You want to close this script?", "Danger")
 local ResetDialog = createDialog("NotBox2", "Reset UI", "Do you want to reset UI?", "AccentPink")
--- NotBoxDe (tab Script): xác nhận xoá function, nội dung được gán lại mỗi lần mở
+-- NotBoxDe (Script tab): confirms deleting a function; its message is reassigned every time it opens
 local DeleteDialog = createDialog("NotBoxDe", "Delete function", "Do you want to delete this function?", "Danger", "Yes, Delete", "Cancel")
 
 --// ================= OPEN / CLOSE ANIMATION =================
 local isOpen = false
 local fadeTween
-local ScriptDialog -- NotBoxA (tab Script), được tạo ở phần SCRIPT TAB
-local ThemeAPI     -- API Theme do module Settings.lua trả về (tab Settings); closeUI dùng để đóng danh sách thả xuống
+local ScriptDialog -- NotBoxA (Script tab), created in the SCRIPT TAB section
+local ThemeAPI     -- Theme API returned by the Settings.lua module (Settings tab); closeUI uses it to close the dropdown list
 
 local function fadeMainUI(time, target, dir)
     if fadeTween then fadeTween:Cancel() end
@@ -1017,10 +1025,14 @@ local function fadeMainUI(time, target, dir)
     return fadeTween
 end
 
+-- Forces the visible tab to repaint. Assigned in the TAB SYSTEM section; declared here so openUI and the UI kit can call it.
+local repaintContent = function() end
+
 local function openUI()
     isOpen = true
     MainUI.Visible = true
     fadeMainUI(POPUP_TIME, 0, DIR_OUT)
+    repaintContent() -- the tab was last drawn while the UI was hidden: make sure it is painted when the UI appears
 end
 
 local function closeUI()
@@ -1029,7 +1041,7 @@ local function closeUI()
     if ResetDialog.Box.Visible then ResetDialog.hide() end
     if DeleteDialog.Box.Visible then DeleteDialog.hide() end
     if ScriptDialog and ScriptDialog.Box.Visible then ScriptDialog.hide() end
-    if ThemeAPI and ThemeAPI.isListOpen() then ThemeAPI.hideList() end -- đóng danh sách Theme + hoàn khoá UI
+    if ThemeAPI and ThemeAPI.isListOpen() then ThemeAPI.hideList() end -- close the Theme list + release the UI lock
     fadeMainUI(CLOSE_TIME, 1, DIR_IN).Completed:Connect(function(state)
         if state == Enum.PlaybackState.Completed and not isOpen then
             MainUI.Visible = false
@@ -1077,7 +1089,7 @@ CloseBtn.MouseButton1Click:Connect(function()
     if uiLocked then return end
     CloseDialog.show()
 end)
--- Đóng script = gỡ hẳn: tắt luôn Auto Execute để script không tự quay lại sau lần teleport kế tiếp
+-- Closing the script = unloading it for good: Auto Execute is turned off too, so the script does not come back after the next teleport
 local function unloadUI()
     if Saved.autoExecute == true then
         Saved.autoExecute = false
@@ -1236,6 +1248,9 @@ local activeTab
 local switchToken = 0
 local ContentTweens = {}
 
+-- The tab that is shown when the script loads for the first time (must match a CreateTab name below)
+local DEFAULT_TAB = "Status & Server"
+
 local TabPill = new("Frame", {
     Name = "TabPill",
     Size = UDim2.new(1, 0, 0, TAB_HEIGHT),
@@ -1247,8 +1262,8 @@ local TabPill = new("Frame", {
 }, TabScroll)
 corner(TabPill, 6)
 
--- Kiểu highlight của tab list: nền tím -> hồng mờ dần từ trái sang phải + thanh accent bên trái
--- (khác với Player Info: viền tím sáng chạy vòng quanh)
+-- Highlight style of the tab list: purple -> pink background fading from left to right + an accent bar on the left
+-- (different from Player Info: a bright purple border that runs around)
 new("UIGradient", {
     Color = ColorSequence.new(Theme.AccentPurple, Theme.AccentPink),
     Transparency = NumberSequence.new({
@@ -1279,12 +1294,54 @@ local function cancelContentTween(content)
     end
 end
 
-local function selectTab(name)
-    if activeTab == name then return end
+-- Some devices drop the cached render of a CanvasGroup when another overlay (a dropdown list, a collapsible section)
+-- appears or disappears, and every function in the panel vanishes until the next touch. Changing GroupTransparency by an
+-- invisible amount for a moment makes the engine redraw the group, exactly like that touch does.
+do
+    local repaintToken = 0
+    repaintContent = function()
+        task.defer(function()
+            local data = activeTab and TabData[activeTab]
+            local content = data and data.content
+            if not content or not content.Parent or not content.Visible then return end
+            if content.GroupTransparency ~= 0 then return end -- a fade is running: it already repaints the group
+            repaintToken += 1
+            local token = repaintToken
+            content.GroupTransparency = 0.004
+            task.wait(0.06)
+            if token == repaintToken and content.GroupTransparency == 0.004 then
+                content.GroupTransparency = 0
+            end
+        end)
+    end
+end
+
+-- instant = true: no animation (used for the default tab on first load, so the UI opens with that tab fully shown)
+local function selectTab(name, instant)
+    local data = TabData[name]
+    if not data or activeTab == name then return end
     local previous = activeTab
     activeTab = name
     switchToken += 1
     local token = switchToken
+
+    if instant then
+        for tabName, t in pairs(TabData) do
+            local selected = tabName == name
+            cancelContentTween(t.content)
+            t.btn.BackgroundTransparency = 1
+            t.btn.TextColor3 = selected and Theme.Sakura or Theme.SubText
+            t.pad.PaddingLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD)
+            t.content.Visible = selected
+            if selected then
+                t.content.GroupTransparency = 0
+                t.contentPad.PaddingTop = UDim.new(0, CONTENT_EDGE)
+            end
+        end
+        TabPill.Position = UDim2.fromOffset(0, data.index * (TAB_HEIGHT + TAB_GAP))
+        TabPill.Visible = true
+        return
+    end
 
     for tabName, t in pairs(TabData) do
         local selected = tabName == name
@@ -1402,22 +1459,22 @@ local function CreateTab(name)
 
     TabData[name] = { index = index, btn = Btn, pad = Pad, content = Content, contentPad = ContentPad }
 
-    if tabCount == 1 then selectTab(name) end
+    -- The default tab is selected explicitly once every tab exists (see DEFAULT_TAB), not by creation order
     return Content
 end
 
 --// ================= THEME: REFRESH STATE COLORS =================
--- Settings.lua (phần Theme) gọi hàm này SAU khi đã đổi bảng Theme và remap màu trên cây UI.
--- Remap theo giá trị màu chưa đủ cho các phần phụ thuộc trạng thái (ToggleKnobOn bị loại khỏi remap),
--- nên đặt lại đúng màu theo trạng thái hiện tại. Đặt SAU TAB SYSTEM vì cần TabData / activeTab.
+-- Settings.lua (Theme part) calls this AFTER it has changed the Theme table and remapped the colors in the UI tree.
+-- Remapping by color value is not enough for state-dependent parts (ToggleKnobOn is excluded from the remap),
+-- so the right color is set again for the current state. Placed AFTER TAB SYSTEM because it needs TabData / activeTab.
 local function refreshStateColors()
-    -- Tab: đang chọn = Sakura, còn lại = SubText
+    -- Tabs: selected = Sakura, the rest = SubText
     for tabName, t in pairs(TabData) do
         t.btn.TextColor3 = (tabName == activeTab) and Theme.Sakura or Theme.SubText
     end
 
-    -- Công tắc (mọi Switch có Attribute Toggled): ON = AccentPink + núm ToggleKnobOn, OFF = ToggleTrackOff + núm Text
-    -- Chữ nằm trên nền nhấn (Attribute OnAccent = true): luôn là ToggleKnobOn để đủ tương phản trên gradient nhấn
+    -- Switches (every Switch with a Toggled Attribute): ON = AccentPink + ToggleKnobOn knob, OFF = ToggleTrackOff + Text knob
+    -- Text on an accent background (Attribute OnAccent = true): always ToggleKnobOn so it has enough contrast on the accent gradient
     for _, d in ipairs(ScreenGui:GetDescendants()) do
         if d:IsA("TextButton") and type(d:GetAttribute("Toggled")) == "boolean" then
             local on = d:GetAttribute("Toggled")
@@ -1429,20 +1486,20 @@ local function refreshStateColors()
         end
     end
 
-    -- Resize mode / Maximize: icon + viền cửa sổ
+    -- Resize mode / Maximize: icons + window border
     drawIcon(ResizeIcon, "resize", resizeMode and Theme.AccentPink or Theme.Text, Theme.PanelAlt)
     drawIcon(MaximizeIcon, isMaximized and "restore" or "maximize", Theme.Text, Theme.PanelAlt)
     MainUIStroke.Color = resizeMode and Theme.AccentPink or Theme.Border
 end
 
 --// ================= FUNCTION ELEMENT BUILDERS =================
--- opts.initial = true: tạo sẵn ở trạng thái BẬT (không phát sự kiện nào; module tự áp dụng trạng thái đầu của nó).
--- Trả về: Switch, setState, api
---   setState(value, silent): silent = true -> chỉ cập nhật hiển thị + Attribute "Toggled", không gọi các hàm
---                            đăng ký qua api.onChanged (listener GetAttributeChangedSignal thô vẫn nhận được).
---   api.get()          -> trạng thái hiện tại
---   api.onChanged(fn)  -> fn(on) mỗi khi đổi trạng thái; trả về { Disconnect }
--- Gọi kiểu cũ CreateToggleOption(parent, title, height) và dùng Switch, setState vẫn chạy y như trước.
+-- opts.initial = true: created already ON (no event is fired; the module applies its own initial state).
+-- Returns: Switch, setState, api
+--   setState(value, silent): silent = true -> only updates the visuals + the "Toggled" Attribute, and does not call the functions
+--                            registered through api.onChanged (raw GetAttributeChangedSignal listeners still receive it).
+--   api.get()          -> current state
+--   api.onChanged(fn)  -> fn(on) on every state change; returns { Disconnect }
+-- The old call style CreateToggleOption(parent, title, height) with Switch, setState still works exactly as before.
 local function CreateToggleOption(parent, title, height, opts)
     local Frame = new("Frame", {
         Size = UDim2.new(1, 0, 0, height or 50),
@@ -1486,10 +1543,10 @@ local function CreateToggleOption(parent, title, height, opts)
     corner(Knob, 10)
 
     local state = false
-    local listeners = {} -- các hàm đăng ký qua api.onChanged
+    local listeners = {} -- functions registered through api.onChanged
     Switch:SetAttribute("Toggled", false)
 
-    -- Vẽ trạng thái hiện tại; animated = false -> đặt thẳng (dùng cho trạng thái ban đầu)
+    -- Paint the current state; animated = false -> set directly (used for the initial state)
     local function paint(animated)
         local trackColor = state and Theme.AccentPink or Theme.ToggleTrackOff
         local knobProps = {
@@ -1597,8 +1654,8 @@ local function CreateStyledButton(parent, btnText, width)
     return Btn
 end
 
--- holdTime: số giây giữ chữ phản hồi (mặc định 1.2); math.huge = giữ đến lần flash kế tiếp. color: ghi đè màu chữ.
--- Chỉ lần flash MỚI NHẤT được hoàn nguyên, nên flash cũ không xoá chữ của flash mới.
+-- holdTime: seconds the feedback text stays (default 1.2); math.huge = keep until the next flash. color: overrides the text color.
+-- Only the NEWEST flash is reverted, so an old flash never wipes the text of a newer one.
 local function flashButtonFeedback(Btn, defaultText, feedbackText, isError, holdTime, color)
     local token = (Btn:GetAttribute("FlashToken") or 0) + 1
     Btn:SetAttribute("FlashToken", token)
@@ -1676,7 +1733,7 @@ local function guarded(fn)
             released = true
             task.delay(1.2, function() busy = false end)
         end
-        -- fn lỗi trước khi gọi done() thì vẫn phải nhả khóa, nếu không nút bị kẹt busy đến hết phiên
+        -- If fn errors before calling done(), the lock must still be released, otherwise the button stays stuck busy for the rest of the session
         local ok, err = pcall(fn, done)
         if not ok then
             warn("[Elysera] " .. tostring(err))
@@ -1685,12 +1742,12 @@ local function guarded(fn)
     end
 end
 
---// ================= UI KIT DÙNG CHUNG (ctx.UI) =================
--- Các thành phần giao diện giống hệt nhau từng bị viết lặp ở Local.lua / FPS.lua / Script.lua nay nằm một chỗ,
--- module lấy qua ctx.UI. Phần dropdown "winbox" của từng tab được giữ riêng vì giao diện mỗi tab đang khác nhau.
+--// ================= SHARED UI KIT (ctx.UI) =================
+-- Identical UI pieces that used to be duplicated in Local.lua / FPS.lua / Script.lua now live in one place;
+-- modules get them through ctx.UI. The "winbox" dropdown of each tab is kept separate because every tab's look currently differs.
 local UI = {}
 do
-    -- TextLabel mặc định của UI kit: chữ Gotham, màu Theme.Text, canh trái
+    -- Default TextLabel of the UI kit: Gotham font, Theme.Text color, left-aligned
     local function uiLabel(parent, props)
         props.BackgroundTransparency = 1
         props.Font = props.Font or Enum.Font.Gotham
@@ -1699,14 +1756,14 @@ do
         return new("TextLabel", props, parent)
     end
 
-    -- UIStroke trên text mặc định viền theo CHỮ (Contextual); các viền này dành cho khung nên ép chế độ Border
+    -- A UIStroke on text outlines the TEXT by default (Contextual); these strokes are meant for frames, so Border mode is forced
     function UI.BorderStroke(inst, color, thickness)
         local s = stroke(inst, color, thickness)
         s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         return s
     end
 
-    -- Ghi chuỗi vào clipboard bằng hàm của executor (mỗi executor một tên). Trả về true nếu ghi được
+    -- Write a string to the clipboard with the executor's function (each executor names it differently). Returns true if it worked
     function UI.CopyText(text)
         local fn = (typeof(setclipboard) == "function" and setclipboard)
             or (typeof(toclipboard) == "function" and toclipboard)
@@ -1717,14 +1774,14 @@ do
         return (pcall(fn, text))
     end
 
-    -- Mũi tên xuống vẽ bằng hai thanh xoay ±45° (xoay Holder: 0 = xuống, -90 = sang phải)
-    -- Trả về: Holder, setColor(color)
+    -- Down arrow drawn from two bars rotated ±45° (rotate the Holder: 0 = down, -90 = right)
+    -- Returns: Holder, setColor(color)
     function UI.CreateChevron(parent, props, color, len, thick)
         len, thick = len or 8, thick or 2
         props.BackgroundTransparency = 1
         local Holder = new("Frame", props, parent)
 
-        local dx = len * 0.3536 -- nửa bề ngang của thanh khi xoay 45 độ
+        local dx = len * 0.3536 -- half the horizontal width of a bar rotated by 45 degrees
         local bars = {}
         for i, rot in ipairs({ 45, -45 }) do
             bars[i] = new("Frame", {
@@ -1743,11 +1800,11 @@ do
         end
     end
 
-    -- Nhóm có thể thu gọn: tiêu đề + dòng phụ, thanh nhấn bên trái, viên thuốc "N on" khi có công tắc bên trong đang bật.
-    -- opts: { subtitle = "nội dung bên trong", collapsed = true }
-    -- Trả về api: { Body, trackSwitch(handle), track(switch) }
-    --   trackSwitch(handle): handle của BindToggle (Local.lua), đếm theo handle.onChanged
-    --   track(switch):       Switch của CreateToggleOption (FPS.lua), đếm theo Attribute "Toggled"
+    -- Collapsible group: title + subtitle line, accent bar on the left, an "N on" pill when a switch inside is on.
+    -- opts: { subtitle = "what is inside", collapsed = true }
+    -- Returns api: { Body, trackSwitch(handle), track(switch) }
+    --   trackSwitch(handle): a BindToggle handle (Local.lua), counted through handle.onChanged
+    --   track(switch):       a Switch from CreateToggleOption (FPS.lua), counted through the "Toggled" Attribute
     function UI.CreateSection(parent, title, order, opts)
         opts = opts or {}
         local open = not opts.collapsed
@@ -1775,7 +1832,7 @@ do
         corner(Header, 8)
         UI.BorderStroke(Header)
 
-        -- Thanh nhấn bên trái: hồng khi có gì đó trong nhóm đang bật
+        -- Accent bar on the left: pink when anything in the group is on
         local Bar = new("Frame", {
             AnchorPoint = Vector2.new(0, 0.5),
             Position = UDim2.new(0, 8, 0.5, 0),
@@ -1802,13 +1859,13 @@ do
             Text = opts.subtitle or "",
         })
 
-        -- Viên thuốc "N on"
+        -- "N on" pill
         local Pill = new("Frame", {
             Name = "ActivePill",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -40, 0.5, 0),
             Size = UDim2.fromOffset(46, 20),
-            BackgroundColor3 = WHITE, -- gradient nhân với màu nền nên giữ màu trắng
+            BackgroundColor3 = WHITE, -- the gradient multiplies the background color, so it stays white
             BorderSizePixel = 0,
             Visible = false,
         }, Header)
@@ -1822,7 +1879,7 @@ do
             TextXAlignment = Enum.TextXAlignment.Center,
             Text = "",
         })
-        PillText:SetAttribute("OnAccent", true) -- refreshStateColors giữ chữ đủ tương phản trên mọi theme
+        PillText:SetAttribute("OnAccent", true) -- refreshStateColors keeps the text readable on every theme
 
         local Chevron, setChevronColor = UI.CreateChevron(Header, {
             Name = "Chevron",
@@ -1866,9 +1923,10 @@ do
             if uiLocked then return end
             open = not open
             render(true)
+            repaintContent() -- the tab just changed size: make sure its panel is repainted
         end)
 
-        -- Gắn handle của BindToggle để tiêu đề đếm số tính năng đang bật
+        -- Attach a BindToggle handle so the title counts how many features are on
         function api.trackSwitch(handle)
             handle.onChanged(function(on)
                 activeCount = math.max(0, activeCount + (on and 1 or -1))
@@ -1876,7 +1934,7 @@ do
             end)
         end
 
-        -- Đếm mọi công tắc của nhóm để tiêu đề hiện số đang bật
+        -- Count every switch of the group so the title shows how many are on
         function api.track(switch)
             local was = switch:GetAttribute("Toggled") == true
             if was then
@@ -1885,7 +1943,7 @@ do
             end
             switch:GetAttributeChangedSignal("Toggled"):Connect(function()
                 local on = switch:GetAttribute("Toggled") == true
-                if on == was then return end -- vd. Attribute vừa tạo với giá trị false: không phải đổi trạng thái
+                if on == was then return end -- e.g. an Attribute just created with the value false: not a state change
                 was = on
                 activeCount = math.max(0, activeCount + (on and 1 or -1))
                 render(true)
@@ -1899,30 +1957,30 @@ do
 end
 
 --// ================= REMOTE MODULE LOADER =================
--- Các module (Status_Server.lua, Local.lua, Script.lua, FPS.lua, Settings.lua) được tải từ GitHub (raw)
--- rồi chạy bằng loadstring, không còn đọc từ thư mục workspace của executor.
--- Các file .json (Elysera_Settings.json, ...) nằm trong thư mục workspace/Elysera/ (xem "Thư mục dữ liệu" ở trên).
+-- The modules (Status_Server.lua, Local.lua, Script.lua, FPS.lua, Settings.lua) are downloaded from GitHub (raw)
+-- and run with loadstring; they are no longer read from the executor's workspace folder.
+-- The .json files (Elysera_Settings.json, ...) live in the workspace/Elysera/ folder (see "Data folder" above).
 --
--- Độ bền của bộ nạp:
---   * MODULE_REF chọn nhánh / tag / commit SHA. Mặc định theo nhánh main như cũ; muốn ghim phiên bản thì đặt
---     "refs/tags/<tag>" hoặc chuỗi commit SHA 40 ký tự -> một commit lỗi đẩy lên main không ảnh hưởng người dùng.
---   * Module khởi tạo xong không lỗi sẽ được lưu vào Elysera/cache_<tên file>. Lần sau nếu tải thất bại, hoặc bản
---     mới lỗi cú pháp / lỗi khi khởi tạo, bộ nạp dùng bản đã lưu đó.
---   * Không có bản dự phòng thì tab hiện thẻ lỗi kèm nút Retry thay vì để trống.
--- Mọi helper của bộ nạp nằm gọn trong khối do...end bên dưới (đỡ tốn biến local của chunk chính, giới hạn 200);
--- bên ngoài chỉ còn mountModule.
--- Thông tin bộ nạp đưa cho module qua ctx.Loader:
---   ref, files, bootUrl / bootCode (Auto Execute dùng để nạp lại Elysera sau teleport),
---   sources[file] = "web" | "cache" | "error" (Diagnostics ở tab Settings hiển thị)
+-- Loader resilience:
+--   * MODULE_REF selects a branch / tag / commit SHA. It follows the main branch by default; to pin a version, set it to
+--     "refs/tags/<tag>" or a 40-character commit SHA -> a broken commit pushed to main does not affect users.
+--   * A module that initializes without errors is saved to Elysera/cache_<file name>. Next time, if the download fails, or the
+--     new copy has a syntax error / fails to initialize, the loader uses that saved copy.
+--   * With no fallback copy, the tab shows an error card with a Retry button instead of staying empty.
+-- All loader helpers sit inside the do...end block below (saves locals of the main chunk, limit 200);
+-- only mountModule is left outside.
+-- Loader information handed to modules through ctx.Loader:
+--   ref, files, bootUrl / bootCode (Auto Execute uses them to reload Elysera after a teleport),
+--   sources[file] = "web" | "cache" | "error" (shown by Diagnostics in the Settings tab)
 local Loader = { sources = {} }
 local mountModule
 do
     local MODULE_BASE    = "https://raw.githubusercontent.com/MinzTogether/Universal-Script/"
     local MODULE_REF     = "refs/heads/main"
     local MODULE_FILES   = { "Status_Server.lua", "Local.lua", "Script.lua", "FPS.lua", "Settings.lua" }
-    local MODULE_TIMEOUT = 20 -- tổng số giây chờ tối đa để tải xong các module
-    -- File chính (chính file này) trong cùng repo + ref. Auto Execute nạp lại nó sau mỗi lần teleport:
-    -- nếu bạn đặt file ở chỗ khác, sửa BOOT_FILE (hoặc Loader.bootCode bên dưới) cho đúng.
+    local MODULE_TIMEOUT = 20 -- maximum total seconds to wait for all modules to download
+    -- The main file (this very file) in the same repo + ref. Auto Execute reloads it after every teleport:
+    -- if you host the file somewhere else, fix BOOT_FILE (or Loader.bootCode below) accordingly.
     local BOOT_FILE      = "MainWeb.lua"
 
     local MODULE_URLS = {}
@@ -1935,14 +1993,14 @@ do
     Loader.bootUrl = MODULE_BASE .. MODULE_REF .. "/" .. BOOT_FILE
     Loader.bootCode = ("loadstring(game:HttpGet(%q))()"):format(Loader.bootUrl)
 
-    -- Tải nội dung một URL: ưu tiên game:HttpGet, dự phòng request / http_request / syn.request
+    -- Download the content of a URL: prefer game:HttpGet, fall back to request / http_request / syn.request
     local function httpGet(url)
         local ok, body = pcall(function() return game:HttpGet(url) end)
         if ok and type(body) == "string" and body ~= "" then
             if body:match("^%s*404: Not Found") then error("404 Not Found", 0) end
             return body
         end
-        local reason = ok and "phản hồi rỗng" or tostring(body)
+        local reason = ok and "empty response" or tostring(body)
 
         local req = (typeof(request) == "function" and request)
             or (typeof(http_request) == "function" and http_request)
@@ -1961,7 +2019,7 @@ do
         error(reason, 0)
     end
 
-    -- Tải đồng thời cả 5 module ngay từ đầu; phần chạy (init) vẫn theo thứ tự cũ ở các khối bên dưới
+    -- Download all 5 modules at the same time right from the start; running them (init) still follows the original order in the blocks below
     local moduleJobs = {}
     local moduleDeadline = os.clock() + MODULE_TIMEOUT
     local function startDownload(file)
@@ -1975,22 +2033,22 @@ do
     end
     for _, file in ipairs(MODULE_FILES) do startDownload(file) end
 
-    -- Chờ tải xong một module rồi trả về mã nguồn. deadline: mốc os.clock() tối đa (mặc định: mốc chung lúc khởi động)
+    -- Wait until one module has downloaded, then return its source. deadline: latest os.clock() time (default: the shared deadline set at startup)
     local function readModule(file, deadline)
-        local job = assert(moduleJobs[file], "chưa khai báo URL cho module: " .. file)
+        local job = assert(moduleJobs[file], "no URL declared for module: " .. file)
         while not job.done do
             if os.clock() > (deadline or moduleDeadline) then
-                error("hết thời gian chờ khi tải " .. MODULE_URLS[file], 0)
+                error("timed out while downloading " .. MODULE_URLS[file], 0)
             end
             task.wait()
         end
         if not job.ok then
-            error("tải thất bại " .. MODULE_URLS[file] .. " (" .. tostring(job.result) .. ")", 0)
+            error("download failed " .. MODULE_URLS[file] .. " (" .. tostring(job.result) .. ")", 0)
         end
         return job.result
     end
 
-    -- Bản lưu của lần chạy tốt gần nhất: Elysera/cache_<tên file> (executor không có file system thì bỏ qua)
+    -- Saved copy of the most recent good run: Elysera/cache_<file name> (skipped when the executor has no file system)
     local function cacheName(file) return dataPath("cache_" .. file) end
 
     local function readCache(file)
@@ -2008,17 +2066,17 @@ do
         pcall(writefile, cacheName(file), src)
     end
 
-    -- Biên dịch mã nguồn module và chạy phần đầu file để lấy hàm init. Trả về init, hoặc nil + lý do
+    -- Compile the module source and run the top of the file to get the init function. Returns init, or nil + the reason
     local function compileModule(file, src)
         local chunk, err = loadstring(src, "=" .. file)
-        if not chunk then return nil, "lỗi cú pháp: " .. tostring(err) end
+        if not chunk then return nil, "syntax error: " .. tostring(err) end
         local ok, init = pcall(chunk)
-        if not ok then return nil, "lỗi khi nạp file: " .. tostring(init) end
-        if type(init) ~= "function" then return nil, "module không trả về hàm init" end
+        if not ok then return nil, "error while loading the file: " .. tostring(init) end
+        if type(init) ~= "function" then return nil, "the module did not return an init function" end
         return init
     end
 
-    -- Xoá phần giao diện module đã dựng dở trong tab (giữ UIPadding / UIListLayout của tab)
+    -- Remove the half-built module UI from the tab (keep the tab's UIPadding / UIListLayout)
     local function clearTab(tab)
         for _, child in ipairs(tab:GetChildren()) do
             if not (child:IsA("UIPadding") or child:IsA("UIListLayout")) then
@@ -2027,7 +2085,7 @@ do
         end
     end
 
-    -- Thẻ lỗi trong tab: lý do + nút Retry (tải lại và dựng lại tab) + nút Copy error
+    -- Error card in the tab: the reason + a Retry button (download again and rebuild the tab) + a Copy error button
     local function showModuleError(tab, file, message, retry)
         local text = tostring(message)
         if #text > 280 then text = text:sub(1, 277) .. "..." end
@@ -2078,8 +2136,8 @@ do
         end)
     end
 
-    -- Dựng một tab từ module. build(init) chạy phần khởi tạo của tab và ném lỗi nếu hỏng.
-    -- Thứ tự thử: bản tải mới -> bản cache của lần chạy tốt gần nhất -> thẻ lỗi (có nút Retry).
+    -- Build a tab from a module. build(init) runs the tab's setup and throws an error if it breaks.
+    -- Order of attempts: fresh download -> cached copy of the most recent good run -> error card (with a Retry button).
     function mountModule(file, tab, build, isRetry)
         if isRetry then startDownload(file) end
         local deadline = isRetry and (os.clock() + MODULE_TIMEOUT) or nil
@@ -2094,21 +2152,21 @@ do
             local init, why = compileModule(file, src)
             if not init then note(from .. ": " .. why) return false end
             local okBuild, berr = pcall(build, init)
-            if not okBuild then note(from .. ": lỗi khi khởi tạo: " .. tostring(berr)) return false end
+            if not okBuild then note(from .. ": error during initialization: " .. tostring(berr)) return false end
             return true
         end
 
-        if fresh and attempt(fresh, "bản tải mới") then
-            if readCache(file) ~= fresh then writeCache(file, fresh) end -- chỉ lưu bản đã chạy tốt
+        if fresh and attempt(fresh, "fresh download") then
+            if readCache(file) ~= fresh then writeCache(file, fresh) end -- only a copy that ran well is saved
             Loader.sources[file] = "web"
             return true
         end
 
         local cached = readCache(file)
         if cached and cached ~= fresh then
-            clearTab(tab) -- bỏ phần dựng dở của bản mới
-            if attempt(cached, "bản cache") then
-                warn(("[Elysera] %s: dùng bản lưu của lần chạy tốt gần nhất (%s)"):format(file, problems[1] or "?"))
+            clearTab(tab) -- discard what the new copy half-built
+            if attempt(cached, "cached copy") then
+                warn(("[Elysera] %s: using the saved copy of the most recent good run (%s)"):format(file, problems[1] or "?"))
                 Loader.sources[file] = "cache"
                 return true
             end
@@ -2116,7 +2174,7 @@ do
 
         clearTab(tab)
         local message = table.concat(problems, " | ")
-        warn("[Elysera] Không nạp được " .. file .. ": " .. message)
+        warn("[Elysera] Could not load " .. file .. ": " .. message)
         Loader.sources[file] = "error"
         showModuleError(tab, file, message, function()
             clearTab(tab)
@@ -2126,14 +2184,14 @@ do
     end
 end
 
---// ================= AUTO EXECUTE (nạp lại Elysera sau teleport) =================
--- queue_on_teleport xếp một đoạn mã chạy ở server kế tiếp sau khi teleport (Server Hop, Rejoin, Spam Join...).
--- Đoạn mã đó đọc lại file cấu hình và chỉ nạp Elysera khi công tắc vẫn đang BẬT, nên tắt công tắc có hiệu lực
--- ngay cả khi mã đã được xếp hàng. Mỗi lần Elysera nạp xong ở server mới sẽ tự xếp hàng lại (cần file cấu hình
--- để nhớ công tắc). Cơ chế nằm ở lõi để vẫn chạy kể cả khi tab Settings nạp lỗi; Settings.lua chỉ dựng công tắc.
+--// ================= AUTO EXECUTE (reload Elysera after a teleport) =================
+-- queue_on_teleport queues a piece of code that runs on the next server after a teleport (Server Hop, Rejoin, Spam Join...).
+-- That code re-reads the settings file and only loads Elysera while the switch is still ON, so turning the switch off takes effect
+-- even when the code is already queued. Every time Elysera finishes loading on a new server it queues itself again (the settings file
+-- is needed to remember the switch). The mechanism lives in the core so it still works even when the Settings tab fails to load; Settings.lua only builds the switch.
 local AutoExec = {}
 do
-    local queued = false -- mỗi phiên chỉ xếp hàng một lần (tránh nhân đôi mã nếu bật/tắt nhiều lần)
+    local queued = false -- queue only once per session (avoids duplicating the code when toggled on/off many times)
 
     local function queueFn()
         return (typeof(queue_on_teleport) == "function" and queue_on_teleport)
@@ -2143,7 +2201,7 @@ do
             or nil
     end
 
-    -- nil nếu dùng được, ngược lại là lý do ngắn
+    -- nil when usable, otherwise a short reason
     function AutoExec.reason()
         if not queueFn() then return "no queue_on_teleport" end
         if not canFS then return "needs file access" end
@@ -2154,7 +2212,7 @@ do
     function AutoExec.supported() return AutoExec.reason() == nil end
     function AutoExec.isOn() return Saved.autoExecute == true end
 
-    -- Mã chạy ở server mới. __ElyseraBoot chống chạy hai lần trong cùng một server (executor giữ hàng đợi lâu)
+    -- Code that runs on the new server. __ElyseraBoot prevents running twice on the same server (executors keep the queue for a long time)
     local function payload()
         return ([[
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -2178,7 +2236,7 @@ end]]):format(dataPath(SAVE_FILE), Loader.bootCode)
         return queued
     end
 
-    -- Bật/tắt và lưu. Trả về true, hoặc false + lý do khi executor không hỗ trợ
+    -- Turn on/off and save. Returns true, or false + the reason when the executor does not support it
     function AutoExec.set(on)
         on = on and true or false
         if on then
@@ -2199,9 +2257,13 @@ local FPSTab          = CreateTab("FPS")
 local ScriptTab       = CreateTab("Script")
 local SettingsTab     = CreateTab("Settings")
 
---// ================= CTX DÙNG CHUNG CHO MODULE =================
--- Một bảng chung thay cho 5 bảng ghép tay: mỗi module nhận ctx riêng (chỉ thêm Tab) trỏ về bảng này qua __index,
--- nên module nào cũng có đủ mọi helper và không phải tự viết lại thứ ctx còn thiếu.
+-- First load: open on the default tab ("Status & Server") right away, before any module is mounted, so it is the
+-- selected tab whatever order the modules finish loading in (and even when a module fails to load)
+selectTab(DEFAULT_TAB, true)
+
+--// ================= SHARED CTX FOR MODULES =================
+-- One shared table replaces 5 hand-assembled tables: every module receives its own ctx (only Tab is added) that points back to this table through __index,
+-- so every module gets every helper and never has to rewrite what ctx is missing.
 local makeCtx
 do
     local Shared = {
@@ -2220,8 +2282,8 @@ do
         CreateCard = CreateCard, CreateInfoRow = CreateInfoRow, CreateStyledButton = CreateStyledButton,
         CreateToggleOption = CreateToggleOption, flashButtonFeedback = flashButtonFeedback,
         flashStrokeError = flashStrokeError, bindBoxFocus = bindBoxFocus, guarded = guarded,
-        UI = UI, Loader = Loader, AutoExecute = AutoExec,
-        requestClose = function() -- mở hộp thoại "Close script" (cùng luồng với nút đóng trên thanh trên)
+        UI = UI, Loader = Loader, AutoExecute = AutoExec, repaintContent = repaintContent,
+        requestClose = function() -- opens the "Close script" dialog (same flow as the close button in the top bar)
             if uiLocked then return end
             CloseDialog.show()
         end,
@@ -2235,44 +2297,44 @@ do
     end
 end
 
-local Elysera -- bảng API công khai, gán ở mục EXPOSED API (Retry của Settings cần cập nhật Elysera.Themes)
+local Elysera -- public API table, assigned in the EXPOSED API section (Settings' Retry needs to update Elysera.Themes)
 
 --// ================= SCRIPT TAB =================
--- Code của tab nằm ở file riêng, nạp từ GitHub: Script.lua
--- Module trả về ScriptDialog (khai báo sẵn ở phần OPEN / CLOSE để closeUI dùng)
+-- The tab's code lives in its own file, loaded from GitHub: Script.lua
+-- The module returns ScriptDialog (declared up in the OPEN / CLOSE section so closeUI can use it)
 mountModule("Script.lua", ScriptTab, function(init)
     ScriptDialog = init(makeCtx(ScriptTab))
 end)
 
 --// ================= STATUS & SERVER TAB =================
--- Code của tab nằm ở file riêng, nạp từ GitHub: Status_Server.lua
+-- The tab's code lives in its own file, loaded from GitHub: Status_Server.lua
 mountModule("Status_Server.lua", StatusServerTab, function(init)
     init(makeCtx(StatusServerTab))
 end)
 
 --// ================= LOCAL TAB =================
--- Code của tab nằm ở file riêng, nạp từ GitHub: Local.lua
+-- The tab's code lives in its own file, loaded from GitHub: Local.lua
 mountModule("Local.lua", LocalTab, function(init)
     init(makeCtx(LocalTab))
 end)
 
 --// ================= FPS TAB =================
--- Code của tab nằm ở file riêng, nạp từ GitHub: FPS.lua
+-- The tab's code lives in its own file, loaded from GitHub: FPS.lua
 mountModule("FPS.lua", FPSTab, function(init)
     init(makeCtx(FPSTab))
 end)
 
 --// ================= SETTINGS TAB =================
--- Code của tab nằm ở file riêng, nạp từ GitHub: Settings.lua (Anti Chat, Auto Execute, Theme, Diagnostics)
--- Nạp CUỐI CÙNG để lần áp theme đầu tiên (theme đã lưu) bao trùm cả các tab ở trên.
--- Không tải được hoặc lỗi -> tab Settings hiện thẻ lỗi (Retry), UI vẫn chạy bằng theme mặc định.
--- Module trả về API Theme (ThemeAPI khai báo sẵn ở phần OPEN / CLOSE để closeUI dùng)
+-- The tab's code lives in its own file, loaded from GitHub: Settings.lua (Anti Chat, Auto Execute, Theme, Diagnostics)
+-- Loaded LAST so the first theme application (the saved theme) also covers the tabs above.
+-- If it cannot be downloaded or fails -> the Settings tab shows an error card (Retry) and the UI keeps running with the default theme.
+-- The module returns the Theme API (ThemeAPI is declared up in the OPEN / CLOSE section so closeUI can use it)
 mountModule("Settings.lua", SettingsTab, function(init)
     ThemeAPI = init(makeCtx(SettingsTab))
-    if Elysera then Elysera.Themes = ThemeAPI.Themes end -- chỉ xảy ra khi Retry (lần nạp đầu Elysera chưa tồn tại)
+    if Elysera then Elysera.Themes = ThemeAPI.Themes end -- only happens on Retry (during the first load Elysera does not exist yet)
 end)
 
--- Lần trước đã bật Auto Execute: xếp hàng ngay (kể cả khi tab Settings nạp lỗi)
+-- Auto Execute was on last time: queue it right away (even when the Settings tab failed to load)
 if AutoExec.isOn() and AutoExec.supported() then AutoExec.queue() end
 
 --// ================= EXPOSED API =================
@@ -2285,13 +2347,13 @@ Elysera = {
     CreateToggleOption = CreateToggleOption,
     CreateSectionLabel = CreateSectionLabel,
     SelectTab = selectTab,
-    Unload = unloadUI,       -- gỡ hẳn Elysera (giống nút đóng script) và tắt Auto Execute
+    Unload = unloadUI,       -- unload Elysera for good (same as the close script button) and turn Auto Execute off
     AutoExecute = AutoExec,  -- supported() / isOn() / set(on) / reason()
 
-    -- Theme (do Settings.lua cung cấp; nếu module không nạp được thì SetTheme trả về false)
+    -- Theme (provided by Settings.lua; if the module cannot be loaded, SetTheme returns false)
     Themes = ThemeAPI and ThemeAPI.Themes or {},
     SetTheme = function(id)
-        if not ThemeAPI then return false, "Settings.lua chưa được nạp" end
+        if not ThemeAPI then return false, "Settings.lua has not been loaded" end
         return ThemeAPI.SetTheme(id)
     end,
     GetTheme = function()

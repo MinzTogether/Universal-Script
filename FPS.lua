@@ -1,3 +1,11 @@
+--// ##########################################################################################
+--// ##                                                                                      ##
+--// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
+--// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
+--// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
+--// ##                                                                                      ##
+--// ##########################################################################################
+
 --// ================= FPS TAB (module) =================
 -- Loaded by MainWeb.lua / MainLocal.lua with a ctx table (see "CTX" there).
 -- Layout: Performance monitor (FPS, frame time, ping, memory, graph)
@@ -187,6 +195,14 @@ return function(ctx)
 
         local Popup = { open = false, owner = nil, token = 0 }
 
+        -- Asks the core to repaint the visible tab (optional, so the module still runs with an older core). Some devices
+        -- drop the cached render of the tab's CanvasGroup when an overlay appears or disappears, which hides every
+        -- function in the panel until the next touch.
+        local function repaint()
+            local fn = ctx.repaintContent
+            if fn then fn() end
+        end
+
         local function closePopup()
             if not Popup.open then return end
             Popup.open = false
@@ -198,7 +214,10 @@ return function(ctx)
             Popup.owner = nil
             if owner then owner.onClosed() end
             tween(PopList, 0.1, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN).Completed:Connect(function()
-                if Popup.token == token then PopList.Visible = false end
+                if Popup.token == token then
+                    PopList.Visible = false
+                    repaint() -- the overlay is gone: make sure the panel is painted again
+                end
             end)
         end
 
@@ -266,6 +285,7 @@ return function(ctx)
             PopList.Visible = true
             tween(PopList, 0.12, { GroupTransparency = 0, Position = UDim2.fromOffset(x, y) }, EASE_QUAD, DIR_OUT)
             api.onOpened()
+            repaint() -- an overlay just appeared: make sure the panel behind it stays painted
         end
 
         PopBlocker.Activated:Connect(closePopup)

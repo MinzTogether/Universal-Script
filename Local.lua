@@ -1,3 +1,11 @@
+--// ##########################################################################################
+--// ##                                                                                      ##
+--// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
+--// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
+--// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
+--// ##                                                                                      ##
+--// ##########################################################################################
+
 --// ================= LOCAL TAB (module) =================
 -- Loaded by the main script (MainWeb.lua / MainLocal.lua) and called with a ctx table of shared UI helpers
 -- (ctx.UI = shared UI kit: border stroke, chevron, collapsible section).
@@ -547,6 +555,22 @@ return function(ctx)
 
     function Core.CloseDropdown()
         if DD.close then DD.close() end
+    end
+
+    -- Close an open list when what it points at moves or disappears: the window gets hidden (for example by a script call
+    -- to Elysera.Close()), changes size, or the panel scrolls (mouse wheel). The list sits in the ScreenGui, so without this
+    -- it could stay on screen, misaligned, or keep its full-screen blocker alive after the window is gone.
+    do
+        local MainUI, FunctionScroll = ctx.MainUI, ctx.FunctionScroll
+        if MainUI then
+            MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
+                if not MainUI.Visible then Core.CloseDropdown() end
+            end)
+            MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() Core.CloseDropdown() end)
+        end
+        if FunctionScroll then
+            FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function() Core.CloseDropdown() end)
+        end
     end
 
     local function ensureDropdownLayer()

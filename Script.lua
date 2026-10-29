@@ -1,3 +1,11 @@
+--// ##########################################################################################
+--// ##                                                                                      ##
+--// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
+--// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
+--// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
+--// ##                                                                                      ##
+--// ##########################################################################################
+
 --// ================= SCRIPT TAB (module) =================
 -- This file is loaded by the main script (MainWeb.lua / MainLocal.lua) and called with a ctx table
 -- containing the shared UI functions/variables. Returns ScriptDialog so the main file
