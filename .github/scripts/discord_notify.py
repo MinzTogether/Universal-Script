@@ -19,7 +19,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 VERSION = "2.0"
-BOT_NAME = "Universal-Script Monitor"
+BOT_NAME = "Stalker 🐧🥀"
 OWN_WORKFLOW_NAME = "Discord Repository Monitor"
 
 # Discord embed limits are: title 256, description 4096, field name 256,
