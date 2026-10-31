@@ -32,7 +32,7 @@ do
     end
 end
 
---// ================= THEME =================
+--// ================= MAIN THEME =================
 local Theme = {
     Background     = Color3.fromRGB(29, 21, 52),    -- #1D1534 main background
     Panel          = Color3.fromRGB(33, 21, 58),    -- #21153A cards, buttons, dialogs
