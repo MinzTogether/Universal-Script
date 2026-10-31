@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="assets/elysera-banner.webp" width="100%" alt="Elysera banner with centered title" />
+  <img src="assets/elysera-banner.jpg" width="100%" alt="Elysera banner" />
 
   <p><strong>A modular Roblox client-side toolkit built with Luau.</strong></p>
   <p>
