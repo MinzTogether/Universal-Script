@@ -1,0 +1,79 @@
+name: Discord Repository Monitor
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "**"
+  create:
+  delete:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, closed, ready_for_review, converted_to_draft]
+  issues:
+    types: [opened, edited, closed, reopened, assigned, unassigned, labeled, unlabeled, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+  release:
+    types: [published, edited, prereleased, released, deleted, unpublished]
+  fork:
+  watch:
+    types: [started]
+  discussion:
+    types: [created, edited, answered, closed, reopened, deleted, category_changed]
+  discussion_comment:
+    types: [created, edited, deleted]
+  workflow_run:
+    types: [completed]
+  workflow_dispatch:
+  member:
+    types: [added, edited, deleted]
+  public:
+  milestone:
+    types: [created, opened, edited, closed, deleted]
+  label:
+    types: [created, edited, deleted]
+  deployment:
+  deployment_status:
+  status:
+  check_run:
+    types: [completed]
+  check_suite:
+    types: [completed]
+  repository_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-monitor-${{ github.event_name }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Send Discord Notification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Send notification
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python .github/scripts/discord_notify.py
