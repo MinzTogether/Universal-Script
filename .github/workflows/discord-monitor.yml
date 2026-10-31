@@ -8,14 +8,19 @@ on:
       - "**"
   create:
   delete:
-  pull_request:
+  # pull_request_target (not pull_request) so pull requests from forks can read
+  # the DISCORD_WEBHOOK secret. This is safe because this workflow never checks
+  # out or executes pull request code; it only reads the event payload.
+  pull_request_target:
     types: [opened, reopened, synchronize, edited, closed, ready_for_review, converted_to_draft]
   issues:
     types: [opened, edited, closed, reopened, assigned, unassigned, labeled, unlabeled, deleted]
   issue_comment:
     types: [created, edited, deleted]
   release:
-    types: [published, edited, prereleased, released, deleted, unpublished]
+    # "published" already covers "released" and "prereleased"; listing all
+    # three would send duplicate notifications for every release.
+    types: [published, edited, deleted]
   fork:
   watch:
     types: [started]
@@ -23,6 +28,10 @@ on:
     types: [created, edited, answered, closed, reopened, deleted, category_changed]
   discussion_comment:
     types: [created, edited, deleted]
+  workflow_run:
+    # GitHub rejects workflow_run triggers that do not list any workflows.
+    workflows: ["*"]
+    types: [completed]
   workflow_dispatch:
   member:
     types: [added, edited, deleted]
@@ -43,35 +52,31 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: discord-monitor-${{ github.event_name }}-${{ github.run_id }}
-  cancel-in-progress: false
-
 jobs:
   notify:
     name: Send Discord Notification
+    # Never react to this workflow's own runs (prevents notification loops).
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.name != github.workflow
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      # Pushes need the full history so the script can diff before..after.
+      - name: Check out repository (full history)
+        if: github.event_name == 'push'
+        uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # Every other event only needs the script itself, from the default branch.
+      - name: Check out repository (script only)
+        if: github.event_name != 'push'
+        uses: actions/checkout@v7
         with:
-          python-version: "3.x"
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Send notification
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_SERVER_URL: ${{ github.server_url }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-        run: python .github/scripts/discord_notify.py
+        run: python3 .github/scripts/discord_notify.py
