@@ -5,7 +5,7 @@
   <p>
     <a href="https://github.com/MinzTogether/Universal-Script">GitHub Repository</a>
     ·
-    <a href="https://www.design-ac.net/design/5922">Banner artwork · Design AC</a>
+    <a href="https://www.design-ac.net/ja/free-template/twitter-header-template-5922">Banner artwork · Design AC</a>
   </p>
   <p>
     <img src="https://img.shields.io/badge/LANGUAGE-Luau-00A2FF?style=flat-square&logo=lua&logoColor=white" alt="Luau" />
