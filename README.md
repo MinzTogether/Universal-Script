@@ -1,5 +1,7 @@
 <div align="center">
 
+  <img src="assets/elysera-banner.jpg" width="100%" alt="Elysera banner" />
+
   <h1>✦ E L Y S E R A ✦</h1>
   <p><strong>A modular Roblox client-side toolkit built with Luau.</strong></p>
   <p>
