@@ -1,8 +1,7 @@
 <div align="center">
 
-  <img src="assets/elysera-banner.jpg" width="100%" alt="Elysera banner" />
+  <img src="assets/elysera-banner.webp" width="100%" alt="Elysera banner with centered title" />
 
-  <h1>✦ E L Y S E R A ✦</h1>
   <p><strong>A modular Roblox client-side toolkit built with Luau.</strong></p>
   <p>
     <a href="https://github.com/MinzTogether/Universal-Script">GitHub Repository</a>
@@ -14,8 +13,6 @@
     <img src="https://img.shields.io/badge/INTERFACE-Pink%20%2B%20Purple-F363E1?style=flat-square" alt="Pink and purple interface" />
     <img src="https://img.shields.io/badge/ARCHITECTURE-Modular-AF58F9?style=flat-square" alt="Modular architecture" />
   </p>
-
-  <!-- Design AC banner image will be embedded here when the original image file or direct image URL is available. -->
 
 </div>
 
