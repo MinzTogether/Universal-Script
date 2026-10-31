@@ -9,9 +9,15 @@
 --// ================= FPS TAB (module) =================
 -- Loaded by MainWeb.lua / MainLocal.lua with a ctx table (see "CTX" there).
 -- Layout: Performance monitor (FPS, frame time, ping, memory, graph)
+<<<<<<< HEAD
 --         Optimize  : FPS Profile · FPS Cap · Auto Boost
 --         Screen    : White Screen · Black Screen · Idle Saver
 --         Interface : FPS Overlay · Remove Notification · Hide Chat & Player List
+=======
+--         Optimize  : FPS Profile · FPS Cap · Auto Boost · Hide Far Players · Mute Audio
+--         Screen    : AFK Mode · White Screen · Black Screen · Idle Saver
+--         Interface : FPS Overlay (avg / 1% low / RAM) · Remove Notification · Hide Chat & Player List
+>>>>>>> f403d6d (UPD Script)
 --         Reset All
 
 return function(ctx)
@@ -103,18 +109,37 @@ return function(ctx)
             if ok and type(v) == "number" and v > 0 then original = v end
         end
 
+<<<<<<< HEAD
         local userCap, coverCap, engaged
+=======
+        local userCap, coverCap, afkCap, engaged
+        local RESTORE_CAP = 60 -- AFK Mode on an executor that cannot tell the old cap: this (the Roblox default) is put back
+        local needFallback = false
+>>>>>>> f403d6d (UPD Script)
 
         local function apply()
             if not canSet then return end
             local cap = userCap
             if coverCap and (not cap or coverCap < cap) then cap = coverCap end
+<<<<<<< HEAD
+=======
+            if afkCap and (not cap or afkCap < cap) then cap = afkCap end
+>>>>>>> f403d6d (UPD Script)
             if cap then
                 engaged = true
                 pcall(setfpscap, cap)
             elseif engaged then -- only restore what we changed
                 engaged = false
+<<<<<<< HEAD
                 if original then pcall(setfpscap, original) end
+=======
+                if original then
+                    pcall(setfpscap, original)
+                elseif needFallback then
+                    pcall(setfpscap, RESTORE_CAP)
+                end
+                needFallback = false
+>>>>>>> f403d6d (UPD Script)
             end
         end
 
@@ -132,8 +157,20 @@ return function(ctx)
             apply()
         end
 
+<<<<<<< HEAD
         function FpsCap.restore()
             userCap, coverCap = nil, nil
+=======
+        -- AFK Mode: always capped to 15 FPS, even when the old cap is unknown (then RESTORE_CAP is put back afterwards)
+        function FpsCap.setAfk(on)
+            afkCap = on and COVER_CAP or nil
+            if on and not original then needFallback = true end
+            apply()
+        end
+
+        function FpsCap.restore()
+            userCap, coverCap, afkCap = nil, nil, nil
+>>>>>>> f403d6d (UPD Script)
             apply()
         end
     end
@@ -398,9 +435,15 @@ return function(ctx)
     end
 
     --// ================= SECTIONS =================
+<<<<<<< HEAD
     local Optimize  = createSection(FPSTab, "Optimize", 2, { subtitle = "FPS profile and FPS cap" })
     local ScreenSec = createSection(FPSTab, "Screen", 3, {
         subtitle = "White, black and idle saver", collapsed = true,
+=======
+    local Optimize  = createSection(FPSTab, "Optimize", 2, { subtitle = "FPS profile, FPS cap, far players, audio" })
+    local ScreenSec = createSection(FPSTab, "Screen", 3, {
+        subtitle = "AFK mode, white, black and idle saver", collapsed = true,
+>>>>>>> f403d6d (UPD Script)
     })
     local Interface = createSection(FPSTab, "Interface", 4, {
         subtitle = "Overlay, notifications, chat", collapsed = true,
@@ -477,6 +520,69 @@ return function(ctx)
         FpsCap.restore()
     end)
 
+<<<<<<< HEAD
+=======
+    --// ================= AFK MODE =================
+    -- One switch for a long wait: Black Screen + FPS capped to 15 + Anti AFK (VirtualUser answers Roblox's idle check).
+    -- AFK Mode owns the Black Screen while it is on, so it switches itself off when the Black Screen is turned off
+    -- (or the White Screen is turned on) by hand.
+    local AfkSwitch, setAfk = CreateToggleOption(ScreenSec.Body, "AFK Mode", 56)
+    AfkSwitch.Parent.LayoutOrder = 0
+    addToggle(ScreenSec, AfkSwitch, setAfk)
+    do
+        local idleConn
+
+        -- Two-line row (same layout as Auto Execute): title + a short description
+        for _, child in ipairs(AfkSwitch.Parent:GetChildren()) do
+            if child:IsA("TextLabel") and child.Text == "AFK Mode" then
+                child.Position = UDim2.fromOffset(14, 8)
+                child.Size = UDim2.new(1, -80, 0, 22)
+            end
+        end
+        label(AfkSwitch.Parent, {
+            Position = UDim2.fromOffset(14, 31),
+            Size = UDim2.new(1, -80, 0, 16),
+            Font = Enum.Font.Gotham,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            TextColor3 = Theme.SubText,
+            Text = "Black screen, 15 FPS cap, no idle kick",
+        })
+
+        local function start()
+            setBlack(true) -- also turns the White Screen off
+            FpsCap.setAfk(true)
+            local okVU, VirtualUser = pcall(game.GetService, game, "VirtualUser")
+            if okVU and VirtualUser then
+                idleConn = LocalPlayer.Idled:Connect(function()
+                    pcall(function()
+                        VirtualUser:CaptureController()
+                        VirtualUser:ClickButton2(Vector2.zero)
+                    end)
+                end)
+            end
+        end
+
+        local function stop()
+            if idleConn then idleConn:Disconnect() idleConn = nil end
+            FpsCap.setAfk(false)
+            setBlack(false)
+        end
+
+        AfkSwitch:GetAttributeChangedSignal("Toggled"):Connect(function()
+            if AfkSwitch:GetAttribute("Toggled") then start() else stop() end
+        end)
+        -- Black Screen off / White Screen on by hand: the screen is not covered any more, so AFK Mode ends too
+        BlackSwitch:GetAttributeChangedSignal("Toggled"):Connect(function()
+            if AfkSwitch:GetAttribute("Toggled") and BlackSwitch:GetAttribute("Toggled") ~= true then setAfk(false) end
+        end)
+        onDestroy(function()
+            if idleConn then idleConn:Disconnect() idleConn = nil end
+        end)
+    end
+
+>>>>>>> f403d6d (UPD Script)
     --// ================= IDLE SAVER =================
     -- No input for a while -> black screen + low FPS through the same cover. Any input wakes it up.
     local Saver = {}
@@ -694,6 +800,165 @@ return function(ctx)
         end
     end
 
+<<<<<<< HEAD
+=======
+    --// ================= MUTE AUDIO =================
+    -- Every Sound / AudioPlayer in the game goes to volume 0 and stays there: new ones are caught as they appear and one that
+    -- the game turns up again is silenced again. Turning it off gives each one its own volume back. The game's volume
+    -- settings are not touched, so nothing stays muted after you leave.
+    local Mute = {}
+    do
+        local tracked = setmetatable({}, { __mode = "k" }) -- audio instance -> { vol = the game's own volume, conn }
+        local conns, run, active = {}, 0, false
+        local writing = false -- true while we write: our own change is not "the game"
+
+        local function isAudio(inst)
+            return inst:IsA("Sound") or inst:IsA("AudioPlayer")
+        end
+
+        local function silence(inst)
+            writing = true
+            pcall(function() inst.Volume = 0 end)
+            writing = false
+        end
+
+        local function track(inst)
+            if tracked[inst] then return end
+            local okV, vol = pcall(function() return inst.Volume end)
+            if not okV or type(vol) ~= "number" then return end
+            local rec = { vol = vol }
+            tracked[inst] = rec
+            silence(inst)
+            rec.conn = inst:GetPropertyChangedSignal("Volume"):Connect(function()
+                if writing or not active then return end
+                local okN, now = pcall(function() return inst.Volume end)
+                if okN and type(now) == "number" and now ~= 0 then
+                    rec.vol = now -- the game chose a new volume: that is the one given back later
+                    silence(inst)
+                end
+            end)
+        end
+
+        function Mute.start()
+            Mute.stop()
+            active = true
+            local my = run
+            local roots = { workspace, game:GetService("SoundService") }
+            local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if gui then roots[#roots + 1] = gui end
+            for _, root in ipairs(roots) do
+                conns[#conns + 1] = root.DescendantAdded:Connect(function(inst)
+                    if active and isAudio(inst) then track(inst) end
+                end)
+                task.spawn(function() -- the scan is sliced, so a big map does not freeze a frame
+                    local n = 0
+                    for _, inst in ipairs(root:GetDescendants()) do
+                        if run ~= my or destroyed then return end
+                        if isAudio(inst) then track(inst) end
+                        n += 1
+                        if n % 1500 == 0 then task.wait() end
+                    end
+                end)
+            end
+        end
+
+        function Mute.stop()
+            run += 1
+            active = false
+            for _, c in ipairs(conns) do c:Disconnect() end
+            table.clear(conns)
+            for inst, rec in pairs(tracked) do
+                if rec.conn then rec.conn:Disconnect() end
+                if inst.Parent then pcall(function() inst.Volume = rec.vol end) end
+            end
+            table.clear(tracked)
+        end
+
+        onDestroy(Mute.stop)
+    end
+
+    --// ================= HIDE FAR PLAYERS =================
+    -- Players farther than the chosen distance are not drawn: their parts get LocalTransparencyModifier = 1 (this client only),
+    -- so the GPU has less to do in a crowded server. Checked twice a second from the camera; a player has to come 10% closer
+    -- before he shows up again. (Hide Players in the Local tab does the same for everybody, near or far.)
+    local FarPlayers = {}
+    local FAR_MODES = { "50 studs", "100 studs", "200 studs", "400 studs" }
+    do
+        local Players = game:GetService("Players")
+        local run, distance = 0, 100
+        local hiddenChars = setmetatable({}, { __mode = "k" }) -- character -> { parts = { [part] = original modifier }, hum, display }
+
+        local function hide(char)
+            local rec = hiddenChars[char]
+            if not rec then
+                rec = { parts = {} }
+                hiddenChars[char] = rec
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    rec.hum, rec.display = hum, hum.DisplayDistanceType
+                    pcall(function() hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end) -- no name tag either
+                end
+            end
+            for _, part in ipairs(char:GetDescendants()) do -- also catches accessories and tools that appear later
+                if part:IsA("BasePart") and rec.parts[part] == nil then
+                    rec.parts[part] = part.LocalTransparencyModifier
+                    part.LocalTransparencyModifier = 1
+                end
+            end
+        end
+
+        local function show(char)
+            local rec = hiddenChars[char]
+            if not rec then return end
+            hiddenChars[char] = nil
+            for part, original in pairs(rec.parts) do
+                if part.Parent then pcall(function() part.LocalTransparencyModifier = original end) end
+            end
+            if rec.hum and rec.hum.Parent then
+                pcall(function() rec.hum.DisplayDistanceType = rec.display end)
+            end
+        end
+
+        local function pass()
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+            local origin = cam.CFrame.Position
+            for _, p in ipairs(Players:GetPlayers()) do
+                local char = p.Character
+                local root = (p ~= LocalPlayer and char) and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local d = (root.Position - origin).Magnitude
+                    if hiddenChars[char] then
+                        if d < distance * 0.9 then show(char) else hide(char) end -- hide again: new parts may have appeared
+                    elseif d > distance then
+                        hide(char)
+                    end
+                end
+            end
+        end
+
+        function FarPlayers.setDistance(d) distance = d end
+
+        function FarPlayers.start()
+            run += 1
+            local my = run
+            task.spawn(function()
+                while run == my and not destroyed do
+                    pcall(pass)
+                    task.wait(0.5)
+                end
+            end)
+        end
+
+        function FarPlayers.stop()
+            run += 1
+            for char in pairs(hiddenChars) do show(char) end
+        end
+
+        onDestroy(FarPlayers.stop)
+    end
+
+>>>>>>> f403d6d (UPD Script)
     --// ================= OPTIMIZER =================
     -- Every change is recorded (original value + the value we set) and only reverted if the
     -- property still holds our value, so anything the game changed in the meantime is left alone.
@@ -1133,11 +1398,49 @@ return function(ctx)
         low    = statusEntry("Low", "Danger"),
     }
 
+<<<<<<< HEAD
     local Meter = { fps = 0, ms = 0, ping = nil, mem = nil, listeners = {} }
+=======
+    local Meter = { fps = 0, ms = 0, ping = nil, mem = nil, avg = nil, low = nil, detail = false, listeners = {} }
+>>>>>>> f403d6d (UPD Script)
     do
         local beat
         local wanted = {}
         local frames, elapsed, lastSlow = 0, 0, 0
+<<<<<<< HEAD
+=======
+        -- Frame times of the last ~10 seconds (a ring buffer) for the avg and 1% low of the overlay; only recorded while Meter.detail is on
+        local FT_CAP, FT_WINDOW = 2048, 10
+        local ft, ftHead, ftCount = {}, 0, 0
+
+        function Meter.setDetail(on)
+            Meter.detail = on and true or false
+            ftHead, ftCount = 0, 0
+            Meter.avg, Meter.low = nil, nil
+        end
+
+        -- avg = frames / seconds; 1% low = the average FPS of the slowest 1% of those frames
+        local function computeDetail()
+            local sample, total, i = {}, 0, ftHead
+            for _ = 1, ftCount do
+                local dt = ft[i]
+                sample[#sample + 1] = dt
+                total += dt
+                if total >= FT_WINDOW then break end
+                i = (i - 2) % FT_CAP + 1 -- one step back in the ring
+            end
+            local n = #sample
+            if n < 10 or total <= 0 then
+                Meter.avg, Meter.low = nil, nil
+                return
+            end
+            Meter.avg = n / total
+            table.sort(sample, function(a, b) return a > b end) -- slowest frames first
+            local worst, sum = math.max(1, math.ceil(n * 0.01)), 0
+            for k = 1, worst do sum += sample[k] end
+            Meter.low = worst / sum
+        end
+>>>>>>> f403d6d (UPD Script)
 
         local function readPing()
             local ok, v = pcall(function()
@@ -1161,6 +1464,14 @@ return function(ctx)
             end
             frames += 1
             elapsed += dt
+<<<<<<< HEAD
+=======
+            if Meter.detail then
+                ftHead = ftHead % FT_CAP + 1
+                ft[ftHead] = dt
+                if ftCount < FT_CAP then ftCount += 1 end
+            end
+>>>>>>> f403d6d (UPD Script)
             if elapsed < 0.5 then return end
 
             Meter.fps = frames / elapsed
@@ -1172,6 +1483,10 @@ return function(ctx)
                 lastSlow = now
                 Meter.ping, Meter.mem = readPing(), readMemory()
             end
+<<<<<<< HEAD
+=======
+            if Meter.detail then computeDetail() end
+>>>>>>> f403d6d (UPD Script)
             for i = 1, #Meter.listeners do pcall(Meter.listeners[i], Meter) end
         end
 
@@ -1433,7 +1748,11 @@ return function(ctx)
             BorderSizePixel = 0,
             Active = true,
         }, Gui)
+<<<<<<< HEAD
         corner(Pill, 13)
+=======
+        local PillCorner = corner(Pill, 13)
+>>>>>>> f403d6d (UPD Script)
         stroke(Pill)
 
         local Text = label(Pill, {
@@ -1445,9 +1764,43 @@ return function(ctx)
             TextXAlignment = Enum.TextXAlignment.Center,
         })
 
+<<<<<<< HEAD
         local function render(m)
             if coverActive then
                 Text.Text = string.format('<font color="#%s">Rendering off</font>', hex(Theme.SubText))
+=======
+        -- Details (the "Overlay Details" switch, on by default): a second line with avg FPS, 1% low and memory
+        local details = Prefs.get("overlayDetails") ~= false
+        local Text2 = label(Pill, {
+            Position = UDim2.fromOffset(0, 23),
+            Size = UDim2.new(1, 0, 0, 16),
+            RichText = true,
+            Text = "",
+            Font = Enum.Font.Gotham,
+            TextSize = 11,
+            TextColor3 = Theme.SubText,
+            TextXAlignment = Enum.TextXAlignment.Center,
+        })
+
+        local function layout()
+            if details then
+                Pill.Size = UDim2.fromOffset(240, 44)
+                Text.Position, Text.Size = UDim2.fromOffset(0, 2), UDim2.new(1, 0, 0, 22)
+                PillCorner.CornerRadius = UDim.new(0, 14)
+            else
+                Pill.Size = UDim2.fromOffset(150, 26)
+                Text.Position, Text.Size = UDim2.fromOffset(0, 0), UDim2.fromScale(1, 1)
+                PillCorner.CornerRadius = UDim.new(0, 13)
+            end
+            Text2.Visible = details
+        end
+        layout()
+
+        local function render(m)
+            if coverActive then
+                Text.Text = string.format('<font color="#%s">Rendering off</font>', hex(Theme.SubText))
+                Text2.Text = ""
+>>>>>>> f403d6d (UPD Script)
                 return
             end
             local status = STATUS[Meter.level(m.fps)]
@@ -1456,6 +1809,16 @@ return function(ctx)
                 text = text .. string.format(' <font color="#%s">·</font> %d ms', hex(Theme.SubText), rounded(m.ping))
             end
             Text.Text = text
+<<<<<<< HEAD
+=======
+            if details then
+                local parts = {}
+                if m.avg then parts[#parts + 1] = "avg " .. rounded(m.avg) end
+                if m.low then parts[#parts + 1] = "1% low " .. rounded(m.low) end
+                if m.mem then parts[#parts + 1] = "RAM " .. formatMemory(m.mem) end
+                Text2.Text = table.concat(parts, "  ·  ")
+            end
+>>>>>>> f403d6d (UPD Script)
         end
 
         Meter.listeners[#Meter.listeners + 1] = function(m)
@@ -1502,9 +1865,27 @@ return function(ctx)
 
         function Overlay.setEnabled(on)
             Gui.Enabled = on
+<<<<<<< HEAD
             Meter.want("overlay", on)
         end
 
+=======
+            Meter.setDetail(on and details)
+            Meter.want("overlay", on)
+        end
+
+        function Overlay.details() return details end
+
+        function Overlay.setDetails(on)
+            details = on and true or false
+            Prefs.set("overlayDetails", details)
+            Meter.setDetail(Gui.Enabled and details)
+            Text2.Text = ""
+            layout()
+            if Gui.Enabled then settle() end -- the taller pill must still fit on screen
+        end
+
+>>>>>>> f403d6d (UPD Script)
         onDestroy(function()
             stopDrag()
             Gui:Destroy()
@@ -1604,6 +1985,34 @@ return function(ctx)
         Profile.Switch:GetAttributeChangedSignal("Toggled"):Connect(sync)
     end
 
+<<<<<<< HEAD
+=======
+    -- Hide Far Players / Mute Audio
+    local function farDistance(text) return tonumber(string.match(text, "(%d+)")) or 100 end
+    local FarRow
+    FarRow = createModeRow(Optimize.Body, "Hide Far Players", FAR_MODES, Prefs.pick("far", FAR_MODES, "100 studs"), function(m)
+        Prefs.set("far", m)
+        FarPlayers.setDistance(farDistance(m))
+    end, { default = "Players beyond this distance are not drawn" })
+    FarRow.Frame.LayoutOrder = 4
+    FarRow.Switch:GetAttributeChangedSignal("Toggled"):Connect(function()
+        if FarRow.Switch:GetAttribute("Toggled") then
+            FarPlayers.setDistance(farDistance(FarRow.getMode()))
+            FarPlayers.start()
+        else
+            FarPlayers.stop()
+        end
+    end)
+    addToggle(Optimize, FarRow.Switch, FarRow.setState)
+
+    local MuteSwitch, setMute = CreateToggleOption(Optimize.Body, "Mute Audio")
+    MuteSwitch.Parent.LayoutOrder = 5
+    MuteSwitch:GetAttributeChangedSignal("Toggled"):Connect(function()
+        if MuteSwitch:GetAttribute("Toggled") then Mute.start() else Mute.stop() end
+    end)
+    addToggle(Optimize, MuteSwitch, setMute)
+
+>>>>>>> f403d6d (UPD Script)
     --// ================= SCREEN ROWS =================
     local SaverRow
     SaverRow = createModeRow(ScreenSec.Body, "Idle Saver", SAVER_MODES, Prefs.pick("saver", SAVER_MODES, "After 3 min"),
@@ -1629,8 +2038,18 @@ return function(ctx)
     end)
     addToggle(Interface, OverlaySwitch, setOverlay)
 
+<<<<<<< HEAD
     local NotifSwitch, setNotif = CreateToggleOption(Interface.Body, "Remove Notification")
     NotifSwitch.Parent.LayoutOrder = 2
+=======
+    -- Overlay Details: a preference (kept in the FPS prefs file), not a feature, so it is not part of Reset All or the section pill
+    local DetailsSwitch, _, detailsApi = CreateToggleOption(Interface.Body, "Overlay Details", nil, { initial = Overlay.details(), session = false })
+    DetailsSwitch.Parent.LayoutOrder = 2
+    detailsApi.onChanged(function(on) Overlay.setDetails(on) end)
+
+    local NotifSwitch, setNotif = CreateToggleOption(Interface.Body, "Remove Notification")
+    NotifSwitch.Parent.LayoutOrder = 3
+>>>>>>> f403d6d (UPD Script)
     NotifSwitch:GetAttributeChangedSignal("Toggled"):Connect(function()
         if NotifSwitch:GetAttribute("Toggled") then Notif.enable() else Notif.disable() end
     end)
@@ -1638,7 +2057,11 @@ return function(ctx)
     addToggle(Interface, NotifSwitch, setNotif)
 
     local HideSwitch, setHide = CreateToggleOption(Interface.Body, "Hide Chat & Player List")
+<<<<<<< HEAD
     HideSwitch.Parent.LayoutOrder = 3
+=======
+    HideSwitch.Parent.LayoutOrder = 4
+>>>>>>> f403d6d (UPD Script)
     HideSwitch:GetAttributeChangedSignal("Toggled"):Connect(function()
         if HideSwitch:GetAttribute("Toggled") then HideUi.enable() else HideUi.disable() end
     end)

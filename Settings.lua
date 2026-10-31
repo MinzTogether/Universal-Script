@@ -9,6 +9,7 @@
 --// ============================================================================
 --//  Settings.lua  -  module for the "Settings" tab of the Elysera MainUI
 --//
+<<<<<<< HEAD
 --//  Features (A split out of MainLocal.lua, B merged from Theme.lua, C and D added later, E - H added after that):
 --//    A) Anti Chat     switch that blocks sending chat messages (LayoutOrder = 1)
 --//    C) Auto Execute  switch that reloads Elysera after a teleport (LayoutOrder = 2; the mechanism lives in the core: ctx.AutoExecute)
@@ -21,6 +22,17 @@
 --//
 --//  E - H need a newer core (MainWeb.lua with ctx.Session, ctx.UIScale, ctx.Motion, ctx.MenuKey, ctx.Config, ctx.Toast, ctx.reloadUI).
 --//  With an older core the matching rows are simply not built and everything else works as before.
+=======
+--//  Four features (A split out of MainLocal.lua, B merged from Theme.lua, C and D added later):
+--//    A) Anti Chat     switch that blocks sending chat messages (LayoutOrder = 1)
+--//    C) Auto Execute  switch that reloads Elysera after a teleport (LayoutOrder = 2; the mechanism lives in the core: ctx.AutoExecute)
+--//    B) Theme         "Theme" row + dropdown list to change the color palette (LayoutOrder = 3)
+--//    D) Diagnostics   which APIs the executor supports, where each module was loaded from, Copy report, Unload (LayoutOrder = 8)
+--//    E) Restore last session  switch (LayoutOrder = 3): switches come back on after a reload / server hop (mechanism: ctx.Session)
+--//    F) Interface     UI Scale, Reduce Motion, Menu Hotkey (LayoutOrder = 5)
+--//    G) Config        Export / Import / Reset of the settings (LayoutOrder = 6)
+--//    H) About         version + update check (LayoutOrder = 7)
+>>>>>>> f403d6d (UPD Script)
 --//
 --//  Put this file next to the other modules (Script.lua, Status_Server.lua, Local.lua, FPS.lua).
 --//  MainLocal.lua loads it with readModule("Settings.lua") + init({...}) at the END (after the FPS TAB), so the first theme
@@ -66,6 +78,7 @@ return function(D)
     local flashButtonFeedback = D.flashButtonFeedback
     local UI, Loader, AutoExec = D.UI, D.Loader or {}, D.AutoExecute
     local requestClose = D.requestClose
+<<<<<<< HEAD
 
     -- Optional services of a newer core (see the header): every feature that needs one is skipped when it is missing
     local Session, UIScaleApi, MotionApi, MenuKeyApi, Config = D.Session, D.UIScale, D.Motion, D.MenuKey, D.Config
@@ -74,6 +87,11 @@ return function(D)
         local ok, err = pcall(D.Toast, message, kind, opts)
         if not ok then warn("[Elysera/Settings] Toast failed: " .. tostring(err)) end
     end
+=======
+    local HttpService      = D.HttpService or game:GetService("HttpService")
+    local UserInputService = D.UserInputService or game:GetService("UserInputService")
+    local Toast            = D.Toast or function() end
+>>>>>>> f403d6d (UPD Script)
 
     local EASE_QUAD, EASE_BACK = D.EASE_QUAD, D.EASE_BACK
     local DIR_IN, DIR_OUT      = D.DIR_IN, D.DIR_OUT
@@ -94,7 +112,11 @@ return function(D)
         --// ---------- Anti Chat ----------
         local TextChatService = game:GetService("TextChatService")
 
+<<<<<<< HEAD
         local AntiChatSwitch, setAntiChat, antiChatApi = CreateToggleOption(Tab, "Anti Chat")
+=======
+        local AntiChatSwitch = CreateToggleOption(Tab, "Anti Chat")
+>>>>>>> f403d6d (UPD Script)
         AntiChatSwitch.Parent.LayoutOrder = 1
 
         local antiChatOn    = false
@@ -219,6 +241,7 @@ return function(D)
             end
         end)
 
+<<<<<<< HEAD
         -- "Restore last session": every change is remembered, and the switch comes back ON after a server change.
         -- (set after the handler above exists, so turning it on here really starts Anti Chat)
         if Session and antiChatApi then
@@ -227,6 +250,8 @@ return function(D)
             if okGet and wanted == true then setAntiChat(true) end
         end
 
+=======
+>>>>>>> f403d6d (UPD Script)
         --// ---------- Cleanup ----------
         ScreenGui.Destroying:Connect(function()
             disableAntiChat()
@@ -790,8 +815,13 @@ return function(D)
         WinLabel.Text = entry.name
         -- text width + 20 + arrow zone; grows toward the left because the winbox is anchored to the right edge
         local w = clamp(math.ceil(measure(entry.name, 13)) + 20 + ARROW_ZONE, WIN_MIN_W, WIN_MAX_W)
+<<<<<<< HEAD
         local zoom = (UIScaleApi and tonumber(UIScaleApi.get())) or 1 -- the row lives in the zoomed body: AbsoluteSize is in screen pixels
         local rowW = Row.AbsoluteSize.X / (zoom > 0 and zoom or 1)
+=======
+        -- AbsoluteSize is in screen pixels, the offsets below are in UI Scale units
+        local rowW = Row.AbsoluteSize.X / ((D.UIScale and D.UIScale.get()) or 1)
+>>>>>>> f403d6d (UPD Script)
         if rowW > 0 then -- smallest UI: leave room for the title (14 + text), a gap of 8, and a right margin of 12
             w = math.min(w, math.max(64, rowW - 14 - titleW - 8 - 12))
         end
@@ -1067,7 +1097,11 @@ return function(D)
     local function createThemeRow()
         Row = new("Frame", {
             Name = "ThemeRow",
+<<<<<<< HEAD
             LayoutOrder = 4, -- below Anti Chat (1), Auto Execute (2) and Restore last session (3); Interface is 5
+=======
+            LayoutOrder = 4, -- below Anti Chat (1), Auto Execute (2) and Restore last session (3); Interface / Config / About / Diagnostics follow
+>>>>>>> f403d6d (UPD Script)
             Size = UDim2.new(1, 0, 0, 50),
             BackgroundColor3 = Theme.Panel,
             BorderSizePixel = 0,
@@ -1140,6 +1174,10 @@ return function(D)
         end)
 
         Row:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateWinbox)
+<<<<<<< HEAD
+=======
+    if D.UIScale and D.UIScale.onChanged then D.UIScale.onChanged(updateWinbox) end
+>>>>>>> f403d6d (UPD Script)
         updateWinbox()
     end
 
@@ -1213,11 +1251,412 @@ return function(D)
     end
 
     --// =====================================================================
+<<<<<<< HEAD
+=======
+    --// PART E. RESTORE LAST SESSION  (the mechanism lives in the core: ctx.Session; only the switch is built here)
+    --// =====================================================================
+    local Session = D.Session
+    if Session and CreateToggleOption then
+        local okE, errE = pcall(function()
+            local Switch, _, switchApi = CreateToggleOption(Tab, "Restore last session", 56, { initial = Session.enabled(), session = false })
+            local Row = Switch.Parent
+            Row.LayoutOrder = 3
+
+            -- title + subtitle line (same layout as Auto Execute)
+            for _, child in ipairs(Row:GetChildren()) do
+                if child:IsA("TextLabel") and child.Text == "Restore last session" then
+                    child.Position = UDim2.fromOffset(14, 8)
+                    child.Size = UDim2.new(1, -80, 0, 22)
+                end
+            end
+            label(Row, {
+                Position = UDim2.fromOffset(14, 31),
+                Size = UDim2.new(1, -80, 0, 16),
+                Font = Enum.Font.Gotham,
+                TextSize = 11,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextColor3 = Theme.SubText,
+                Text = "Switch features back on after a reload or server hop",
+            })
+            switchApi.onChanged(function(on) Session.setEnabled(on) end)
+        end)
+        if not okE then warn("[Elysera/Settings] Could not build Restore last session: " .. tostring(errE)) end
+    end
+
+    --// =====================================================================
+    --// PART F. INTERFACE  (UI Scale, Reduce Motion, Menu Hotkey)
+    --// =====================================================================
+    if UI and UI.CreateSection and CreateInfoRow and CreateStyledButton and D.UIScale and D.Motion and D.Hotkey then
+        local okF, errF = pcall(function()
+            local Section = UI.CreateSection(Tab, "Interface", 5, {
+                subtitle = "UI scale, motion and menu hotkey",
+                collapsed = true,
+            })
+            local Body = Section.Body
+
+            -- UI Scale: [-] [100%] [+]; the value button resets to 100%. The core clamps to 60% - 140% (steps of 5%)
+            local ScaleRow, ScaleLeft = CreateInfoRow(Body, "UI Scale")
+            if ScaleLeft then ScaleLeft.Size = UDim2.new(1, -140, 1, 0) end
+            local Plus  = CreateStyledButton(ScaleRow, "+", 30)
+            local Value = CreateStyledButton(ScaleRow, "100%", 58)
+            local Minus = CreateStyledButton(ScaleRow, "-", 30)
+            Value.Position = UDim2.new(1, -36, 0.5, 0)
+            Minus.Position = UDim2.new(1, -100, 0.5, 0)
+            local function showScale()
+                Value.Text = ("%d%%"):format(math.floor(D.UIScale.get() * 100 + 0.5))
+            end
+            showScale()
+            local function stepScale(delta)
+                if isLocked() then return end
+                D.UIScale.set(D.UIScale.get() + delta)
+                showScale()
+            end
+            Plus.MouseButton1Click:Connect(function() stepScale(0.1) end)
+            Minus.MouseButton1Click:Connect(function() stepScale(-0.1) end)
+            Value.MouseButton1Click:Connect(function()
+                if isLocked() then return end
+                D.UIScale.set(1)
+                showScale()
+            end)
+
+            -- Reduce Motion: every animation of the UI finishes almost instantly (saved in the settings file)
+            local MotionSwitch, _, motionApi = CreateToggleOption(Body, "Reduce Motion", 50, { initial = D.Motion.reduced, session = false })
+            motionApi.onChanged(function(on) D.Motion.set(on) end)
+            if Section.track then Section.track(MotionSwitch) end
+
+            -- Menu Hotkey: tap the button, then press a key. Escape cancels, Backspace / Delete clears
+            local KeyRow, KeyLeft = CreateInfoRow(Body, "Menu Hotkey")
+            if KeyLeft then
+                KeyLeft.Size = UDim2.new(1, -140, 1, 0)
+                label(KeyLeft, {
+                    LayoutOrder = 2,
+                    Size = UDim2.new(0, 0, 1, 0),
+                    AutomaticSize = Enum.AutomaticSize.X,
+                    Text = "· Backspace clears",
+                    Font = Enum.Font.Gotham,
+                    TextSize = 12,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextColor3 = Theme.SubText,
+                })
+            end
+            local KeyBtn = CreateStyledButton(KeyRow, "None", 130)
+            local capConn, capToken = nil, 0
+            local function showKey()
+                KeyBtn.Text = Saved.menuKey or "None"
+                KeyBtn.TextColor3 = Saved.menuKey and Theme.AccentPink or Theme.Text
+            end
+            local function stopCapture()
+                capToken += 1
+                if capConn then capConn:Disconnect(); capConn = nil end
+                -- one frame later: the core's own listener may still be handling this very key press
+                task.defer(function() D.Hotkey.capturing = false end)
+            end
+            showKey()
+            KeyBtn.MouseButton1Click:Connect(function()
+                if isLocked() then return end
+                if capConn then stopCapture(); showKey() return end -- a second tap cancels
+                D.Hotkey.capturing = true
+                KeyBtn.Text = "Press a key..."
+                KeyBtn.TextColor3 = Theme.Sakura
+                local token = capToken
+                capConn = UserInputService.InputBegan:Connect(function(input)
+                    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                    local name = input.KeyCode.Name
+                    if name == "Unknown" then return end
+                    stopCapture()
+                    if name == "Backspace" or name == "Delete" then
+                        D.Hotkey.set(nil)
+                    elseif name ~= "Escape" then
+                        D.Hotkey.set(name)
+                    end
+                    showKey()
+                end)
+                task.delay(8, function()
+                    if capConn and token == capToken then stopCapture(); showKey() end
+                end)
+            end)
+            ScreenGui.Destroying:Connect(function()
+                if capConn then capConn:Disconnect(); capConn = nil end
+                D.Hotkey.capturing = false
+            end)
+        end)
+        if not okF then warn("[Elysera/Settings] Could not build Interface: " .. tostring(errF)) end
+    end
+
+    --// =====================================================================
+    --// PART G. CONFIG  (Export / Import / Reset)
+    --//   A config = theme, FPS profile mode, UI scale, Reduce Motion, menu hotkey, the Restore switch + the FPS preferences file.
+    --//   Window position / size, Auto Execute and the saved session stay local to this device.
+    --//   Import and Reset rewrite the files and then reload Elysera, so every module reads the new values.
+    --// =====================================================================
+    if UI and UI.CreateSection and CreateInfoRow and CreateStyledButton and D.writeSettings then
+        local okG, errG = pcall(function()
+            local Section = UI.CreateSection(Tab, "Config", 6, {
+                subtitle = "Export, import or reset your settings",
+                collapsed = true,
+            })
+            local Body = Section.Body
+            local FPS_FILE, EXPORT_FILE = "Elysera_Fps.json", "Elysera_Config_Export.json"
+
+            local function readDataFile(name)
+                if not D.canFS then return nil end
+                local ok, body = pcall(function()
+                    local path = D.dataPath(name)
+                    if isfile(path) then return readfile(path) end
+                end)
+                return (ok and type(body) == "string" and body ~= "") and body or nil
+            end
+
+            local function buildExport()
+                local settings = {}
+                for _, key in ipairs({ "uiScale", "reduceMotion", "menuKey", "restoreSession" }) do
+                    if Saved[key] ~= nil then settings[key] = Saved[key] end
+                end
+                settings.theme = ScreenGui:GetAttribute("Theme") or Saved.theme
+                settings.fpsMode = ScreenGui:GetAttribute("FpsMode")
+                local bundle = { app = "Elysera", kind = "config", format = 1, version = D.VERSION, settings = settings }
+                local fpsBody = readDataFile(FPS_FILE)
+                if fpsBody then
+                    local okJ, decoded = pcall(HttpService.JSONDecode, HttpService, fpsBody)
+                    if okJ and type(decoded) == "table" then bundle.fps = decoded end
+                end
+                return HttpService:JSONEncode(bundle)
+            end
+
+            -- Returns true, or false + the reason. Everything is validated before it is stored
+            local function applyImport(text)
+                local okJ, bundle = pcall(HttpService.JSONDecode, HttpService, text)
+                if not okJ or type(bundle) ~= "table" or bundle.app ~= "Elysera" or bundle.kind ~= "config" or type(bundle.settings) ~= "table" then
+                    return false, "Not an Elysera config"
+                end
+                local s = bundle.settings
+                if type(s.theme) == "string" and byId[s.theme] then ScreenGui:SetAttribute("Theme", s.theme) end
+                ScreenGui:SetAttribute("FpsMode", (type(s.fpsMode) == "string" and #s.fpsMode <= 40) and s.fpsMode or nil)
+                Saved.uiScale = (type(s.uiScale) == "number" and s.uiScale >= 0.5 and s.uiScale <= 1.5) and s.uiScale or nil
+                Saved.reduceMotion = s.reduceMotion == true or nil
+                Saved.menuKey = (type(s.menuKey) == "string" and #s.menuKey <= 30) and s.menuKey or nil
+                Saved.restoreSession = s.restoreSession == true or nil
+                Saved.session = nil
+                D.writeSettings()
+                if type(bundle.fps) == "table" and D.canFS then
+                    pcall(function() writefile(D.dataPath(FPS_FILE), HttpService:JSONEncode(bundle.fps)) end)
+                end
+                return true
+            end
+
+            local function applyReset()
+                for key in pairs(Saved) do Saved[key] = nil end
+                ScreenGui:SetAttribute("Theme", nil)
+                ScreenGui:SetAttribute("FpsMode", nil)
+                D.writeSettings()
+                if D.canFS then
+                    pcall(function()
+                        local path = D.dataPath(FPS_FILE)
+                        if isfile(path) then
+                            if typeof(delfile) == "function" then delfile(path) else writefile(path, "{}") end
+                        end
+                    end)
+                end
+            end
+
+            local function reloadSoon(message)
+                Toast(message, "success", { duration = 3 })
+                task.delay(0.8, function()
+                    if not Loader.reload then Toast("Re-run Elysera to apply", "warn") return end
+                    local ok, why = Loader.reload()
+                    if not ok then Toast("Reload failed: " .. tostring(why), "error") end
+                end)
+            end
+
+            -- Export: copy to the clipboard; without clipboard access the text goes to Elysera/Elysera_Config_Export.json
+            local ExportRow = CreateInfoRow(Body, "Export config")
+            local ExportBtn = CreateStyledButton(ExportRow, "Copy", 70)
+            ExportBtn.MouseButton1Click:Connect(function()
+                if isLocked() then return end
+                local okB, json = pcall(buildExport)
+                if not okB then
+                    flashButtonFeedback(ExportBtn, "Copy", "Failed", true)
+                    return
+                end
+                if UI.CopyText(json) then
+                    flashButtonFeedback(ExportBtn, "Copy", "Copied", false)
+                    Toast("Config copied to the clipboard", "success")
+                elseif D.canFS and pcall(writefile, D.dataPath(EXPORT_FILE), json) then
+                    flashButtonFeedback(ExportBtn, "Copy", "Saved", false)
+                    Toast("Saved to Elysera/" .. EXPORT_FILE, "success", { duration = 4 })
+                else
+                    flashButtonFeedback(ExportBtn, "Copy", "Failed", true)
+                end
+            end)
+
+            -- Import: the clipboard first, then Elysera/Elysera_Config_Export.json
+            local ImportRow = CreateInfoRow(Body, "Import config")
+            local ImportBtn = CreateStyledButton(ImportRow, "Paste", 70)
+            ImportBtn.MouseButton1Click:Connect(function()
+                if isLocked() then return end
+                local text
+                local reader = (typeof(getclipboard) == "function" and getclipboard)
+                    or (typeof(readclipboard) == "function" and readclipboard)
+                    or (typeof(fromclipboard) == "function" and fromclipboard)
+                if reader then
+                    local okC, clip = pcall(reader)
+                    if okC and type(clip) == "string" and clip:find("Elysera", 1, true) then text = clip end
+                end
+                text = text or readDataFile(EXPORT_FILE)
+                if not text then
+                    flashButtonFeedback(ImportBtn, "Paste", "No config", true)
+                    Toast(reader and "Copy an Elysera config first" or "Clipboard read is not supported here", "warn")
+                    return
+                end
+                local ok, why = applyImport(text)
+                if not ok then
+                    flashButtonFeedback(ImportBtn, "Paste", "Invalid", true)
+                    Toast(why, "error")
+                    return
+                end
+                flashButtonFeedback(ImportBtn, "Paste", "Done", false)
+                reloadSoon("Config imported. Reloading...")
+            end)
+
+            -- Reset: two taps within 3 seconds (also turns Auto Execute off)
+            local ResetRow, ResetLeft = CreateInfoRow(Body, "Reset config")
+            if ResetLeft then
+                label(ResetLeft, {
+                    LayoutOrder = 2,
+                    Size = UDim2.new(0, 0, 1, 0),
+                    AutomaticSize = Enum.AutomaticSize.X,
+                    Text = "· also turns Auto Execute off",
+                    Font = Enum.Font.Gotham,
+                    TextSize = 12,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextColor3 = Theme.SubText,
+                })
+            end
+            local ResetBtn = CreateStyledButton(ResetRow, "Reset", 80)
+            ResetBtn.TextColor3 = Theme.Danger
+            local armedAt = -10
+            ResetBtn.MouseButton1Click:Connect(function()
+                if isLocked() then return end
+                if os.clock() - armedAt > 3 then
+                    armedAt = os.clock()
+                    flashButtonFeedback(ResetBtn, "Reset", "Tap again", true, 3)
+                    return
+                end
+                armedAt = -10
+                applyReset()
+                reloadSoon("Config reset. Reloading...")
+            end)
+        end)
+        if not okG then warn("[Elysera/Settings] Could not build Config: " .. tostring(errG)) end
+    end
+
+    --// =====================================================================
+    --// PART H. ABOUT  (version + update check: compares the VERSION of the boot script on GitHub with the running one)
+    --// =====================================================================
+    if UI and UI.CreateSection and CreateInfoRow and CreateStyledButton then
+        local okH, errH = pcall(function()
+            local Section = UI.CreateSection(Tab, "About", 7, {
+                subtitle = "Version and updates",
+                collapsed = true,
+            })
+            local Body = Section.Body
+            local current = tostring(D.VERSION or "?")
+
+            local function parseVersion(src)
+                return src:match('VERSION%s*=%s*"([%w%.%-_]+)"')
+            end
+            -- 1 when a is newer than b, -1 when older, 0 when equal (numeric parts only: 1.10.0 > 1.9.0)
+            local function compareVersions(a, b)
+                local pa, pb = {}, {}
+                for n in a:gmatch("%d+") do pa[#pa + 1] = tonumber(n) end
+                for n in b:gmatch("%d+") do pb[#pb + 1] = tonumber(n) end
+                for i = 1, math.max(#pa, #pb) do
+                    local x, y = pa[i] or 0, pb[i] or 0
+                    if x ~= y then return x > y and 1 or -1 end
+                end
+                return 0
+            end
+
+            local VersionRow = CreateInfoRow(Body, "Version")
+            label(VersionRow, {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, 0, 0.5, 0),
+                Size = UDim2.fromOffset(150, 24),
+                Text = "v" .. current,
+                TextSize = 15,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                TextColor3 = Theme.AccentPink,
+            })
+
+            local UpRow, UpLeft = CreateInfoRow(Body, "Updates")
+            if UpLeft then UpLeft.Size = UDim2.new(1, -230, 1, 0) end
+            local UpBtn = CreateStyledButton(UpRow, "Check", 70)
+            local UpStatus = label(UpRow, {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -78, 0.5, 0),
+                Size = UDim2.fromOffset(140, 24),
+                Font = Enum.Font.Gotham,
+                Text = "",
+                TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                TextColor3 = Theme.SubText,
+            })
+
+            local busy, updateReady = false, false
+            local function setStatus(text, color)
+                UpStatus.Text = text
+                UpStatus.TextColor3 = color or Theme.SubText
+            end
+
+            UpBtn.MouseButton1Click:Connect(function()
+                if isLocked() or busy then return end
+                if updateReady then -- "Update": run the boot script again, it downloads the newest files
+                    Toast("Updating Elysera...", "info")
+                    local ok, why = false, "reload is not available"
+                    if Loader.reload then ok, why = Loader.reload() end
+                    if not ok then Toast("Update failed: " .. tostring(why), "error") end
+                    return
+                end
+                busy = true
+                UpBtn.Text = "..."
+                setStatus("Checking...")
+                task.spawn(function()
+                    local fetch = Loader.httpGet or function(url) return game:HttpGet(url) end
+                    local okGet, body = false, "no boot URL"
+                    if type(Loader.bootUrl) == "string" then okGet, body = pcall(fetch, Loader.bootUrl) end
+                    local latest = (okGet and type(body) == "string") and parseVersion(body) or nil
+                    busy = false
+                    if not UpBtn.Parent then return end
+                    UpBtn.Text = "Check"
+                    if not latest then
+                        setStatus("Could not check", Theme.Danger)
+                    elseif compareVersions(latest, current) > 0 then
+                        updateReady = true
+                        UpBtn.Text = "Update"
+                        setStatus("v" .. latest .. " available", Theme.AccentPink)
+                        Toast("Update available: v" .. latest, "info", { duration = 3 })
+                    else
+                        setStatus("Up to date", Theme.Sakura)
+                    end
+                end)
+            end)
+        end)
+        if not okH then warn("[Elysera/Settings] Could not build About: " .. tostring(errH)) end
+    end
+
+    --// =====================================================================
+>>>>>>> f403d6d (UPD Script)
     --// PART D. DIAGNOSTICS  (which APIs the executor supports, where each module was loaded from, Copy report, Unload)
     --// =====================================================================
     if UI and UI.CreateSection and CreateInfoRow and CreateStyledButton then
         local okD, errD = pcall(function()
+<<<<<<< HEAD
             local Section = UI.CreateSection(Tab, "Diagnostics", 7, {
+=======
+            local Section = UI.CreateSection(Tab, "Diagnostics", 8, {
+>>>>>>> f403d6d (UPD Script)
                 subtitle = "Executor features and loaded modules",
                 collapsed = true,
             })
@@ -1371,6 +1810,7 @@ return function(D)
         if not okD then warn("[Elysera/Settings] Could not build Diagnostics: " .. tostring(errD)) end
     end
 
+<<<<<<< HEAD
     --// =====================================================================
     --// PARTS E - H need a newer core (ctx.Session / UIScale / Motion / MenuKey / Config / Toast / reloadUI / Loader.*).
     --// Every part is built inside its own pcall and only when its service exists, so an older core keeps everything above working.
@@ -1973,6 +2413,8 @@ return function(D)
         end
     end
 
+=======
+>>>>>>> f403d6d (UPD Script)
     ScreenGui.Destroying:Connect(function() closeList(true) end)
 
     local metaList = {}

@@ -13,7 +13,13 @@
 --
 -- Library : save / edit / duplicate / pin / export / import / undo delete, search and sort (Added, A-Z, Edited, Recent)
 -- Running : Run / Stop, Output panel, Run clipboard, test run from the dialog, last run info on every script
+<<<<<<< HEAD
 -- Startup : Auto-run per script (global pause in the menu); imported scripts must be reviewed before they run
+=======
+-- Startup : Auto-run per script, in every game or only in chosen games (global pause in the menu); imported scripts must be reviewed before they run
+-- Stop    : a script may end with "return function() ... end": that function is its cleanup and Stop calls it (the script then stays "running")
+-- Editor  : line numbers, syntax colors while the editor is not focused; the library search also looks inside the code
+>>>>>>> f403d6d (UPD Script)
 
 return function(ctx)
     local ScriptTab           = ctx.Tab
@@ -74,6 +80,10 @@ return function(ctx)
     local REVIEW_SECONDS      = 5                            -- imported script: a second tap within this window runs it
 
     local SEARCH_MIN_ITEMS    = 5
+<<<<<<< HEAD
+=======
+    local MAX_AUTO_GAMES      = 20 -- games one script can be limited to
+>>>>>>> f403d6d (UPD Script)
     local SEARCH_H            = 30
     local PINNED_HEIGHT       = 36
     local TAB_LIST_GAP        = 10
@@ -200,8 +210,14 @@ return function(ctx)
         return Btn
     end
 
+<<<<<<< HEAD
     --// ---- showToast: short notification, optionally with an action button ----
     local TOAST_W, MAX_TOASTS = 300, 3
+=======
+    --// ---- Toast: short notification, shared by every module (ctx.Toast, implemented in the main script) ----
+    local showToast = ctx.Toast or function(message) warn("[Elysera/Script] " .. tostring(message)) end
+
+>>>>>>> f403d6d (UPD Script)
     -- Token names, resolved on every lookup so the colors follow theme changes
     local function themedColors(tokens)
         return setmetatable({}, {
@@ -212,6 +228,7 @@ return function(ctx)
         })
     end
 
+<<<<<<< HEAD
     local TOAST_COLORS = themedColors({
         info    = "SubText",
         success = "Sakura",
@@ -319,6 +336,30 @@ return function(ctx)
         tween(Pill, 0.15, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
         task.delay(opts.duration or (kind == "error" and 5 or 2.5), toast.dismiss)
         return toast
+=======
+    --// ---- Auto: where a script may auto-run. entry.auto = run on startup; entry.autoGames = nil (every game) or a list of game ids ----
+    -- "Game" is the experience (game.GameId), so every place of one experience counts as the same game.
+    local Auto = {}
+
+    function Auto.clean(list)
+        if type(list) ~= "table" then return nil end
+        local out, seen = {}, {}
+        for _, id in ipairs(list) do
+            if type(id) == "number" and id > 0 and id == math.floor(id) and not seen[id] and #out < MAX_AUTO_GAMES then
+                seen[id] = true
+                out[#out + 1] = id
+            end
+        end
+        return #out > 0 and out or nil
+    end
+
+    function Auto.listed(entry)
+        return entry.autoGames ~= nil and table.find(entry.autoGames, game.GameId) ~= nil
+    end
+
+    function Auto.here(entry)
+        return entry.auto == true and (entry.autoGames == nil or Auto.listed(entry))
+>>>>>>> f403d6d (UPD Script)
     end
 
     --// ---- createEntry: the single source for creating v2 entries ----
@@ -393,6 +434,10 @@ return function(ctx)
             updatedAt = tonumber(base.updatedAt) or now,
             favorite  = base.favorite == true,
             auto      = (base.auto == true) or nil,                           -- run on startup
+<<<<<<< HEAD
+=======
+            autoGames = (base.auto == true) and Auto.clean(base.autoGames) or nil, -- nil = every game, else only these game ids
+>>>>>>> f403d6d (UPD Script)
             review    = (base.review == true or opts.review == true) or nil,  -- imported, not reviewed yet
         }, (name ~= wanted) and "renamed" or nil
     end
@@ -690,7 +735,23 @@ return function(ctx)
             local okRun, err = xpcall(fn, function(e)
                 return debug.traceback(tostring(e), 2)
             end)
+<<<<<<< HEAD
             if Running[entry.id] ~= state then return end -- already Stopped
+=======
+            if Running[entry.id] ~= state then -- already Stopped
+                -- the script returned its cleanup only after Stop: nothing will call it later, so call it now
+                if okRun and type(err) == "function" then task.spawn(pcall, err) end
+                return
+            end
+            if okRun and type(err) == "function" then
+                -- "return function() ... end": the script's cleanup. It stays "running" until Stop, which calls this function
+                state.cleanup = err
+                logOut("ok", entry.name,
+                    ("Started in %.2fs - Stop runs its cleanup function"):format(os.clock() - state.startedAt))
+                finishRun(entry, true)
+                return
+            end
+>>>>>>> f403d6d (UPD Script)
             Running[entry.id] = nil
             if okRun then
                 logOut("ok", entry.name,
@@ -711,7 +772,24 @@ return function(ctx)
         if not state then return false end
         Running[entry.id] = nil
         if state.thread and task.cancel then pcall(task.cancel, state.thread) end
+<<<<<<< HEAD
         logOut("info", entry.name, "Stopped (main thread only)")
+=======
+        local cleanup = state.cleanup
+        if cleanup then
+            state.cleanup = nil
+            task.spawn(function() -- in its own thread: a cleanup that waits must not hold up the UI
+                local okClean, errClean = pcall(cleanup)
+                if okClean then
+                    logOut("info", entry.name, "Stopped - cleanup function ran")
+                else
+                    logOut("error", entry.name, "Cleanup error - " .. firstLine(errClean))
+                end
+            end)
+        else
+            logOut("info", entry.name, "Stopped (main thread only)")
+        end
+>>>>>>> f403d6d (UPD Script)
         state.onState("idle")
         return true
     end
@@ -1012,6 +1090,149 @@ return function(ctx)
     end
 
     --// ---- NotBoxA: Add / Edit / Import ----
+<<<<<<< HEAD
+=======
+    --// ---- Syntax: colors a script for the editor (RichText; no bold / italic, so every glyph keeps its width) ----
+    local Syntax = {}
+    do
+        local KEYWORDS = {}
+        for w in ("and break continue do else elseif end for function goto if in local not or repeat return then until while"):gmatch("%a+") do
+            KEYWORDS[w] = true
+        end
+        local CONSTANTS = { ["true"] = true, ["false"] = true, ["nil"] = true }
+        local ESCAPES = { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;", ["'"] = "&apos;" }
+        local MAX_CHARS, MAX_LINES = 40000, 600       -- bigger scripts stay plain
+        local CHUNK_CHARS, CHUNK_LINES = 2500, 40     -- one label per chunk: a label never gets near its text length limit
+
+        local function hex(c)
+            return ("%02X%02X%02X"):format(math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+        end
+
+        -- Cuts the code into { text, kind } pieces; kind is nil for plain text
+        local function tokenize(code)
+            local pieces, plainFrom, i, len = {}, nil, 1, #code
+            local function add(from, to, kind)
+                if plainFrom then
+                    pieces[#pieces + 1] = { code:sub(plainFrom, from - 1), nil }
+                    plainFrom = nil
+                end
+                pieces[#pieces + 1] = { code:sub(from, to), kind }
+            end
+            while i <= len do
+                local c, nxt = code:sub(i, i), code:sub(i + 1, i + 1)
+                if c == "-" and nxt == "-" then
+                    local eq = code:match("^%-%-%[(=*)%[", i)
+                    local to
+                    if eq then
+                        local _, e = code:find("]" .. eq .. "]", i, true)
+                        to = e or len
+                    else
+                        to = (code:find("\n", i, true) or len + 1) - 1
+                    end
+                    add(i, to, "comment")
+                    i = to + 1
+                elseif c == '"' or c == "'" then
+                    local j = i + 1
+                    while j <= len do
+                        local d = code:sub(j, j)
+                        if d == "\\" then
+                            j += 2
+                        elseif d == c then
+                            break
+                        elseif d == "\n" then
+                            j -= 1 -- an unfinished string ends before the line break
+                            break
+                        else
+                            j += 1
+                        end
+                    end
+                    j = math.min(j, len)
+                    add(i, j, "string")
+                    i = j + 1
+                elseif c == "[" and (nxt == "[" or nxt == "=") and code:match("^%[=*%[", i) then
+                    local eq = code:match("^%[(=*)%[", i)
+                    local _, e = code:find("]" .. eq .. "]", i, true)
+                    local to = e or len
+                    add(i, to, "string")
+                    i = to + 1
+                elseif c:match("%d") or (c == "." and nxt:match("%d")) then
+                    local num = code:match("^0[xX][%x_]+", i) or code:match("^%d[%d_]*%.?%d*[eE][+-]?%d+", i)
+                        or code:match("^%d[%d_]*%.?%d*", i) or code:match("^%.%d+", i)
+                    add(i, i + #num - 1, "number")
+                    i += #num
+                elseif c:match("[%a_]") then
+                    local word = code:match("^[%a_][%w_]*", i)
+                    local kind = KEYWORDS[word] and "keyword" or (CONSTANTS[word] and "number") or nil
+                    if kind then add(i, i + #word - 1, kind) else plainFrom = plainFrom or i end
+                    i += #word
+                else
+                    plainFrom = plainFrom or i
+                    i += 1
+                end
+            end
+            if plainFrom then pieces[#pieces + 1] = { code:sub(plainFrom), nil } end
+            return pieces
+        end
+
+        -- colors = { keyword, string, number, comment } (Color3). Returns an array of RichText strings, one per chunk of lines, or nil
+        -- when the script is too big. Every line has at least one character (a space for an empty line) and no chunk ends with a line
+        -- break, so the stacked labels are exactly as tall as the lines of the text box they sit on.
+        function Syntax.chunks(code, colors)
+            if #code > MAX_CHARS then return nil end
+            local lines = 1
+            for _ in code:gmatch("\n") do lines += 1 end
+            if lines > MAX_LINES then return nil end
+
+            local hexes = {}
+            for kind, color in pairs(colors) do hexes[kind] = hex(color) end
+
+            local out, buf, bufLines, bufChars, lineEmpty = {}, {}, 0, 0, true
+            local function closeChunk()
+                if #buf > 0 then out[#out + 1] = table.concat(buf) end
+                buf, bufLines, bufChars = {}, 0, 0
+            end
+            local function addText(text, kind)
+                local esc = text:gsub("[&<>\"']", ESCAPES)
+                if kind and hexes[kind] then
+                    buf[#buf + 1] = '<font color="#' .. hexes[kind] .. '">' .. esc .. "</font>"
+                else
+                    buf[#buf + 1] = esc
+                end
+                bufChars += #text
+                lineEmpty = false
+            end
+            local function lineBreak()
+                if lineEmpty then buf[#buf + 1] = " " end
+                lineEmpty = true
+                if bufLines + 1 >= CHUNK_LINES or bufChars >= CHUNK_CHARS then
+                    closeChunk() -- the break between two labels is the gap between them: it is not part of either text
+                else
+                    buf[#buf + 1] = "\n"
+                    bufLines += 1
+                end
+            end
+
+            for _, piece in ipairs(tokenize(code)) do
+                local text, kind = piece[1], piece[2]
+                local from = 1
+                while true do
+                    local nl = text:find("\n", from, true)
+                    if not nl then
+                        if from <= #text then addText(text:sub(from), kind) end
+                        break
+                    end
+                    if nl > from then addText(text:sub(from, nl - 1), kind) end
+                    lineBreak()
+                    from = nl + 1
+                end
+            end
+            if lineEmpty then buf[#buf + 1] = " " end
+            closeChunk()
+            return out
+        end
+    end
+
+>>>>>>> f403d6d (UPD Script)
     local function createScriptDialog()
         local ACCENT = Theme.AccentPink
         local TEXT = {
@@ -1166,6 +1387,108 @@ return function(ctx)
         padding(CodeBox, 8, 8, 6, 6)
         bindBoxFocus(CodeBox, CodeStroke)
 
+<<<<<<< HEAD
+=======
+        --// ---- Line numbers + syntax colors ----
+        -- Both sit inside CodeHolder next to the text box, so they scroll with it. The code never wraps (TextWrapped = false),
+        -- so line n of the numbers / of the colored copy is always at the same height as line n of the box.
+        -- Colors show while the box is NOT focused (the box hides its own text then); while you type, plain text and caret as usual.
+        local GUTTER_W, MAX_NUMBERED = 40, 2000
+        CodeBox.Position = UDim2.fromOffset(GUTTER_W, 0)
+        local Gutter = new("TextLabel", {
+            Name = "Gutter",
+            Size = UDim2.fromOffset(GUTTER_W, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Text = "1",
+            Font = Enum.Font.Code,
+            TextSize = 13,
+            TextColor3 = Theme.SubText,
+            TextTransparency = 0.25,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            ZIndex = 53,
+        }, CodeHolder)
+        padding(Gutter, 2, 8, 6, 6)
+
+        local Colored = new("Frame", {
+            Name = "Colored",
+            Position = UDim2.fromOffset(GUTTER_W, 0),
+            Size = UDim2.fromOffset(240, 96),
+            AutomaticSize = Enum.AutomaticSize.XY,
+            BackgroundTransparency = 1,
+            Visible = false,
+            ZIndex = 54,
+        }, CodeHolder)
+        padding(Colored, 8, 8, 6, 6)
+        list(Colored, 0)
+
+        local shownLines = 0
+        local function updateGutter()
+            local _, breaks = CodeBox.Text:gsub("\n", "")
+            local count = math.min(breaks + 1, MAX_NUMBERED)
+            if count == shownLines then return end
+            shownLines = count
+            local numbers = table.create(count)
+            for i = 1, count do numbers[i] = i end
+            Gutter.Text = table.concat(numbers, "\n")
+        end
+
+        local function setColored(on)
+            Colored.Visible = on
+            CodeBox.TextTransparency = on and 1 or 0
+        end
+
+        local function refreshColored()
+            if CodeBox:IsFocused() then return end
+            local code = CodeBox.Text
+            local chunks = code ~= "" and Syntax.chunks(code, {
+                keyword = Theme.AccentPink,
+                string  = Theme.Sakura,
+                number  = Theme.AccentPurple,
+                comment = Theme.SubText:Lerp(Theme.PanelAlt, 0.4),
+            }) or nil
+            for _, child in ipairs(Colored:GetChildren()) do
+                if child:IsA("TextLabel") then child:Destroy() end
+            end
+            if not chunks then
+                setColored(false)
+                return
+            end
+            for i, markup in ipairs(chunks) do
+                new("TextLabel", {
+                    LayoutOrder = i,
+                    Size = UDim2.new(),
+                    AutomaticSize = Enum.AutomaticSize.XY,
+                    BackgroundTransparency = 1,
+                    RichText = true,
+                    Text = markup,
+                    Font = Enum.Font.Code,
+                    TextSize = 13,
+                    TextColor3 = Theme.Text,
+                    TextWrapped = false,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextYAlignment = Enum.TextYAlignment.Top,
+                    ZIndex = 54,
+                }, Colored)
+            end
+            setColored(true)
+        end
+
+        local refreshQueued = false
+        CodeBox:GetPropertyChangedSignal("Text"):Connect(function()
+            updateGutter()
+            if refreshQueued then return end
+            refreshQueued = true
+            task.defer(function() -- Paste / loading a script / Cancel may change the text several times in one frame
+                refreshQueued = false
+                refreshColored()
+            end)
+        end)
+        CodeBox.Focused:Connect(function() setColored(false) end)
+        CodeBox.FocusLost:Connect(refreshColored)
+
+>>>>>>> f403d6d (UPD Script)
         -- the scrolling frame doesn't follow the cursor on its own: drag CanvasPosition manually so the cursor always stays in view
         local TextService = game:GetService("TextService")
         local HUGE = Vector2.new(1e6, 1e6)
@@ -1182,7 +1505,11 @@ return function(ctx)
                 local lastLine = before:match("([^\n]*)$")
                 local _, breaks = before:gsub("\n", "")
                 local w = TextService:GetTextSize(lastLine, CodeBox.TextSize, CodeBox.Font, HUGE).X
+<<<<<<< HEAD
                 local cx, cy = 8 + w, 6 + breaks * lineH
+=======
+                local cx, cy = GUTTER_W + 8 + w, 6 + breaks * lineH
+>>>>>>> f403d6d (UPD Script)
                 local win, pos = CodeHolder.AbsoluteWindowSize, CodeHolder.CanvasPosition
                 local nx, ny = pos.X, pos.Y
                 if cx > pos.X + win.X - 16 then
@@ -1294,7 +1621,12 @@ return function(ctx)
             Cancel.Text, discardUntil = TEXT.cancel, 0
 
             local target = fitSize()
+<<<<<<< HEAD
             CodeBox.Size = UDim2.fromOffset(target.X.Offset - 34, 96)
+=======
+            CodeBox.Size = UDim2.fromOffset(target.X.Offset - 34 - GUTTER_W, 96)
+            Colored.Size = CodeBox.Size
+>>>>>>> f403d6d (UPD Script)
 
             hideToken = hideToken + 1
             setOverlay(true)
@@ -1577,6 +1909,7 @@ return function(ctx)
         return entry.favorite
     end
 
+<<<<<<< HEAD
     local function toggleAuto(entry)
         entry.auto = (not entry.auto) or nil
         local rec = Rows[entry.id]
@@ -1588,6 +1921,66 @@ return function(ctx)
         else
             showToast("Auto-run off", "info", { duration = 1.5 })
         end
+=======
+    -- mode: "all" (every game), "only" (this game only), "add" / "remove" (this game in / out of the list), "off"
+    function Auto.set(entry, mode)
+        local here = game.GameId
+        if (mode == "only" or mode == "add") and here <= 0 then
+            showToast("This place has no game id, so it cannot be singled out", "error", { duration = 3 })
+            return
+        end
+        local message
+        if mode == "all" then
+            entry.auto, entry.autoGames = true, nil
+            message = "Runs on startup in every game"
+        elseif mode == "only" then
+            entry.auto, entry.autoGames = true, { here }
+            message = "Runs on startup in this game only"
+        elseif mode == "add" then
+            local games = entry.autoGames and table.clone(entry.autoGames) or {}
+            if not table.find(games, here) then games[#games + 1] = here end
+            entry.auto, entry.autoGames = true, Auto.clean(games)
+            message = "Runs on startup in this game too"
+        elseif mode == "remove" then
+            local games = {}
+            for _, id in ipairs(entry.autoGames or {}) do
+                if id ~= here then games[#games + 1] = id end
+            end
+            entry.autoGames = Auto.clean(games)
+            if not entry.autoGames then entry.auto = nil end -- the last game is gone: auto-run is off
+            message = entry.auto and "Removed this game from auto-run" or "Auto-run off"
+        else
+            entry.auto, entry.autoGames = nil, nil
+            message = "Auto-run off"
+        end
+        if entry.auto and entry.review then message = message .. " once you have reviewed it" end
+        local rec = Rows[entry.id]
+        if rec then rec.refresh() end
+        scheduleSave()
+        showToast(message, "info", { duration = 2 })
+    end
+
+    -- The auto-run entries of the row menu depend on the current state of the script
+    local function buildAutoItems(entry)
+        local items = {}
+        if not entry.auto then
+            items[#items + 1] = { text = "Auto-run in this game", run = function() Auto.set(entry, "only") end }
+            items[#items + 1] = { text = "Auto-run in all games", run = function() Auto.set(entry, "all") end }
+            return items
+        end
+        if entry.autoGames then
+            if Auto.listed(entry) then
+                items[#items + 1] = { text = "Remove this game from auto-run", run = function() Auto.set(entry, "remove") end }
+            else
+                items[#items + 1] = { text = "Also auto-run in this game", run = function() Auto.set(entry, "add") end }
+            end
+            items[#items + 1] = { text = "Auto-run in all games", run = function() Auto.set(entry, "all") end }
+        else
+            items[#items + 1] = { text = "Auto-run in this game only", run = function() Auto.set(entry, "only") end }
+        end
+        items[#items + 1] = { text = "Disable auto-run", run = function() Auto.set(entry, "off") end }
+        return items
+>>>>>>> f403d6d (UPD Script)
     end
 
     local function toggleGlobalAuto()
@@ -1668,11 +2061,16 @@ return function(ctx)
     end
 
     local function buildRowItems(entry)
+<<<<<<< HEAD
         return {
+=======
+        local items = {
+>>>>>>> f403d6d (UPD Script)
             { text = "Edit",      run = function() openEditDialog(entry) end },
             { text = "Duplicate", run = function() duplicateScript(entry) end },
             { text = entry.favorite and "Unpin from top" or "Pin to top",
               run = function() toggleFavorite(entry) end },
+<<<<<<< HEAD
             { text = entry.auto and "Disable auto-run" or "Enable auto-run",
               run = function() toggleAuto(entry) end },
             { text = "Export",    run = function() exportLibrary(entry) end },
@@ -1681,6 +2079,16 @@ return function(ctx)
                     function() deleteScript(entry) end)
             end },
         }
+=======
+        }
+        for _, item in ipairs(buildAutoItems(entry)) do items[#items + 1] = item end
+        items[#items + 1] = { text = "Export", run = function() exportLibrary(entry) end }
+        items[#items + 1] = { text = "Delete", color = Theme.Danger, run = function()
+            askConfirm(('Do you want to delete "%s"?'):format(shorten(entry.name, 30)),
+                function() deleteScript(entry) end)
+        end }
+        return items
+>>>>>>> f403d6d (UPD Script)
     end
 
     local function buildLibraryItems()
@@ -1750,7 +2158,11 @@ return function(ctx)
             BackgroundColor3 = Theme.PanelAlt,
             BorderSizePixel = 0,
             Text = "",
+<<<<<<< HEAD
             PlaceholderText = "Search scripts",
+=======
+            PlaceholderText = "Search name or code",
+>>>>>>> f403d6d (UPD Script)
             PlaceholderColor3 = Theme.SubText,
             ClearTextOnFocus = false,
             ClipsDescendants = true,
@@ -1870,12 +2282,24 @@ return function(ctx)
 
         -- List frame height = what remains of FunctionScroll after subtracting the blocks above/below -> the Script tab doesn't scroll on the outside
         fitListPanel = function()
+<<<<<<< HEAD
             local used = CONTENT_EDGE * 2 + PINNED_HEIGHT + TAB_LIST_GAP + 2
             if SearchRow.Visible then used = used + SEARCH_H + TAB_LIST_GAP end
             if OutputPanel then used = used + OutputPanel.Frame.AbsoluteSize.Y + TAB_LIST_GAP end
             ListPanel.Size = UDim2.new(1, 0, 0, math.max(80, FunctionScroll.AbsoluteSize.Y - used))
         end
         FunctionScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitListPanel)
+=======
+            -- AbsoluteSize is in screen pixels, the sizes below are in UI Scale units
+            local scale = (ctx.UIScale and ctx.UIScale.get()) or 1
+            local used = CONTENT_EDGE * 2 + PINNED_HEIGHT + TAB_LIST_GAP + 2
+            if SearchRow.Visible then used = used + SEARCH_H + TAB_LIST_GAP end
+            if OutputPanel then used = used + OutputPanel.Frame.AbsoluteSize.Y / scale + TAB_LIST_GAP end
+            ListPanel.Size = UDim2.new(1, 0, 0, math.max(80, FunctionScroll.AbsoluteSize.Y / scale - used))
+        end
+        FunctionScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitListPanel)
+        if ctx.UIScale and ctx.UIScale.onChanged then ctx.UIScale.onChanged(fitListPanel) end
+>>>>>>> f403d6d (UPD Script)
 
         local function orderedEntries()
             local arr = table.clone(ScriptList)
@@ -1902,13 +2326,29 @@ return function(ctx)
             return arr
         end
 
+<<<<<<< HEAD
+=======
+        -- The search looks at the name first, then inside the code. The lower-case copy of a script is made the first time it
+        -- is needed and renewed when the script changes (comparing strings is a pointer check, so this costs nothing).
+        local function codeContains(entry, rec, q)
+            if rec.codeSrc ~= entry.script then
+                rec.codeSrc, rec.codeLower = entry.script, entry.script:lower()
+            end
+            return rec.codeLower:find(q, 1, true) ~= nil
+        end
+
+>>>>>>> f403d6d (UPD Script)
         applyListView = function()
             local q = View.query:lower()
             local shown = 0
             for i, entry in ipairs(orderedEntries()) do
                 local rec = Rows[entry.id]
                 if rec then
+<<<<<<< HEAD
                     local match = q == "" or rec.nameLower:find(q, 1, true) ~= nil
+=======
+                    local match = q == "" or rec.nameLower:find(q, 1, true) ~= nil or codeContains(entry, rec, q)
+>>>>>>> f403d6d (UPD Script)
                     rec.Row.Visible = match
                     rec.Row.LayoutOrder = (entry.favorite and 0 or 100000) + i
                     if match then shown = shown + 1 end
@@ -2045,6 +2485,15 @@ return function(ctx)
                         text, dot = "Ran " .. ago(st.t) .. runs, Theme.Sakura
                     end
                 end
+<<<<<<< HEAD
+=======
+                if entry.auto and entry.autoGames and not Running[entry.id] and not entry.review then
+                    -- limited to some games: say whether it is going to run in this one
+                    local n = #entry.autoGames
+                    text = text .. (Auto.listed(entry) and " - auto here"
+                        or (" - auto in " .. n .. (n == 1 and " other game" or " games")))
+                end
+>>>>>>> f403d6d (UPD Script)
                 Sub.Text, Sub.TextColor3, Dot.BackgroundColor3 = text, color, dot
             end
             rec.paintInfo = paintInfo
@@ -2054,6 +2503,10 @@ return function(ctx)
                 Title.TextColor3 = entry.favorite and Theme.Sakura or Theme.Text
                 FavBar.Visible = entry.favorite
                 AutoPill.Visible = entry.auto == true
+<<<<<<< HEAD
+=======
+                AutoPill.BackgroundTransparency = Auto.here(entry) and 0 or 0.55 -- dimmed: auto-run, but not in this game
+>>>>>>> f403d6d (UPD Script)
                 Left.Size = UDim2.new(1, -(76 + (entry.auto and 46 or 0)), 1, 0)
                 rec.nameLower = entry.name:lower()
                 paintInfo()
@@ -2226,7 +2679,11 @@ return function(ctx)
         if State.autoRun then
             local queue = {}
             for _, e in ipairs(ScriptList) do
+<<<<<<< HEAD
                 if e.auto and not e.review then queue[#queue + 1] = e end
+=======
+                if Auto.here(e) and not e.review then queue[#queue + 1] = e end
+>>>>>>> f403d6d (UPD Script)
             end
             if #queue > 0 then
                 task.delay(STARTUP_DELAY, function()
@@ -2236,7 +2693,11 @@ return function(ctx)
                     for _, e in ipairs(queue) do
                         if not ScreenGui.Parent then break end
                         local rec = Rows[e.id]
+<<<<<<< HEAD
                         if rec and e.auto and not e.review and not Running[e.id] then
+=======
+                        if rec and Auto.here(e) and not e.review and not Running[e.id] then
+>>>>>>> f403d6d (UPD Script)
                             logOut("info", e.name, "Auto-run on startup")
                             rec.start()
                             task.wait(0.25)

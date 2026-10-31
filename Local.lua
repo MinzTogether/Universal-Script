@@ -14,8 +14,13 @@
 --   Core     : shared foundation (input parsing, toggle binding, character lifecycle, fly input, teleport history)
 --              + shared UI pieces (toggle row, status badge, presets, mode dropdown, button, input; sections come from ctx.UI)
 --   Features : Movement (Speed, Jump Boost, Gravity, Infinite Jump, Noclip, Fly)
+<<<<<<< HEAD
 --              Teleport (Click Teleport, Waypoints, Players) + Quick actions (Back, Unstuck, Respawn)
 --              Camera (Field of View, Max Zoom), Visual (ESP, Hide Players, Full Bright)
+=======
+--              Teleport (Click Teleport, Coordinates, Waypoints, Players) + Quick actions (Back, Unstuck, Respawn)
+--              Camera (Field of View, Max Zoom, Min Zoom, Freecam), Visual (ESP, Hide Players, Full Bright, Time of Day)
+>>>>>>> f403d6d (UPD Script)
 --              Safety (Anti AFK, Anti Void), Reset All
 -- Grouped into 2 tables to stay under Luau's limit of 200 locals per chunk.
 
@@ -445,7 +450,12 @@ return function(ctx)
 
         -- Narrow window: the box drops below the label
         local function relayout()
+<<<<<<< HEAD
             local rowW = Row.AbsoluteSize.X
+=======
+            -- AbsoluteSize is in screen pixels, the offsets below are in UI Scale units
+            local rowW = Row.AbsoluteSize.X / ((ctx.UIScale and ctx.UIScale.get()) or 1)
+>>>>>>> f403d6d (UPD Script)
             local stacked = rowW > 0 and rowW < 300
             local lw = labelW
             if rowW > 0 then lw = math.min(labelW, math.max(40, rowW * 0.45)) end
@@ -466,6 +476,10 @@ return function(ctx)
         end
         relayout()
         Row:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+<<<<<<< HEAD
+=======
+        if ctx.UIScale and ctx.UIScale.onChanged then ctx.UIScale.onChanged(relayout) end
+>>>>>>> f403d6d (UPD Script)
 
         -- While typing, only filter characters; write the normalized value once the box loses focus
         Box:GetPropertyChangedSignal("Text"):Connect(function()
@@ -482,6 +496,14 @@ return function(ctx)
 
         R.Box = Box
         R.flashError = function() flashStrokeError(BoxStroke) end
+<<<<<<< HEAD
+=======
+
+        -- Restore last session: the text of the box is saved with the switch and written back before the switch turns on
+        if ctx.Session and R.Switch then
+            ctx.Session.attach(R.Switch, function() return Box.Text end, function(v) Box.Text = tostring(v) end)
+        end
+>>>>>>> f403d6d (UPD Script)
         return R
     end
 
@@ -1007,7 +1029,11 @@ return function(ctx)
     --//  FEATURES
     --// =====================================================
 
+<<<<<<< HEAD
     --// ---------------- Boost: one value on one instance (Speed, Jump, Gravity, FOV, Max Zoom) ----------------
+=======
+    --// ---------------- Boost: one value on one instance (Speed, Jump, Gravity, FOV, Max / Min Zoom, Time of Day) ----------------
+>>>>>>> f403d6d (UPD Script)
     -- The game's own value is snapshotted, restored when turned off, and put back whenever the game changes it.
     -- Three layers keep our value in place, so a game that changes it now and then cannot switch the boost off for good:
     --   1. The property signal answers the moment the game writes (at most Core.Boost.reapply times per
@@ -2072,6 +2098,48 @@ return function(ctx)
         presets = boostPresets(1000),
     }
 
+<<<<<<< HEAD
+=======
+    -- Min Zoom: how close the camera may get to the character (Roblox default 0.5). A higher value keeps the camera away.
+    local MIN_ZOOM_CFG = {
+        title = "Min Zoom", max = 400, waitFor = "player",
+        props = { "CameraMinZoomDistance" },
+        getTarget = function() return LocalPlayer end,
+        snapshot = function(p) return p.CameraMinZoomDistance end,
+        apply = function(p, v) if p.CameraMinZoomDistance ~= v then p.CameraMinZoomDistance = v end end,
+        restore = function(p, z) p.CameraMinZoomDistance = z end,
+        getValue = function(p) return p.CameraMinZoomDistance end,
+        isApplied = function(p, v) return math.abs(p.CameraMinZoomDistance - v) < 1e-3 end,
+        fromSnapshot = function(st) return st end,
+        presets = {
+            originalPreset(),
+            { label = "0",  value = 0 },
+            { label = "20", value = 20 },
+            { label = "60", value = 60 },
+        },
+    }
+
+    -- Time of Day: Lighting.ClockTime in hours (0 - 24). A game with its own day / night cycle may answer with its own writes:
+    -- the Boost engine then shows "Overridden by game" instead of fighting it
+    local TIME_CFG = {
+        title = "Time of Day", max = 24, waitFor = "lighting",
+        props = { "ClockTime" },
+        getTarget = function() return Lighting end,
+        snapshot = function(l) return l.ClockTime end,
+        apply = function(l, v) if math.abs(l.ClockTime - v) > 1e-3 then l.ClockTime = v end end,
+        restore = function(l, t) l.ClockTime = t end,
+        getValue = function(l) return l.ClockTime end,
+        isApplied = function(l, v) return math.abs(l.ClockTime - v) < 1e-3 end,
+        fromSnapshot = function(st) return st end,
+        presets = {
+            originalPreset(),
+            { label = "Day",    value = 14 },
+            { label = "Sunset", value = 18 },
+            { label = "Night",  value = 0 },
+        },
+    }
+
+>>>>>>> f403d6d (UPD Script)
     local GRAVITY_CFG = {
         title = "Gravity", max = 500, waitFor = "workspace",
         props = { "Gravity" },
@@ -2090,6 +2158,138 @@ return function(ctx)
         },
     }
 
+<<<<<<< HEAD
+=======
+    --// ---------------- Freecam ----------------
+    -- Detaches the camera from the character and flies it around; the character is anchored in place meanwhile.
+    -- Move: thumbstick / WASD (the same input as Fly), Space or the jump button = up, Q / Ctrl = down.
+    -- Look: hold the right mouse button and move the mouse (PC), or drag a finger on the screen (phone).
+    function Features.CreateFreecam(parent)
+        local DEFAULT, MAX = 50, 500
+        local MOUSE_SENS, TOUCH_SENS = math.rad(0.25), math.rad(0.35)   -- radians per pixel
+        local row = Core.CreateToggleWithBox(parent, "Freecam", { placeholder = tostring(DEFAULT), max = MAX })
+        local badge = Core.CreateStatusBadge(row)
+        local parsed = { status = "empty", effective = DEFAULT }
+        local active = false
+        local conns, tracker = {}, nil
+        local snap                                                  -- the camera as it was: { type, subject }
+        local camPos, yaw, pitch = Vector3.zero, 0, 0
+        local upUntil, looking, prevMouse = 0, false, nil
+
+        local function updateBadge()
+            local word = (parsed.status == "clamped") and "Capped" or "Freecam"
+            badge.set("active", word .. Core.DOT .. Core.FormatValue(parsed.effective or DEFAULT))
+        end
+
+        local function reparse()
+            parsed = Core.ParseNumericInput(row.Box.Text, { max = MAX, default = DEFAULT })
+            if active then updateBadge() end
+        end
+        row.Box:GetPropertyChangedSignal("Text"):Connect(reparse)
+        reparse()
+
+        local function releaseMouse()
+            if not looking then return end
+            looking = false
+            UserInputService.MouseBehavior = prevMouse or Enum.MouseBehavior.Default
+            prevMouse = nil
+        end
+
+        local function start()
+            local cam = Workspace.CurrentCamera
+            if not cam then
+                badge.flash("No camera", 2.5, "invalid")
+                return false
+            end
+            reparse()
+            active = true
+            snap = { type = cam.CameraType, subject = cam.CameraSubject }
+            local look = cam.CFrame.LookVector
+            camPos = cam.CFrame.Position
+            yaw = math.atan2(-look.X, -look.Z)
+            pitch = math.asin(math.clamp(look.Y, -1, 1))
+            upUntil = 0
+            cam.CameraType = Enum.CameraType.Scriptable
+            Core.LoadControls()                                      -- try loading ControlModule early (thumbstick input)
+            updateBadge()
+
+            conns[#conns + 1] = UserInputService.JumpRequest:Connect(function()
+                upUntil = os.clock() + 0.25
+            end)
+            conns[#conns + 1] = UserInputService.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton2 and not looking
+                    and not UserInputService:GetFocusedTextBox() then
+                    looking = true
+                    prevMouse = UserInputService.MouseBehavior
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+                end
+            end)
+            conns[#conns + 1] = UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton2 then releaseMouse() end
+            end)
+            conns[#conns + 1] = UserInputService.InputChanged:Connect(function(input, processed)
+                local kind = input.UserInputType
+                if kind == Enum.UserInputType.MouseMovement then
+                    if not looking then return end
+                    yaw -= input.Delta.X * MOUSE_SENS
+                    pitch = math.clamp(pitch - input.Delta.Y * MOUSE_SENS, -1.5, 1.5)
+                elseif kind == Enum.UserInputType.Touch and not processed then -- touches on the thumbstick / buttons are "processed"
+                    yaw -= input.Delta.X * TOUCH_SENS
+                    pitch = math.clamp(pitch - input.Delta.Y * TOUCH_SENS, -1.5, 1.5)
+                end
+            end)
+            conns[#conns + 1] = RunService.RenderStepped:Connect(function(dt)
+                local c = Workspace.CurrentCamera
+                if not c then return end
+                if c.CameraType ~= Enum.CameraType.Scriptable then c.CameraType = Enum.CameraType.Scriptable end
+                local dir = Core.ReadFlyDirection(upUntil)           -- along the camera direction
+                camPos += dir * ((parsed.effective or DEFAULT) * dt)
+                c.CFrame = CFrame.new(camPos) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)
+            end)
+
+            -- The character stays where it is (also after a respawn) so the stick / WASD only moves the camera
+            tracker = Core.TrackCharacter(LocalPlayer, function(_, _, root)
+                local wasAnchored = root.Anchored
+                root.Anchored = true
+                return function()
+                    if root.Parent then root.Anchored = wasAnchored end
+                end
+            end)
+        end
+
+        local function stop()
+            active = false
+            for _, c in ipairs(conns) do c:Disconnect() end
+            table.clear(conns)
+            if tracker then tracker.destroy() tracker = nil end
+            releaseMouse()
+            local cam = Workspace.CurrentCamera
+            if cam and snap then
+                cam.CameraType = snap.type
+                local subject = (snap.subject and snap.subject.Parent) and snap.subject or Core.GetHumanoid()
+                if subject then cam.CameraSubject = subject end
+            end
+            snap = nil
+            badge.set("off")
+        end
+
+        local handle = Core.BindToggle(row.Switch, row.Set, {
+            start = start,
+            stop = stop,
+            badge = badge,
+            onReset = function() row.Box.Text = "" end,
+        })
+
+        Core.CreatePresetRow(row, {
+            { label = "25",  value = 25 },
+            { label = "50",  value = 50 },
+            { label = "120", value = 120 },
+            { label = "300", value = 300 },
+        })
+        return handle
+    end
+
+>>>>>>> f403d6d (UPD Script)
     --// ---------------- Anti AFK ----------------
     -- Roblox kicks players after 20 minutes without input. VirtualUser "clicks" when the Idled event fires,
     -- which resets that timer. Nothing runs until Idled fires, so it costs nothing while you play.
@@ -2511,6 +2711,33 @@ return function(ctx)
             })
         end
 
+<<<<<<< HEAD
+=======
+        -- Export / Import: the waypoints of THIS game as text (clipboard; Elysera_Waypoints_Export.json when there is no clipboard)
+        local ToolsRow = new("Frame", {
+            LayoutOrder = 5,
+            Size = UDim2.new(1, 0, 0, 30),
+            BackgroundTransparency = 1,
+        }, Card)
+        local ExportBtn = Core.CreateButton(ToolsRow, "Export", {
+            name = "Export",
+            size = UDim2.new(0.5, -3, 1, 0),
+        })
+        local ImportBtn = Core.CreateButton(ToolsRow, "Import", {
+            name = "Import",
+            anchor = Vector2.new(1, 0),
+            position = UDim2.fromScale(1, 0),
+            size = UDim2.new(0.5, -3, 1, 0),
+        })
+        local Hint = Core.Label(Card, {
+            LayoutOrder = 6,
+            Size = UDim2.new(1, 0, 0, 16),
+            TextSize = 11,
+            TextColor3 = Theme.SubText,
+            Text = "Tap a name to rename it.",
+        })
+
+>>>>>>> f403d6d (UPD Script)
         local rebuild
 
         local function makeRow(p)
@@ -2524,6 +2751,7 @@ return function(ctx)
             corner(Row, 6)
             stroke(Row)
 
+<<<<<<< HEAD
             Core.Label(Row, {
                 Position = UDim2.fromOffset(10, 5),
                 Size = UDim2.new(1, -100, 0, 18),
@@ -2532,6 +2760,43 @@ return function(ctx)
                 TextTruncate = Enum.TextTruncate.AtEnd,
                 Text = p.n,
             })
+=======
+            -- The name is a TextBox: tap it to rename the waypoint (saved when the box loses focus)
+            local NameBox = new("TextBox", {
+                Name = "NameBox",
+                Position = UDim2.fromOffset(6, 3),
+                Size = UDim2.new(1, -96, 0, 20),
+                BackgroundTransparency = 1,
+                BackgroundColor3 = Theme.Panel,
+                BorderSizePixel = 0,
+                ClearTextOnFocus = false,
+                ClipsDescendants = true,
+                Font = Enum.Font.GothamBold,
+                TextSize = 13,
+                TextColor3 = Theme.Text,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Text = p.n,
+            }, Row)
+            corner(NameBox, 4)
+            padding(NameBox, 4, 4)
+            NameBox.Focused:Connect(function()
+                if isLocked() then NameBox:ReleaseFocus() return end
+                NameBox.BackgroundTransparency = 0
+            end)
+            NameBox.FocusLost:Connect(function()
+                NameBox.BackgroundTransparency = 1
+                local newName = Core.ClipText(Core.Trim(NameBox.Text), 24)
+                if newName == "" or newName == p.n then
+                    NameBox.Text = p.n                                -- empty or unchanged: keep the old name
+                    return
+                end
+                p.n = newName
+                NameBox.Text = newName
+                save()
+                note.flash("Renamed to " .. newName)
+            end)
+>>>>>>> f403d6d (UPD Script)
             Core.Label(Row, {
                 Position = UDim2.fromOffset(10, 23),
                 Size = UDim2.new(1, -100, 0, 14),
@@ -2577,6 +2842,10 @@ return function(ctx)
             end
             for _, p in ipairs(points) do makeRow(p) end
             Empty.Visible = (#points == 0)
+<<<<<<< HEAD
+=======
+            Hint.Visible = (#points > 0)
+>>>>>>> f403d6d (UPD Script)
             note.setBase(#points .. "/" .. MAX)
         end
 
@@ -2618,10 +2887,206 @@ return function(ctx)
             if enter and not isLocked() then saveHere() end
         end)
 
+<<<<<<< HEAD
+=======
+        local EXPORT_FILE = dataPath("Elysera_Waypoints_Export.json")
+        ExportBtn.onClick(function()
+            if #points == 0 then
+                note.flash("Nothing to export", true)
+                return
+            end
+            local out = {}
+            for _, p in ipairs(points) do out[#out + 1] = { n = p.n, x = p.x, y = p.y, z = p.z, r = p.r } end
+            local okJ, json = pcall(HttpService.JSONEncode, HttpService, {
+                app = "Elysera", kind = "waypoints", format = 1, place = placeKey, points = out,
+            })
+            if not okJ then
+                note.flash("Export failed", true)
+            elseif UI.CopyText(json) then
+                note.flash("Copied " .. #points .. " waypoint" .. (#points == 1 and "" or "s"))
+            elseif canFS and pcall(writefile, EXPORT_FILE, json) then
+                note.flash("Saved to the Elysera folder")
+            else
+                note.flash("Copy failed", true)
+            end
+        end)
+
+        ImportBtn.onClick(function()
+            local text
+            local reader = (typeof(getclipboard) == "function" and getclipboard)
+                or (typeof(readclipboard) == "function" and readclipboard)
+                or (typeof(fromclipboard) == "function" and fromclipboard)
+            if reader then
+                local okC, clip = pcall(reader)
+                if okC and type(clip) == "string" and clip:find("waypoints", 1, true) then text = clip end
+            end
+            if not text and canFS then
+                pcall(function()
+                    if isfile(EXPORT_FILE) then text = readfile(EXPORT_FILE) end
+                end)
+            end
+            if not text then
+                note.flash(reader and "Copy an export first" or "No clipboard access", true)
+                return
+            end
+            local okJ, data = pcall(HttpService.JSONDecode, HttpService, text)
+            if not okJ or type(data) ~= "table" or data.app ~= "Elysera" or data.kind ~= "waypoints" or type(data.points) ~= "table" then
+                note.flash("Not a waypoint export", true)
+                return
+            end
+            local function keyOf(n, x, y, z) return string.format("%s|%.1f|%.1f|%.1f", n, x, y, z) end
+            local seen = {}
+            for _, p in ipairs(points) do seen[keyOf(p.n, p.x, p.y, p.z)] = true end
+            local added, skipped = 0, 0
+            for _, p in ipairs(data.points) do
+                if type(p) == "table" and type(p.x) == "number" and type(p.y) == "number" and type(p.z) == "number" then
+                    local ok = true
+                    for _, v in ipairs({ p.x, p.y, p.z }) do
+                        if v ~= v or math.abs(v) > 1e7 then ok = false end -- NaN / inf / absurd values would break the list
+                    end
+                    local yaw = tonumber(p.r) or 0
+                    if yaw ~= yaw then yaw = 0 end
+                    local name = Core.ClipText(Core.Trim(tostring(p.n or "Point")), 24)
+                    if name == "" then name = "Point" end
+                    local key = ok and keyOf(name, p.x, p.y, p.z)
+                    if not ok or seen[key] or #points >= MAX then
+                        skipped += 1
+                    else
+                        points[#points + 1] = { n = name, x = p.x, y = p.y, z = p.z, r = yaw }
+                        seen[key] = true
+                        added += 1
+                    end
+                end
+            end
+            if added > 0 then
+                save()
+                rebuild()
+                note.flash("Imported " .. added .. (skipped > 0 and (", skipped " .. skipped) or ""))
+            else
+                note.flash(skipped > 0 and ("Skipped " .. skipped) or "Nothing to import", true)
+            end
+        end)
+
+>>>>>>> f403d6d (UPD Script)
         rebuild()
         return Card
     end
 
+<<<<<<< HEAD
+=======
+    --// ---------------- Coordinates: teleport to X Y Z, copy / fill in your own position ----------------
+    -- Pasting "12, 5, -40" into any box spreads the three numbers over X, Y and Z.
+    function Features.CreateCoords(parent)
+        local Card = CreateCard(parent, "Coordinates", 12, 12, 12)
+
+        local Header = new("Frame", {
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 22),
+            BackgroundTransparency = 1,
+        }, Card)
+        Core.Label(Header, {
+            Size = UDim2.new(0.5, 0, 1, 0),
+            Font = Enum.Font.GothamBold,
+            TextSize = 15,
+            Text = "Coordinates",
+        })
+        local note = Core.CreateNote(Header, {
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.fromScale(1, 0),
+            Size = UDim2.new(0.5, 0, 1, 0),
+        })
+
+        local Fields = new("Frame", {
+            LayoutOrder = 2,
+            Size = UDim2.new(1, 0, 0, UserInputService.TouchEnabled and 34 or 30),
+            BackgroundTransparency = 1,
+        }, Card)
+        list(Fields, 6, { FillDirection = Enum.FillDirection.Horizontal })
+        local boxes = {}
+        for i, axis in ipairs({ "X", "Y", "Z" }) do
+            boxes[i] = Core.CreateInput(Fields, axis, {
+                order = i,
+                size = UDim2.new(1 / 3, -4, 1, 0),
+            })
+        end
+
+        local Buttons = new("Frame", {
+            LayoutOrder = 3,
+            Size = UDim2.new(1, 0, 0, 32),
+            BackgroundTransparency = 1,
+        }, Card)
+        list(Buttons, 6, { FillDirection = Enum.FillDirection.Horizontal })
+        local GoBtn = Core.CreateButton(Buttons, "Go", { name = "Go", order = 1, size = UDim2.new(0.34, -4, 1, 0), variant = "accent" })
+        local MineBtn = Core.CreateButton(Buttons, "Use mine", { name = "UseMine", order = 2, size = UDim2.new(0.33, -4, 1, 0) })
+        local CopyBtn = Core.CreateButton(Buttons, "Copy", { name = "Copy", order = 3, size = UDim2.new(0.33, -4, 1, 0) })
+
+        local function fmt(v)
+            local s = string.format("%.1f", v):gsub("%.0$", "")
+            return s
+        end
+
+        -- A number from a box: nil when it is empty, not a number, or absurdly far away
+        local function readCoord(box)
+            local n = tonumber(Core.Trim(box.Text))
+            if n and n == n and math.abs(n) <= 1e6 then return n end
+            return nil
+        end
+
+        local function fill(x, y, z)
+            boxes[1].Text, boxes[2].Text, boxes[3].Text = fmt(x), fmt(y), fmt(z)
+        end
+
+        -- "12, 5, -40" pasted into one box: spread it over the three boxes
+        for _, box in ipairs(boxes) do
+            box.FocusLost:Connect(function()
+                local nums = {}
+                for n in box.Text:gmatch("-?%d+%.?%d*") do nums[#nums + 1] = tonumber(n) end
+                if #nums >= 3 then fill(nums[1], nums[2], nums[3]) end
+            end)
+        end
+
+        GoBtn.onClick(function()
+            local x, y, z = readCoord(boxes[1]), readCoord(boxes[2]), readCoord(boxes[3])
+            if not (x and y and z) then
+                note.flash("Enter X, Y and Z", true)
+                return
+            end
+            if Core.TeleportTo(CFrame.new(x, y, z)) then
+                note.flash("Teleported")
+            else
+                note.flash("No character", true)
+            end
+        end)
+
+        MineBtn.onClick(function()
+            local root = Core.GetRoot()
+            if not root then
+                note.flash("No character", true)
+                return
+            end
+            local pos = root.Position
+            fill(pos.X, pos.Y, pos.Z)
+            note.flash("Filled with your position")
+        end)
+
+        CopyBtn.onClick(function()
+            local root = Core.GetRoot()
+            if not root then
+                note.flash("No character", true)
+                return
+            end
+            local pos = root.Position
+            if UI.CopyText(fmt(pos.X) .. ", " .. fmt(pos.Y) .. ", " .. fmt(pos.Z)) then
+                note.flash("Position copied")
+            else
+                note.flash("Copy failed", true)
+            end
+        end)
+
+        return Card
+    end
+
+>>>>>>> f403d6d (UPD Script)
     --// ---------------- Players: find, teleport, view ----------------
     -- Only 6 rows exist and they are reused, so a 100-player server costs the same as a 6-player one;
     -- the search box narrows the list. While viewing someone, a floating "Stop" pill stays on screen so
@@ -2985,6 +3450,7 @@ return function(ctx)
         subtitle = "Speed, jump, gravity, noclip, fly",
     })
     local Teleport = Core.CreateSectionGroup(LocalTab, "Teleport", 3, {
+<<<<<<< HEAD
         subtitle = "Click teleport, waypoints, players", collapsed = true,
     })
     local Camera = Core.CreateSectionGroup(LocalTab, "Camera", 4, {
@@ -2992,6 +3458,15 @@ return function(ctx)
     })
     local Visual = Core.CreateSectionGroup(LocalTab, "Visual", 5, {
         subtitle = "ESP, hide players, full bright", collapsed = true,
+=======
+        subtitle = "Click teleport, coordinates, waypoints, players", collapsed = true,
+    })
+    local Camera = Core.CreateSectionGroup(LocalTab, "Camera", 4, {
+        subtitle = "Field of view, zoom distance and freecam", collapsed = true,
+    })
+    local Visual = Core.CreateSectionGroup(LocalTab, "Visual", 5, {
+        subtitle = "ESP, hide players, full bright, time of day", collapsed = true,
+>>>>>>> f403d6d (UPD Script)
     })
     local Safety = Core.CreateSectionGroup(LocalTab, "Safety", 6, {
         subtitle = "Anti AFK and Anti Void", collapsed = true,
@@ -3005,15 +3480,28 @@ return function(ctx)
     Movement.trackSwitch(Features.CreateFly(Movement.Body))
 
     Teleport.trackSwitch(Features.CreateClickTp(Teleport.Body))
+<<<<<<< HEAD
+=======
+    Features.CreateCoords(Teleport.Body)
+>>>>>>> f403d6d (UPD Script)
     Features.CreateWaypoints(Teleport.Body)
     Teleport.trackSwitch(Features.CreatePlayers(Teleport.Body))
 
     Camera.trackSwitch(Features.CreateTargetBoost(Camera.Body, FOV_CFG))
     Camera.trackSwitch(Features.CreateTargetBoost(Camera.Body, ZOOM_CFG))
+<<<<<<< HEAD
+=======
+    Camera.trackSwitch(Features.CreateTargetBoost(Camera.Body, MIN_ZOOM_CFG))
+    Camera.trackSwitch(Features.CreateFreecam(Camera.Body))
+>>>>>>> f403d6d (UPD Script)
 
     Visual.trackSwitch(Features.CreateEsp(Visual.Body))
     Visual.trackSwitch(Features.CreateHidePlayers(Visual.Body))
     Visual.trackSwitch(Features.CreateFullBright(Visual.Body))
+<<<<<<< HEAD
+=======
+    Visual.trackSwitch(Features.CreateTargetBoost(Visual.Body, TIME_CFG))
+>>>>>>> f403d6d (UPD Script)
 
     Safety.trackSwitch(Features.CreateAntiAfk(Safety.Body))
     Safety.trackSwitch(Features.CreateAntiVoid(Safety.Body))

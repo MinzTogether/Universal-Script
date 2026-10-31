@@ -32,7 +32,11 @@ do
     end
 end
 
+<<<<<<< HEAD
 --// ================= MAIN THEME =================
+=======
+--// ================= THEME =================
+>>>>>>> f403d6d (UPD Script)
 local Theme = {
     Background     = Color3.fromRGB(29, 21, 52),    -- #1D1534 main background
     Panel          = Color3.fromRGB(33, 21, 58),    -- #21153A cards, buttons, dialogs
@@ -77,6 +81,17 @@ local DIR_OUT       = Enum.EasingDirection.Out
 
 local uiLocked = false
 
+<<<<<<< HEAD
+=======
+-- Services shared with the modules (ctx.Session, ctx.Motion, ctx.UIScale, ctx.Hotkey...). They live in ONE table because the
+-- main chunk is close to Luau's limit of 200 local variables.
+local Core = {
+    VERSION = "1.1.0", -- bump on every release: Settings > About compares it with the copy on GitHub
+    motion  = { reduced = false },    -- Reduce Motion: while reduced, tween() finishes every tween almost instantly
+    hotkey  = { capturing = false },  -- true while Settings waits for a new key, so that key does not toggle the menu
+}
+
+>>>>>>> f403d6d (UPD Script)
 --// ================= ROOT =================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ElyseraUI"
@@ -174,6 +189,11 @@ do
     end
 
     function tween(inst, time, props, style, dir)
+<<<<<<< HEAD
+=======
+        -- Reduce Motion: effectively instant, but still a real tween so Completed / PlaybackState keep working
+        if Core.motion.reduced and type(time) == "number" then time = math.min(time, 0.01) end
+>>>>>>> f403d6d (UPD Script)
         local t = TweenService:Create(inst, infoFor(time, style or EASE_QUAD, dir or DIR_OUT), props)
         for k in pairs(props) do
             if k == "Color" or string.sub(k, -6) == "Color3" then
@@ -358,11 +378,33 @@ end
 
 local ToggleButton
 local saveQueued = false
+<<<<<<< HEAD
+=======
+
+-- Writes the settings file right now (saveSettings below is the debounced version most code uses)
+function Core.writeSettings()
+    if not canFS or not ScreenGui.Parent then return end -- a destroyed instance (reloaded / unloaded) must never overwrite the file the new one reads
+    local t = ToggleButton and ToggleButton.Position or togglePosition
+    local data = {}
+    -- Keep every key that modules store in Saved (session, uiScale, menuKey, reduceMotion...), then refresh the ones owned by the core
+    for k, v in pairs(Saved) do data[k] = v end
+    data.w, data.h = curW, curH
+    data.uiX, data.uiY = uiPosition.X.Offset, uiPosition.Y.Offset
+    data.toggle = { t.X.Scale, t.X.Offset, t.Y.Scale, t.Y.Offset }
+    data.fpsMode = ScreenGui:GetAttribute("FpsMode") -- selected FPS Profile mode (not applied automatically on load)
+    data.theme = ScreenGui:GetAttribute("Theme") or Saved.theme -- id of the theme in use (Settings.lua applies it on load)
+    data.autoExecute = Saved.autoExecute == true -- Auto Execute (see the AUTO EXECUTE section); the queue_on_teleport code reads this key again on the new server
+    local okEncode, json = pcall(HttpService.JSONEncode, HttpService, data)
+    if okEncode then pcall(writefile, dataPath(SAVE_FILE), json) end
+end
+
+>>>>>>> f403d6d (UPD Script)
 local function saveSettings()
     if not canFS or saveQueued then return end
     saveQueued = true
     task.delay(SAVE_DELAY, function()
         saveQueued = false
+<<<<<<< HEAD
         local t = ToggleButton and ToggleButton.Position or togglePosition
         local data = {
             w = curW, h = curH,
@@ -376,6 +418,27 @@ local function saveSettings()
     end)
 end
 
+=======
+        Core.writeSettings()
+    end)
+end
+
+-- Reduce Motion: Core.motion.reduced is read by tween(); the spinning border is paused while it is on (see syncSpin)
+function Core.motion.set(on, silent)
+    Core.motion.reduced = on == true
+    Saved.reduceMotion = Core.motion.reduced or nil
+    if Core.motion.sync then Core.motion.sync() end
+    if not silent then saveSettings() end
+end
+Core.motion.reduced = Saved.reduceMotion == true
+
+-- Menu hotkey: Saved.menuKey = name of an Enum.KeyCode (nil = none); the InputBegan listener sits next to openUI / closeUI
+function Core.hotkey.set(name)
+    Saved.menuKey = (type(name) == "string" and name ~= "") and name or nil
+    saveSettings()
+end
+
+>>>>>>> f403d6d (UPD Script)
 --// ================= FLOATING TOGGLE BUTTON =================
 ToggleButton = new("TextButton", {
     Name = "MG_Toggle",
@@ -672,13 +735,56 @@ local Body = new("Frame", {
     BackgroundTransparency = 1,
 }, MainUI)
 
+<<<<<<< HEAD
+=======
+-- ScaleHost holds the tab column and the function panel. UI Scale (Settings) puts a UIScale on it and divides its size by the same
+-- factor, so the panels still fill the whole body while their content (text, rows, buttons) gets smaller or bigger.
+-- Its size and position use Scale values only, so the result does not depend on how UIScale treats offsets of its own parent.
+Core.host = new("Frame", {
+    Name = "ScaleHost",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+}, Body)
+Core.scale = new("UIScale", { Scale = 1 }, Core.host)
+
+-- Steps of 5% between 60% and 140%; returns the scale that was really applied
+function Core.setUIScale(value, silent)
+    local s = math.clamp(math.floor(num(value, 1) * 20 + 0.5) / 20, 0.6, 1.4)
+    Core.scale.Scale = s
+    Core.host.Size = UDim2.fromScale(1 / s, 1 / s)
+    Saved.uiScale = (s ~= 1) and s or nil
+    if not silent then
+        saveSettings()
+        -- AbsoluteSize is in screen pixels while every offset inside the host is in scaled units: layouts that measure it
+        -- (Core.onUIScale) run again one frame later, once the new size has been laid out
+        task.delay(0.05, function()
+            for _, fn in ipairs(Core.scaleListeners) do task.spawn(fn, s) end
+        end)
+    end
+    return s
+end
+Core.scaleListeners = {}
+function Core.onUIScale(fn)
+    table.insert(Core.scaleListeners, fn)
+    return { Disconnect = function()
+        local i = table.find(Core.scaleListeners, fn)
+        if i then table.remove(Core.scaleListeners, i) end
+    end }
+end
+Core.setUIScale(Saved.uiScale, true)
+
+>>>>>>> f403d6d (UPD Script)
 local FunctionPanel = new("Frame", {
     Name = "FunctionPanel",
     Position = UDim2.fromOffset(MARGIN_EDGE + TAB_PANEL_WIDTH + MARGIN_GAP, MARGIN_EDGE),
     Size = UDim2.new(1, -(MARGIN_EDGE + TAB_PANEL_WIDTH + MARGIN_GAP + MARGIN_EDGE), 1, -(MARGIN_EDGE * 2)),
     BackgroundColor3 = Theme.PanelAlt,
     BorderSizePixel = 0,
+<<<<<<< HEAD
 }, Body)
+=======
+}, Core.host)
+>>>>>>> f403d6d (UPD Script)
 corner(FunctionPanel, 8)
 stroke(FunctionPanel)
 
@@ -701,7 +807,11 @@ local TabColumn = new("Frame", {
     Position = UDim2.fromOffset(MARGIN_EDGE, MARGIN_EDGE),
     Size = UDim2.new(0, TAB_PANEL_WIDTH, 1, -(MARGIN_EDGE * 2)),
     BackgroundTransparency = 1,
+<<<<<<< HEAD
 }, Body)
+=======
+}, Core.host)
+>>>>>>> f403d6d (UPD Script)
 
 local TabPanel = new("Frame", {
     Name = "TabPanel",
@@ -752,10 +862,19 @@ do
     }, HighlightStroke)
     -- Endless spinning border: paused while the UI is hidden so no property is updated every frame for nothing
     local spin = TweenService:Create(Gradient, TweenInfo.new(2, EASE_LINEAR, DIR_IN, -1), { Rotation = 360 })
+<<<<<<< HEAD
     spin:Play()
     MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
         if MainUI.Visible then spin:Play() else spin:Pause() end
     end)
+=======
+    local function syncSpin()
+        if MainUI.Visible and not Core.motion.reduced then spin:Play() else spin:Pause() end
+    end
+    syncSpin()
+    MainUI:GetPropertyChangedSignal("Visible"):Connect(syncSpin)
+    Core.motion.sync = syncSpin
+>>>>>>> f403d6d (UPD Script)
 
     local Avatar = new("ImageLabel", {
         Size = UDim2.fromOffset(32, 32),
@@ -1053,6 +1172,19 @@ makeDraggable(ToggleButton, ToggleButton, saveSettings, function()
     if isOpen then closeUI() else openUI() end
 end, 5)
 
+<<<<<<< HEAD
+=======
+--// ---- Menu hotkey (Settings > Menu Hotkey) ----
+-- Ignored while typing in a TextBox, while a dialog locks the UI and while Settings is capturing a new key.
+track(UserInputService.InputBegan:Connect(function(input, processed)
+    local key = Saved.menuKey
+    if processed or type(key) ~= "string" or Core.hotkey.capturing or uiLocked then return end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard or input.KeyCode.Name ~= key then return end
+    if UserInputService:GetFocusedTextBox() then return end
+    if isOpen then closeUI() else openUI() end
+end))
+
+>>>>>>> f403d6d (UPD Script)
 --// ---- Minimize ----
 MinimizeBtn.MouseButton1Click:Connect(function()
     if uiLocked then return end
@@ -1093,7 +1225,11 @@ end)
 local function unloadUI()
     if Saved.autoExecute == true then
         Saved.autoExecute = false
+<<<<<<< HEAD
         saveSettings()
+=======
+        Core.writeSettings() -- right now: once the GUI is destroyed the debounced save would be skipped
+>>>>>>> f403d6d (UPD Script)
     end
     ScreenGui:Destroy()
 end
@@ -1572,6 +1708,10 @@ local function CreateToggleOption(parent, title, height, opts)
         if not silent then
             for _, fn in ipairs(listeners) do task.spawn(fn, state) end
         end
+<<<<<<< HEAD
+=======
+        if Core.session then Core.session.touch() end -- Restore last session: remember the new state
+>>>>>>> f403d6d (UPD Script)
     end
 
     if opts and opts.initial then
@@ -1598,6 +1738,15 @@ local function CreateToggleOption(parent, title, height, opts)
             }
         end,
     }
+<<<<<<< HEAD
+=======
+
+    -- Restore last session: the switch registers itself under "<tab>/<title>" (opts.key overrides it, opts.session = false opts out
+    -- for switches that already keep their own state, like Auto Execute). Modules can attach a value (a text box) with Session.attach.
+    if Core.session and not (opts and opts.session == false) then
+        Core.session.add((opts and opts.key) or Core.session.keyFor(parent, title), function() return state end, function(on) setState(on) end, Switch)
+    end
+>>>>>>> f403d6d (UPD Script)
     return Switch, setState, api
 end
 
@@ -1956,6 +2105,224 @@ do
     end
 end
 
+<<<<<<< HEAD
+=======
+--// ================= TOAST (ctx.Toast) =================
+-- Short notification at the bottom of the screen, optionally with an action button. Shared by every module (ctx.Toast).
+--   Toast(message, kind, opts)   kind: "info" (default) | "success" | "warn" | "error"
+--   opts.duration (seconds), opts.actionText + opts.onAction (a button on the right of the toast)
+--   returns { dismiss = function }
+do
+    local TOAST_W, MAX_TOASTS = 300, 3
+    -- Token names, resolved on every lookup so the colors follow theme changes
+    local TOAST_TOKENS = { info = "SubText", success = "Sakura", warn = "AccentPurple", error = "Danger" }
+    local ToastHost
+    local toastQueue, toastSeq = {}, 0
+    local lastToast = { text = "", at = 0 }
+
+    local function getToastHost()
+        if ToastHost and ToastHost.Parent then return ToastHost end
+        local w = math.min(TOAST_W, ScreenGui.AbsoluteSize.X - 24)
+        ToastHost = new("Frame", {
+            Name = "ToastHost",
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, 0, 1, -20),
+            Size = UDim2.fromOffset(w, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            ZIndex = 70,
+        }, ScreenGui)
+        new("UIListLayout", {
+            Padding = UDim.new(0, 6),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            VerticalAlignment = Enum.VerticalAlignment.Bottom,
+        }, ToastHost)
+        return ToastHost
+    end
+
+    function UI.Toast(message, kind, opts)
+        opts = opts or {}
+        message = tostring(message)
+        local noop = { dismiss = function() end }
+        if not ScreenGui.Parent then return noop end
+
+        local now = os.clock()
+        if message == lastToast.text and now - lastToast.at < 1 then return noop end
+        lastToast.text, lastToast.at = message, now
+
+        local host = getToastHost()
+        if #toastQueue >= MAX_TOASTS then toastQueue[1].dismiss() end
+
+        toastSeq = toastSeq + 1
+        local color = Theme[TOAST_TOKENS[kind or "info"] or TOAST_TOKENS.info]
+        local Pill = new("CanvasGroup", {
+            LayoutOrder = toastSeq,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundColor3 = Theme.Panel,
+            GroupTransparency = 1,
+            ZIndex = 71,
+        }, host)
+        corner(Pill, 8)
+        stroke(Pill, color, 1)
+        padding(Pill, 12, 12, 6, 6)
+
+        local actionW = opts.actionText and 64 or 0
+        new("TextLabel", {
+            Size = UDim2.new(1, -actionW, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Text = message,
+            TextWrapped = true,
+            Font = Enum.Font.Gotham,
+            TextSize = 13,
+            TextColor3 = Theme.Text,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 72,
+        }, Pill)
+
+        local toast, closed = {}, false
+        function toast.dismiss()
+            if closed then return end
+            closed = true
+            local i = table.find(toastQueue, toast)
+            if i then table.remove(toastQueue, i) end
+            local t = tween(Pill, 0.2, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
+            t.Completed:Connect(function()
+                if Pill.Parent then Pill:Destroy() end
+            end)
+        end
+
+        if opts.actionText then
+            local Act = new("TextButton", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, 0, 0.5, 0),
+                Size = UDim2.fromOffset(actionW - 6, 32),
+                BackgroundTransparency = 1,
+                Text = opts.actionText,
+                Font = Enum.Font.GothamBold,
+                TextSize = 13,
+                TextColor3 = Theme.AccentPink,
+                ZIndex = 73,
+            }, Pill)
+            Act.MouseButton1Click:Connect(function()
+                if closed then return end
+                toast.dismiss()
+                if opts.onAction then task.spawn(opts.onAction) end
+            end)
+        end
+
+        toastQueue[#toastQueue + 1] = toast
+        tween(Pill, 0.15, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
+        task.delay(opts.duration or (kind == "error" and 5 or 2.5), toast.dismiss)
+        return toast
+    end
+end
+
+--// ================= RESTORE LAST SESSION (ctx.Session) =================
+-- Auto Execute reloads Elysera after every teleport and every switch starts OFF again. While "Restore last session" (Settings) is ON,
+-- the ON switches (plus the value boxes modules attach, like the Speed box) are kept in Saved.session and applied again once every
+-- module has loaded. A plain switch needs nothing from its module: CreateToggleOption registers itself (see opts.session / opts.key).
+--   Session.add(key, capture, apply, switch)   capture() -> bool, apply(on)
+--   Session.attach(switch, capture, apply)     capture() -> string | number | nil (the value), apply(value) runs BEFORE the switch is turned on
+--   Session.touch()                            the state changed: save it (debounced)
+--   Session.enabled() / Session.setEnabled(on) / Session.restore() (called once by the core after the last module)
+Core.session = {}
+do
+    local S = Core.session
+    local entries, order = {}, {} -- [key] = { switch, capture, apply, aux }, plus the keys in registration order
+    local bySwitch = setmetatable({}, { __mode = "k" })
+    local ready, dirty = false, false -- nothing is saved before restore() ran: while the modules build, every switch is still OFF
+
+    function S.enabled() return Saved.restoreSession == true end
+
+    function S.setEnabled(on)
+        Saved.restoreSession = on == true or nil
+        saveSettings()
+    end
+
+    function S.keyFor(parent, title)
+        local tabName, node = "?", parent
+        while node and node ~= ScreenGui do
+            if string.sub(node.Name, 1, 11) == "TabContent_" then tabName = string.sub(node.Name, 12) break end
+            node = node.Parent
+        end
+        local base = tabName .. "/" .. tostring(title)
+        local key, n = base, 1
+        while entries[key] and entries[key].switch and entries[key].switch.Parent do -- a live switch already owns this key
+            n = n + 1
+            key = base .. "#" .. n
+        end
+        return key
+    end
+
+    function S.add(key, capture, apply, switch)
+        local entry = { switch = switch, capture = capture, apply = apply }
+        if not entries[key] then order[#order + 1] = key end
+        entries[key] = entry
+        if switch then bySwitch[switch] = entry end
+        return key
+    end
+
+    function S.attach(switch, capture, apply)
+        local entry = bySwitch[switch]
+        if entry then entry.aux = { capture = capture, apply = apply } end
+    end
+
+    local function snapshot()
+        local out = {}
+        for _, key in ipairs(order) do
+            local entry = entries[key]
+            if entry and (not entry.switch or entry.switch.Parent) then
+                local ok, on = pcall(entry.capture)
+                if ok and on == true then -- only switches that are ON are kept
+                    local rec = { on = true }
+                    if entry.aux then
+                        local okAux, v = pcall(entry.aux.capture)
+                        if okAux and (type(v) == "string" or type(v) == "number") then rec.v = v end
+                    end
+                    out[key] = rec
+                end
+            end
+        end
+        return out
+    end
+
+    function S.touch()
+        if not ready or dirty then return end
+        dirty = true
+        task.defer(function()
+            dirty = false
+            Saved.session = snapshot()
+            saveSettings()
+        end)
+    end
+
+    function S.restore()
+        if ready then return 0 end
+        local count = 0
+        local stored = Saved.session
+        if S.enabled() and type(stored) == "table" then
+            for _, key in ipairs(order) do
+                local entry, rec = entries[key], stored[key]
+                if entry and type(rec) == "table" and rec.on == true then
+                    -- One broken feature must not stop the rest: each one is applied inside its own pcall
+                    if entry.aux and rec.v ~= nil then pcall(entry.aux.apply, rec.v) end
+                    if pcall(entry.apply, true) then count = count + 1 end
+                end
+            end
+        end
+        ready = true
+        S.touch() -- from now on the saved session follows what really happens (also drops stale keys)
+        if count > 0 then
+            UI.Toast(("Restored %d feature%s from your last session"):format(count, count == 1 and "" or "s"), "info", { duration = 3 })
+        end
+        return count
+    end
+end
+
+>>>>>>> f403d6d (UPD Script)
 --// ================= REMOTE MODULE LOADER =================
 -- The modules (Status_Server.lua, Local.lua, Script.lua, FPS.lua, Settings.lua) are downloaded from GitHub (raw)
 -- and run with loadstring; they are no longer read from the executor's workspace folder.
@@ -2019,6 +2386,23 @@ do
         error(reason, 0)
     end
 
+<<<<<<< HEAD
+=======
+    Loader.httpGet = httpGet -- modules reuse it (Settings: update check)
+
+    -- Run the boot script again (the next run destroys this instance first): used after Import / Reset config and by "Update".
+    -- Returns true, or false + the reason.
+    function Loader.reload()
+        local fn, err = loadstring(Loader.bootCode)
+        if not fn then return false, tostring(err) end
+        task.defer(function()
+            local ok, runErr = pcall(fn)
+            if not ok then warn("[Elysera] Reload failed: " .. tostring(runErr)) end
+        end)
+        return true
+    end
+
+>>>>>>> f403d6d (UPD Script)
     -- Download all 5 modules at the same time right from the start; running them (init) still follows the original order in the blocks below
     local moduleJobs = {}
     local moduleDeadline = os.clock() + MODULE_TIMEOUT
@@ -2283,6 +2667,15 @@ do
         CreateToggleOption = CreateToggleOption, flashButtonFeedback = flashButtonFeedback,
         flashStrokeError = flashStrokeError, bindBoxFocus = bindBoxFocus, guarded = guarded,
         UI = UI, Loader = Loader, AutoExecute = AutoExec, repaintContent = repaintContent,
+<<<<<<< HEAD
+=======
+        Toast = UI.Toast, Session = Core.session, Motion = Core.motion, Hotkey = Core.hotkey, VERSION = Core.VERSION,
+        writeSettings = Core.writeSettings,
+        -- get() = the scale of the window content; onChanged(fn) runs fn after it changed. Anything that turns an AbsoluteSize /
+        -- AbsolutePosition (screen pixels) into an offset INSIDE the window must divide by get() first.
+        UIScale = { get = function() return Core.scale.Scale end, set = Core.setUIScale, onChanged = Core.onUIScale },
+        toggleUI = function() if isOpen then closeUI() else openUI() end end,
+>>>>>>> f403d6d (UPD Script)
         requestClose = function() -- opens the "Close script" dialog (same flow as the close button in the top bar)
             if uiLocked then return end
             CloseDialog.show()
@@ -2337,6 +2730,12 @@ end)
 -- Auto Execute was on last time: queue it right away (even when the Settings tab failed to load)
 if AutoExec.isOn() and AutoExec.supported() then AutoExec.queue() end
 
+<<<<<<< HEAD
+=======
+-- Restore last session: every module has registered its switches now (does nothing unless the setting is ON)
+Core.session.restore()
+
+>>>>>>> f403d6d (UPD Script)
 --// ================= EXPOSED API =================
 Elysera = {
     ScreenGui = ScreenGui,
@@ -2348,6 +2747,11 @@ Elysera = {
     CreateSectionLabel = CreateSectionLabel,
     SelectTab = selectTab,
     Unload = unloadUI,       -- unload Elysera for good (same as the close script button) and turn Auto Execute off
+<<<<<<< HEAD
+=======
+    Toast = UI.Toast,        -- Toast(message, kind, opts) -> { dismiss }
+    Version = Core.VERSION,
+>>>>>>> f403d6d (UPD Script)
     AutoExecute = AutoExec,  -- supported() / isOn() / set(on) / reason()
 
     -- Theme (provided by Settings.lua; if the module cannot be loaded, SetTheme returns false)
