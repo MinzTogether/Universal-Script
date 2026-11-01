@@ -12,8 +12,6 @@ local UserInputService = game:GetService("UserInputService")
 local Players          = game:GetService("Players")
 local CoreGui          = game:GetService("CoreGui")
 local HttpService      = game:GetService("HttpService")
-local RunService       = game:GetService("RunService")
-local TeleportService  = game:GetService("TeleportService")
 local Workspace        = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
@@ -32,11 +30,7 @@ do
     end
 end
 
-<<<<<<< HEAD
---// ================= MAIN THEME =================
-=======
 --// ================= THEME =================
->>>>>>> f403d6d (UPD Script)
 local Theme = {
     Background     = Color3.fromRGB(29, 21, 52),    -- #1D1534 main background
     Panel          = Color3.fromRGB(33, 21, 58),    -- #21153A cards, buttons, dialogs
@@ -54,44 +48,48 @@ local Theme = {
 }
 
 --// ================= CONFIG =================
-local UI_NAME             = "Elysera"
-local UI_W, UI_H          = 650, 420
-local MIN_UI_W, MIN_UI_H  = 420, 260
-local TOGGLE_SIZE         = 50
-local POPUP_TIME          = 0.25
-local CLOSE_TIME          = 0.20
-local TOPBAR_HEIGHT       = 40
-local SAVE_FILE           = "Elysera_Settings.json"
-local SAVE_DELAY          = 0.3
+-- Plain constants live in ONE table (Cfg): the main chunk is limited to 200 local variables (Luau). For the same reason the
+-- self-contained sections further down sit inside do ... end blocks, so their locals are released when the block ends.
+local Cfg = {
+    UI_NAME          = "Elysera",
+    UI_W             = 650,
+    UI_H             = 420,
+    MIN_UI_W         = 420,
+    MIN_UI_H         = 260,
+    TOGGLE_SIZE      = 50,
+    POPUP_TIME       = 0.25,
+    CLOSE_TIME       = 0.20,
+    TOPBAR_HEIGHT    = 40,
+    SAVE_FILE        = "Elysera_Settings.json",
+    SAVE_DELAY       = 0.3,
 
-local MARGIN_EDGE         = 8
-local MARGIN_GAP          = 10
-local TAB_PANEL_WIDTH     = 150
-local HIGHLIGHT_HEIGHT    = 56
-local HIGHLIGHT_GAP       = 8
+    MARGIN_EDGE      = 8,
+    MARGIN_GAP       = 10,
+    TAB_PANEL_WIDTH  = 150,
+    HIGHLIGHT_HEIGHT = 56,
+    HIGHLIGHT_GAP    = 8,
+
+    DEFAULT_TAB      = "Status & Server", -- the tab that is shown when the script loads for the first time (must match a CreateTab name)
+}
 
 local CENTER        = UDim2.fromScale(0.5, 0.5)
 local ANCHOR_CENTER = Vector2.new(0.5, 0.5)
 local EASE_QUAD     = Enum.EasingStyle.Quad
 local EASE_QUINT    = Enum.EasingStyle.Quint
 local EASE_BACK     = Enum.EasingStyle.Back
-local EASE_LINEAR   = Enum.EasingStyle.Linear
 local DIR_IN        = Enum.EasingDirection.In
 local DIR_OUT       = Enum.EasingDirection.Out
 
 local uiLocked = false
 
-<<<<<<< HEAD
-=======
 -- Services shared with the modules (ctx.Session, ctx.Motion, ctx.UIScale, ctx.Hotkey...). They live in ONE table because the
--- main chunk is close to Luau's limit of 200 local variables.
+-- main chunk is limited to 200 local variables (Luau).
 local Core = {
     VERSION = "1.1.0", -- bump on every release: Settings > About compares it with the copy on GitHub
     motion  = { reduced = false },    -- Reduce Motion: while reduced, tween() finishes every tween almost instantly
     hotkey  = { capturing = false },  -- true while Settings waits for a new key, so that key does not toggle the menu
 }
 
->>>>>>> f403d6d (UPD Script)
 --// ================= ROOT =================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ElyseraUI"
@@ -114,15 +112,18 @@ do
 end
 
 --// ================= UTILITY =================
-local Connections = {}
-local function track(conn)
-    Connections[#Connections + 1] = conn
-    return conn
-end
+local track
+do
+    local Connections = {}
+    function track(conn)
+        Connections[#Connections + 1] = conn
+        return conn
+    end
 
-ScreenGui.Destroying:Connect(function()
-    for _, c in ipairs(Connections) do c:Disconnect() end
-end)
+    ScreenGui.Destroying:Connect(function()
+        for _, c in ipairs(Connections) do c:Disconnect() end
+    end)
+end
 
 local function new(class, props, parent)
     local inst = Instance.new(class)
@@ -163,57 +164,56 @@ end
 
 -- Theme: tweens of color properties that are RUNNING are recorded so Settings.lua (Theme part) can snap them to the new theme's target color
 -- when the theme changes mid-tween (otherwise the tween would pull the property back to the old theme's color when it ends).
-local liveColorTweens = setmetatable({}, { __mode = "k" }) -- [tween] = { inst, props }
-local tween
+local tween, settleColorTweens
 do
-    -- A TweenInfo never changes after creation, so one object is shared per (style, direction, duration) set.
-    -- Hover/press effects create a tween on EVERY event; this cache avoids allocating a new TweenInfo each time.
-    local infoCache, infoCount = {}, 0 -- [style][direction][duration] = TweenInfo
-    local function infoFor(time, style, dir)
-        local byStyle = infoCache[style]
-        if not byStyle then byStyle = {}; infoCache[style] = byStyle end
-        local byDir = byStyle[dir]
-        if not byDir then byDir = {}; byStyle[dir] = byDir end
-        local info = byDir[time]
-        if not info then
-            if infoCount >= 128 then -- durations computed at runtime could grow the cache forever: past the limit, clear it and start over
-                infoCache, infoCount = {}, 0
-                byDir = {}
-                infoCache[style] = { [dir] = byDir }
+    local liveColorTweens = setmetatable({}, { __mode = "k" }) -- [tween] = { inst, props }
+    do
+        -- A TweenInfo never changes after creation, so one object is shared per (style, direction, duration) set.
+        -- Hover/press effects create a tween on EVERY event; this cache avoids allocating a new TweenInfo each time.
+        local infoCache, infoCount = {}, 0 -- [style][direction][duration] = TweenInfo
+        local function infoFor(time, style, dir)
+            local byStyle = infoCache[style]
+            if not byStyle then byStyle = {}; infoCache[style] = byStyle end
+            local byDir = byStyle[dir]
+            if not byDir then byDir = {}; byStyle[dir] = byDir end
+            local info = byDir[time]
+            if not info then
+                if infoCount >= 128 then -- durations computed at runtime could grow the cache forever: past the limit, clear it and start over
+                    infoCache, infoCount = {}, 0
+                    byDir = {}
+                    infoCache[style] = { [dir] = byDir }
+                end
+                info = TweenInfo.new(time, style, dir)
+                byDir[time] = info
+                infoCount += 1
             end
-            info = TweenInfo.new(time, style, dir)
-            byDir[time] = info
-            infoCount += 1
+            return info
         end
-        return info
-    end
 
-    function tween(inst, time, props, style, dir)
-<<<<<<< HEAD
-=======
-        -- Reduce Motion: effectively instant, but still a real tween so Completed / PlaybackState keep working
-        if Core.motion.reduced and type(time) == "number" then time = math.min(time, 0.01) end
->>>>>>> f403d6d (UPD Script)
-        local t = TweenService:Create(inst, infoFor(time, style or EASE_QUAD, dir or DIR_OUT), props)
-        for k in pairs(props) do
-            if k == "Color" or string.sub(k, -6) == "Color3" then
-                liveColorTweens[t] = { inst, props }
-                t.Completed:Once(function() liveColorTweens[t] = nil end)
-                break
+        function tween(inst, time, props, style, dir)
+            -- Reduce Motion: effectively instant, but still a real tween so Completed / PlaybackState keep working
+            if Core.motion.reduced and type(time) == "number" then time = math.min(time, 0.01) end
+            local t = TweenService:Create(inst, infoFor(time, style or EASE_QUAD, dir or DIR_OUT), props)
+            for k in pairs(props) do
+                if k == "Color" or string.sub(k, -6) == "Color3" then
+                    liveColorTweens[t] = { inst, props }
+                    t.Completed:Once(function() liveColorTweens[t] = nil end)
+                    break
+                end
             end
+            t:Play()
+            return t
         end
-        t:Play()
-        return t
     end
-end
--- Cancel running color tweens and set the target values directly; translate(Color3) returns a new Color3 or nil (keep as is)
-local function settleColorTweens(translate)
-    for t, rec in pairs(liveColorTweens) do
-        liveColorTweens[t] = nil
-        t:Cancel()
-        for k, v in pairs(rec[2]) do
-            if typeof(v) == "Color3" then v = translate(v) or v end
-            rec[1][k] = v
+    -- Cancel running color tweens and set the target values directly; translate(Color3) returns a new Color3 or nil (keep as is)
+    function settleColorTweens(translate)
+        for t, rec in pairs(liveColorTweens) do
+            liveColorTweens[t] = nil
+            t:Cancel()
+            for k, v in pairs(rec[2]) do
+                if typeof(v) == "Color3" then v = translate(v) or v end
+                rec[1][k] = v
+            end
         end
     end
 end
@@ -340,46 +340,49 @@ local function getViewport()
     return camera and camera.ViewportSize or Vector2.new(1280, 720)
 end
 
-local function loadSettings()
-    if not canFS then return {} end
-    local ok, data = pcall(function()
-        local path = dataPath(SAVE_FILE)
-        if isfile(path) then
-            return HttpService:JSONDecode(readfile(path))
-        end
-    end)
-    return (ok and type(data) == "table") and data or {}
+local Saved
+do
+    local function loadSettings()
+        if not canFS then return {} end
+        local ok, data = pcall(function()
+            local path = dataPath(Cfg.SAVE_FILE)
+            if isfile(path) then
+                return HttpService:JSONDecode(readfile(path))
+            end
+        end)
+        return (ok and type(data) == "table") and data or {}
+    end
+
+    Saved = loadSettings()
 end
+local curW, curH, uiPosition, DEFAULT_TOGGLE_POS, togglePosition
+do
+    local viewport0 = getViewport()
 
-local Saved = loadSettings()
-local viewport0 = getViewport()
+    curW = math.clamp(num(Saved.w, Cfg.UI_W), Cfg.MIN_UI_W, math.max(Cfg.MIN_UI_W, viewport0.X))
+    curH = math.clamp(num(Saved.h, Cfg.UI_H), Cfg.MIN_UI_H, math.max(Cfg.MIN_UI_H, viewport0.Y))
 
-local curW = math.clamp(num(Saved.w, UI_W), MIN_UI_W, math.max(MIN_UI_W, viewport0.X))
-local curH = math.clamp(num(Saved.h, UI_H), MIN_UI_H, math.max(MIN_UI_H, viewport0.Y))
+    local maxOffX = math.max(0, (viewport0.X - curW) / 2)
+    local maxOffY = math.max(0, (viewport0.Y - curH) / 2)
+    uiPosition = UDim2.new(
+        0.5, math.clamp(num(Saved.uiX, 0), -maxOffX, maxOffX),
+        0.5, math.clamp(num(Saved.uiY, 0), -maxOffY, maxOffY)
+    )
 
-local maxOffX = math.max(0, (viewport0.X - curW) / 2)
-local maxOffY = math.max(0, (viewport0.Y - curH) / 2)
-local uiPosition = UDim2.new(
-    0.5, math.clamp(num(Saved.uiX, 0), -maxOffX, maxOffX),
-    0.5, math.clamp(num(Saved.uiY, 0), -maxOffY, maxOffY)
-)
-
-local DEFAULT_TOGGLE_POS = UDim2.new(0, 20, 0.5, -TOGGLE_SIZE / 2)
-local togglePosition = DEFAULT_TOGGLE_POS
-if type(Saved.toggle) == "table" then
-    local xs, xo = num(Saved.toggle[1], 0), num(Saved.toggle[2], 20)
-    local ys, yo = num(Saved.toggle[3], 0.5), num(Saved.toggle[4], -TOGGLE_SIZE / 2)
-    local absX = viewport0.X * xs + xo
-    local absY = viewport0.Y * ys + yo
-    xo += math.clamp(absX, 0, math.max(0, viewport0.X - TOGGLE_SIZE)) - absX
-    yo += math.clamp(absY, 0, math.max(0, viewport0.Y - TOGGLE_SIZE)) - absY
-    togglePosition = UDim2.new(xs, xo, ys, yo)
+    DEFAULT_TOGGLE_POS = UDim2.new(0, 20, 0.5, -Cfg.TOGGLE_SIZE / 2)
+    togglePosition = DEFAULT_TOGGLE_POS
+    if type(Saved.toggle) == "table" then
+        local xs, xo = num(Saved.toggle[1], 0), num(Saved.toggle[2], 20)
+        local ys, yo = num(Saved.toggle[3], 0.5), num(Saved.toggle[4], -Cfg.TOGGLE_SIZE / 2)
+        local absX = viewport0.X * xs + xo
+        local absY = viewport0.Y * ys + yo
+        xo += math.clamp(absX, 0, math.max(0, viewport0.X - Cfg.TOGGLE_SIZE)) - absX
+        yo += math.clamp(absY, 0, math.max(0, viewport0.Y - Cfg.TOGGLE_SIZE)) - absY
+        togglePosition = UDim2.new(xs, xo, ys, yo)
+    end
 end
 
 local ToggleButton
-local saveQueued = false
-<<<<<<< HEAD
-=======
 
 -- Writes the settings file right now (saveSettings below is the debounced version most code uses)
 function Core.writeSettings()
@@ -395,32 +398,20 @@ function Core.writeSettings()
     data.theme = ScreenGui:GetAttribute("Theme") or Saved.theme -- id of the theme in use (Settings.lua applies it on load)
     data.autoExecute = Saved.autoExecute == true -- Auto Execute (see the AUTO EXECUTE section); the queue_on_teleport code reads this key again on the new server
     local okEncode, json = pcall(HttpService.JSONEncode, HttpService, data)
-    if okEncode then pcall(writefile, dataPath(SAVE_FILE), json) end
+    if okEncode then pcall(writefile, dataPath(Cfg.SAVE_FILE), json) end
 end
 
->>>>>>> f403d6d (UPD Script)
-local function saveSettings()
-    if not canFS or saveQueued then return end
-    saveQueued = true
-    task.delay(SAVE_DELAY, function()
-        saveQueued = false
-<<<<<<< HEAD
-        local t = ToggleButton and ToggleButton.Position or togglePosition
-        local data = {
-            w = curW, h = curH,
-            uiX = uiPosition.X.Offset, uiY = uiPosition.Y.Offset,
-            toggle = { t.X.Scale, t.X.Offset, t.Y.Scale, t.Y.Offset },
-            fpsMode = ScreenGui:GetAttribute("FpsMode"), -- selected FPS Profile mode (not applied automatically on load)
-            theme = ScreenGui:GetAttribute("Theme") or Saved.theme, -- id of the theme in use (Settings.lua applies it on load)
-            autoExecute = Saved.autoExecute == true, -- Auto Execute (see the AUTO EXECUTE section); the queue_on_teleport code reads this key again on the new server
-        }
-        pcall(writefile, dataPath(SAVE_FILE), HttpService:JSONEncode(data))
-    end)
-end
-
-=======
-        Core.writeSettings()
-    end)
+local saveSettings
+do
+    local saveQueued = false
+    function saveSettings()
+        if not canFS or saveQueued then return end
+        saveQueued = true
+        task.delay(Cfg.SAVE_DELAY, function()
+            saveQueued = false
+            Core.writeSettings()
+        end)
+    end
 end
 
 -- Reduce Motion: Core.motion.reduced is read by tween(); the spinning border is paused while it is on (see syncSpin)
@@ -438,11 +429,10 @@ function Core.hotkey.set(name)
     saveSettings()
 end
 
->>>>>>> f403d6d (UPD Script)
 --// ================= FLOATING TOGGLE BUTTON =================
 ToggleButton = new("TextButton", {
     Name = "MG_Toggle",
-    Size = UDim2.fromOffset(TOGGLE_SIZE, TOGGLE_SIZE),
+    Size = UDim2.fromOffset(Cfg.TOGGLE_SIZE, Cfg.TOGGLE_SIZE),
     Position = togglePosition,
     BackgroundColor3 = Theme.Panel,
     Text = "",
@@ -540,7 +530,7 @@ local MainUIStroke = stroke(MainUI)
 --// ---- Top bar ----
 local TopBar = new("Frame", {
     Name = "TopBar",
-    Size = UDim2.new(1, 0, 0, TOPBAR_HEIGHT),
+    Size = UDim2.new(1, 0, 0, Cfg.TOPBAR_HEIGHT),
     BackgroundColor3 = Theme.Header,
     BorderSizePixel = 0,
     Active = true,
@@ -565,7 +555,7 @@ new("Frame", {
 label(TopBar, {
     Size = UDim2.new(1, -180, 1, 0),
     Position = UDim2.fromOffset(16, 0),
-    Text = UI_NAME,
+    Text = Cfg.UI_NAME,
     TextSize = 18,
     TextColor3 = Theme.AccentPink,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -573,170 +563,173 @@ label(TopBar, {
 })
 
 --// ---- Topbar icons ----
-local TOPBAR_BTN_SIZE   = 26
-local TOPBAR_BTN_GAP    = 6
-local TOPBAR_BTN_MARGIN = 8
-local ICON_SIZE         = 14
+-- Everything private to the top bar lives in the do-block below; only what the rest of the file needs is declared before it.
+local TopBtn = {} -- the five top-bar buttons: Close / Maximize / Minimize / Resize / Reset
+local drawIcon, MaximizeIcon, ResizeIcon
+do
+    local TOPBAR_BTN_SIZE   = 26
+    local TOPBAR_BTN_GAP    = 6
+    local TOPBAR_BTN_MARGIN = 8
+    local ICON_SIZE         = 14
 
-local function iconBar(holder, w, h, color, rotation)
-    return corner(new("Frame", {
-        AnchorPoint = ANCHOR_CENTER,
-        Position = CENTER,
-        Size = UDim2.fromOffset(w, h),
-        Rotation = rotation or 0,
-        BackgroundColor3 = color,
-        BorderSizePixel = 0,
-    }, holder), 1)
-end
-
-local function iconBox(holder, size, color, radius, thickness, pos, fill)
-    local f = new("Frame", {
-        AnchorPoint = ANCHOR_CENTER,
-        Position = pos or CENTER,
-        Size = UDim2.fromOffset(size, size),
-        BackgroundColor3 = fill,
-        BackgroundTransparency = fill and 0 or 1,
-        BorderSizePixel = 0,
-    }, holder)
-    corner(f, radius)
-    stroke(f, color, thickness)
-end
-
-local Icons = {}
-
-function Icons.minimize(h, c)
-    iconBar(h, ICON_SIZE, 1.5, c)
-end
-
-function Icons.maximize(h, c)
-    iconBox(h, ICON_SIZE, c, 3, 1.4)
-end
-
-function Icons.restore(h, c, bg)
-    iconBox(h, ICON_SIZE - 4, c, 2, 1.3, UDim2.new(0.5, 2, 0.5, -2), bg)
-    iconBox(h, ICON_SIZE - 4, c, 2, 1.3, UDim2.new(0.5, -2, 0.5, 2), bg)
-end
-
-function Icons.close(h, c)
-    iconBar(h, ICON_SIZE + 2, 1.5, c, 45)
-    iconBar(h, ICON_SIZE + 2, 1.5, c, -45)
-end
-
-function Icons.resize(h, c)
-    iconBox(h, ICON_SIZE, c, 3, 1.4)
-    iconBar(h, ICON_SIZE * 0.95, 1.5, c, -45)
-end
-
-function Icons.reset(h, c)
-    local Ring = new("Frame", {
-        AnchorPoint = ANCHOR_CENTER,
-        Position = CENTER,
-        Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
-        BackgroundTransparency = 1,
-    }, h)
-    corner(Ring, 100)
-    new("UIGradient", {
-        Rotation = 45,
-        Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0.00, 1),
-            NumberSequenceKeypoint.new(0.22, 1),
-            NumberSequenceKeypoint.new(0.23, 0),
-            NumberSequenceKeypoint.new(1.00, 0),
-        }),
-    }, stroke(Ring, c, 1.5))
-
-    for _, r in ipairs({
-        { UDim2.fromOffset(0, 0),   UDim2.fromOffset(1.5, 5) },
-        { UDim2.fromOffset(0, 3.5), UDim2.fromOffset(5, 1.5) },
-    }) do
-        corner(new("Frame", {
-            Position = r[1], Size = r[2],
-            BackgroundColor3 = c, BorderSizePixel = 0,
-        }, h), 1)
-    end
-end
-
--- Icons drawn from SVG data (viewBox 48x48, stroke 4, round caps and joins)
-local function svgStroke(h, pts, color, closed)
-    local unit  = h.Size.X.Offset / 48
-    local thick = 4 * unit
-    local n = #pts
-    for i = 1, closed and n or n - 1 do
-        local a, b = pts[i] * unit, pts[i % n + 1] * unit
-        local d, mid = b - a, (a + b) / 2
-        corner(new("Frame", {
+    local function iconBar(holder, w, h, color, rotation)
+        return corner(new("Frame", {
             AnchorPoint = ANCHOR_CENTER,
-            Position = UDim2.fromOffset(mid.X, mid.Y),
-            Size = UDim2.fromOffset(d.Magnitude + thick, thick),
-            Rotation = math.deg(math.atan2(d.Y, d.X)),
+            Position = CENTER,
+            Size = UDim2.fromOffset(w, h),
+            Rotation = rotation or 0,
             BackgroundColor3 = color,
             BorderSizePixel = 0,
-        }, h), thick / 2)
+        }, holder), 1)
     end
+
+    local function iconBox(holder, size, color, radius, thickness, pos, fill)
+        local f = new("Frame", {
+            AnchorPoint = ANCHOR_CENTER,
+            Position = pos or CENTER,
+            Size = UDim2.fromOffset(size, size),
+            BackgroundColor3 = fill,
+            BackgroundTransparency = fill and 0 or 1,
+            BorderSizePixel = 0,
+        }, holder)
+        corner(f, radius)
+        stroke(f, color, thickness)
+    end
+
+    local Icons = {}
+
+    function Icons.minimize(h, c)
+        iconBar(h, ICON_SIZE, 1.5, c)
+    end
+
+    function Icons.maximize(h, c)
+        iconBox(h, ICON_SIZE, c, 3, 1.4)
+    end
+
+    function Icons.restore(h, c, bg)
+        iconBox(h, ICON_SIZE - 4, c, 2, 1.3, UDim2.new(0.5, 2, 0.5, -2), bg)
+        iconBox(h, ICON_SIZE - 4, c, 2, 1.3, UDim2.new(0.5, -2, 0.5, 2), bg)
+    end
+
+    function Icons.close(h, c)
+        iconBar(h, ICON_SIZE + 2, 1.5, c, 45)
+        iconBar(h, ICON_SIZE + 2, 1.5, c, -45)
+    end
+
+    function Icons.resize(h, c)
+        iconBox(h, ICON_SIZE, c, 3, 1.4)
+        iconBar(h, ICON_SIZE * 0.95, 1.5, c, -45)
+    end
+
+    function Icons.reset(h, c)
+        local Ring = new("Frame", {
+            AnchorPoint = ANCHOR_CENTER,
+            Position = CENTER,
+            Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
+            BackgroundTransparency = 1,
+        }, h)
+        corner(Ring, 100)
+        new("UIGradient", {
+            Rotation = 45,
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0.00, 1),
+                NumberSequenceKeypoint.new(0.22, 1),
+                NumberSequenceKeypoint.new(0.23, 0),
+                NumberSequenceKeypoint.new(1.00, 0),
+            }),
+        }, stroke(Ring, c, 1.5))
+
+        for _, r in ipairs({
+            { UDim2.fromOffset(0, 0),   UDim2.fromOffset(1.5, 5) },
+            { UDim2.fromOffset(0, 3.5), UDim2.fromOffset(5, 1.5) },
+        }) do
+            corner(new("Frame", {
+                Position = r[1], Size = r[2],
+                BackgroundColor3 = c, BorderSizePixel = 0,
+            }, h), 1)
+        end
+    end
+
+    -- Icons drawn from SVG data (viewBox 48x48, stroke 4, round caps and joins)
+    local function svgStroke(h, pts, color, closed)
+        local unit  = h.Size.X.Offset / 48
+        local thick = 4 * unit
+        local n = #pts
+        for i = 1, closed and n or n - 1 do
+            local a, b = pts[i] * unit, pts[i % n + 1] * unit
+            local d, mid = b - a, (a + b) / 2
+            corner(new("Frame", {
+                AnchorPoint = ANCHOR_CENTER,
+                Position = UDim2.fromOffset(mid.X, mid.Y),
+                Size = UDim2.fromOffset(d.Magnitude + thick, thick),
+                Rotation = math.deg(math.atan2(d.Y, d.X)),
+                BackgroundColor3 = color,
+                BorderSizePixel = 0,
+            }, h), thick / 2)
+        end
+    end
+
+    function Icons.delete(h, c)
+        local V = Vector2.new
+        svgStroke(h, { V(8, 8), V(40, 40) }, c)
+        svgStroke(h, { V(8, 40), V(40, 8) }, c)
+    end
+
+    function Icons.play(h, c)
+        local V = Vector2.new
+        svgStroke(h, {
+            V(15, 24), V(15, 11.876), V(25.5, 17.938),
+            V(36, 24), V(25.5, 30.062), V(15, 36.124),
+        }, c, true)
+    end
+
+    function drawIcon(holder, kind, color, bgColor)
+        holder:ClearAllChildren()
+        Icons[kind](holder, color, bgColor)
+    end
+
+    local function createTopbarButton(kind, order, iconColor)
+        iconColor = iconColor or Theme.Text
+        local xOffset = -(TOPBAR_BTN_MARGIN + TOPBAR_BTN_SIZE * order + TOPBAR_BTN_GAP * (order - 1))
+
+        local Btn = new("TextButton", {
+            Size = UDim2.fromOffset(TOPBAR_BTN_SIZE, TOPBAR_BTN_SIZE),
+            Position = UDim2.new(1, xOffset, 0.5, -TOPBAR_BTN_SIZE / 2),
+            BackgroundColor3 = Theme.PanelAlt,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 2,
+        }, TopBar)
+        corner(Btn, 6)
+
+        local IconHolder = new("Frame", {
+            Name = "Icon",
+            AnchorPoint = ANCHOR_CENTER,
+            Position = CENTER,
+            Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
+            BackgroundTransparency = 1,
+            ZIndex = 3,
+        }, Btn)
+
+        drawIcon(IconHolder, kind, iconColor, Theme.PanelAlt)
+        return Btn, IconHolder
+    end
+
+    TopBtn.Close                  = createTopbarButton("close", 1, Theme.Danger)
+    TopBtn.Maximize, MaximizeIcon = createTopbarButton("maximize", 2)
+    TopBtn.Minimize               = createTopbarButton("minimize", 3)
+    TopBtn.Resize, ResizeIcon     = createTopbarButton("resize", 4)
+    TopBtn.Reset                  = createTopbarButton("reset", 5)
 end
-
-function Icons.delete(h, c)
-    local V = Vector2.new
-    svgStroke(h, { V(8, 8), V(40, 40) }, c)
-    svgStroke(h, { V(8, 40), V(40, 8) }, c)
-end
-
-function Icons.play(h, c)
-    local V = Vector2.new
-    svgStroke(h, {
-        V(15, 24), V(15, 11.876), V(25.5, 17.938),
-        V(36, 24), V(25.5, 30.062), V(15, 36.124),
-    }, c, true)
-end
-
-local function drawIcon(holder, kind, color, bgColor)
-    holder:ClearAllChildren()
-    Icons[kind](holder, color, bgColor)
-end
-
-local function createTopbarButton(kind, order, iconColor)
-    iconColor = iconColor or Theme.Text
-    local xOffset = -(TOPBAR_BTN_MARGIN + TOPBAR_BTN_SIZE * order + TOPBAR_BTN_GAP * (order - 1))
-
-    local Btn = new("TextButton", {
-        Size = UDim2.fromOffset(TOPBAR_BTN_SIZE, TOPBAR_BTN_SIZE),
-        Position = UDim2.new(1, xOffset, 0.5, -TOPBAR_BTN_SIZE / 2),
-        BackgroundColor3 = Theme.PanelAlt,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 2,
-    }, TopBar)
-    corner(Btn, 6)
-
-    local IconHolder = new("Frame", {
-        Name = "Icon",
-        AnchorPoint = ANCHOR_CENTER,
-        Position = CENTER,
-        Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
-        BackgroundTransparency = 1,
-        ZIndex = 3,
-    }, Btn)
-
-    drawIcon(IconHolder, kind, iconColor, Theme.PanelAlt)
-    return Btn, IconHolder
-end
-
-local CloseBtn                     = createTopbarButton("close", 1, Theme.Danger)
-local MaximizeBtn, MaximizeIcon    = createTopbarButton("maximize", 2)
-local MinimizeBtn                  = createTopbarButton("minimize", 3)
-local ResizeBtn, ResizeIcon        = createTopbarButton("resize", 4)
-local ResetBtn                     = createTopbarButton("reset", 5)
 
 --// ---- Body ----
 local Body = new("Frame", {
     Name = "Body",
-    Size = UDim2.new(1, 0, 1, -TOPBAR_HEIGHT),
-    Position = UDim2.fromOffset(0, TOPBAR_HEIGHT),
+    Size = UDim2.new(1, 0, 1, -Cfg.TOPBAR_HEIGHT),
+    Position = UDim2.fromOffset(0, Cfg.TOPBAR_HEIGHT),
     BackgroundTransparency = 1,
 }, MainUI)
 
-<<<<<<< HEAD
-=======
 -- ScaleHost holds the tab column and the function panel. UI Scale (Settings) puts a UIScale on it and divides its size by the same
 -- factor, so the panels still fill the whole body while their content (text, rows, buttons) gets smaller or bigger.
 -- Its size and position use Scale values only, so the result does not depend on how UIScale treats offsets of its own parent.
@@ -773,18 +766,13 @@ function Core.onUIScale(fn)
 end
 Core.setUIScale(Saved.uiScale, true)
 
->>>>>>> f403d6d (UPD Script)
 local FunctionPanel = new("Frame", {
     Name = "FunctionPanel",
-    Position = UDim2.fromOffset(MARGIN_EDGE + TAB_PANEL_WIDTH + MARGIN_GAP, MARGIN_EDGE),
-    Size = UDim2.new(1, -(MARGIN_EDGE + TAB_PANEL_WIDTH + MARGIN_GAP + MARGIN_EDGE), 1, -(MARGIN_EDGE * 2)),
+    Position = UDim2.fromOffset(Cfg.MARGIN_EDGE + Cfg.TAB_PANEL_WIDTH + Cfg.MARGIN_GAP, Cfg.MARGIN_EDGE),
+    Size = UDim2.new(1, -(Cfg.MARGIN_EDGE + Cfg.TAB_PANEL_WIDTH + Cfg.MARGIN_GAP + Cfg.MARGIN_EDGE), 1, -(Cfg.MARGIN_EDGE * 2)),
     BackgroundColor3 = Theme.PanelAlt,
     BorderSizePixel = 0,
-<<<<<<< HEAD
-}, Body)
-=======
 }, Core.host)
->>>>>>> f403d6d (UPD Script)
 corner(FunctionPanel, 8)
 stroke(FunctionPanel)
 
@@ -804,18 +792,14 @@ padding(FunctionScroll, 4, 4)
 
 local TabColumn = new("Frame", {
     Name = "TabColumn",
-    Position = UDim2.fromOffset(MARGIN_EDGE, MARGIN_EDGE),
-    Size = UDim2.new(0, TAB_PANEL_WIDTH, 1, -(MARGIN_EDGE * 2)),
+    Position = UDim2.fromOffset(Cfg.MARGIN_EDGE, Cfg.MARGIN_EDGE),
+    Size = UDim2.new(0, Cfg.TAB_PANEL_WIDTH, 1, -(Cfg.MARGIN_EDGE * 2)),
     BackgroundTransparency = 1,
-<<<<<<< HEAD
-}, Body)
-=======
 }, Core.host)
->>>>>>> f403d6d (UPD Script)
 
 local TabPanel = new("Frame", {
     Name = "TabPanel",
-    Size = UDim2.new(1, 0, 1, -(HIGHLIGHT_HEIGHT + HIGHLIGHT_GAP)),
+    Size = UDim2.new(1, 0, 1, -(Cfg.HIGHLIGHT_HEIGHT + Cfg.HIGHLIGHT_GAP)),
     BackgroundColor3 = Theme.PanelAlt,
     BorderSizePixel = 0,
 }, TabColumn)
@@ -839,7 +823,7 @@ local HighlightTab = new("Frame", {
     Name = "HighlightTab",
     AnchorPoint = Vector2.new(0, 1),
     Position = UDim2.fromScale(0, 1),
-    Size = UDim2.new(1, 0, 0, HIGHLIGHT_HEIGHT),
+    Size = UDim2.new(1, 0, 0, Cfg.HIGHLIGHT_HEIGHT),
     BackgroundColor3 = Theme.Header,
     BorderSizePixel = 0,
 }, TabColumn)
@@ -861,20 +845,13 @@ do
         }),
     }, HighlightStroke)
     -- Endless spinning border: paused while the UI is hidden so no property is updated every frame for nothing
-    local spin = TweenService:Create(Gradient, TweenInfo.new(2, EASE_LINEAR, DIR_IN, -1), { Rotation = 360 })
-<<<<<<< HEAD
-    spin:Play()
-    MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
-        if MainUI.Visible then spin:Play() else spin:Pause() end
-    end)
-=======
+    local spin = TweenService:Create(Gradient, TweenInfo.new(2, Enum.EasingStyle.Linear, DIR_IN, -1), { Rotation = 360 })
     local function syncSpin()
         if MainUI.Visible and not Core.motion.reduced then spin:Play() else spin:Pause() end
     end
     syncSpin()
     MainUI:GetPropertyChangedSignal("Visible"):Connect(syncSpin)
     Core.motion.sync = syncSpin
->>>>>>> f403d6d (UPD Script)
 
     local Avatar = new("ImageLabel", {
         Size = UDim2.fromOffset(32, 32),
@@ -1150,7 +1127,7 @@ local repaintContent = function() end
 local function openUI()
     isOpen = true
     MainUI.Visible = true
-    fadeMainUI(POPUP_TIME, 0, DIR_OUT)
+    fadeMainUI(Cfg.POPUP_TIME, 0, DIR_OUT)
     repaintContent() -- the tab was last drawn while the UI was hidden: make sure it is painted when the UI appears
 end
 
@@ -1161,7 +1138,7 @@ local function closeUI()
     if DeleteDialog.Box.Visible then DeleteDialog.hide() end
     if ScriptDialog and ScriptDialog.Box.Visible then ScriptDialog.hide() end
     if ThemeAPI and ThemeAPI.isListOpen() then ThemeAPI.hideList() end -- close the Theme list + release the UI lock
-    fadeMainUI(CLOSE_TIME, 1, DIR_IN).Completed:Connect(function(state)
+    fadeMainUI(Cfg.CLOSE_TIME, 1, DIR_IN).Completed:Connect(function(state)
         if state == Enum.PlaybackState.Completed and not isOpen then
             MainUI.Visible = false
         end
@@ -1172,8 +1149,6 @@ makeDraggable(ToggleButton, ToggleButton, saveSettings, function()
     if isOpen then closeUI() else openUI() end
 end, 5)
 
-<<<<<<< HEAD
-=======
 --// ---- Menu hotkey (Settings > Menu Hotkey) ----
 -- Ignored while typing in a TextBox, while a dialog locks the UI and while Settings is capturing a new key.
 track(UserInputService.InputBegan:Connect(function(input, processed)
@@ -1184,9 +1159,8 @@ track(UserInputService.InputBegan:Connect(function(input, processed)
     if isOpen then closeUI() else openUI() end
 end))
 
->>>>>>> f403d6d (UPD Script)
 --// ---- Minimize ----
-MinimizeBtn.MouseButton1Click:Connect(function()
+TopBtn.Minimize.MouseButton1Click:Connect(function()
     if uiLocked then return end
     if isOpen then closeUI() end
 end)
@@ -1211,13 +1185,13 @@ local function toggleMaximize()
     end
 end
 
-MaximizeBtn.MouseButton1Click:Connect(function()
+TopBtn.Maximize.MouseButton1Click:Connect(function()
     if uiLocked then return end
     toggleMaximize()
 end)
 
 --// ---- Close ----
-CloseBtn.MouseButton1Click:Connect(function()
+TopBtn.Close.MouseButton1Click:Connect(function()
     if uiLocked then return end
     CloseDialog.show()
 end)
@@ -1225,11 +1199,7 @@ end)
 local function unloadUI()
     if Saved.autoExecute == true then
         Saved.autoExecute = false
-<<<<<<< HEAD
-        saveSettings()
-=======
         Core.writeSettings() -- right now: once the GUI is destroyed the debounced save would be skipped
->>>>>>> f403d6d (UPD Script)
     end
     ScreenGui:Destroy()
 end
@@ -1242,7 +1212,7 @@ local function resetLayout()
         drawIcon(MaximizeIcon, "maximize", Theme.Text, Theme.PanelAlt)
     end
 
-    curW, curH = UI_W, UI_H
+    curW, curH = Cfg.UI_W, Cfg.UI_H
     uiPosition = CENTER
 
     local props = { Position = uiPosition }
@@ -1253,7 +1223,7 @@ local function resetLayout()
     saveSettings()
 end
 
-ResetBtn.MouseButton1Click:Connect(function()
+TopBtn.Reset.MouseButton1Click:Connect(function()
     if uiLocked then return end
     ResetDialog.show()
 end)
@@ -1263,340 +1233,343 @@ ResetDialog.Yes.MouseButton1Click:Connect(function()
 end)
 
 --// ================= RESIZE MODE =================
-local RESIZE_HANDLE_SIZE = 18
-local resizeMode = false
-local resizeDragCorner
-local resizeFixedX, resizeFixedY = 0, 0
+local resizeMode = false -- read later by refreshStateColors
+do
+    local RESIZE_HANDLE_SIZE = 18
+    local resizeDragCorner
+    local resizeFixedX, resizeFixedY = 0, 0
 
-local CORNER_ANCHORS = {
-    TL = Vector2.new(0, 0),
-    TR = Vector2.new(1, 0),
-    BL = Vector2.new(0, 1),
-    BR = Vector2.new(1, 1),
-}
-local ResizeHandles = {}
+    local CORNER_ANCHORS = {
+        TL = Vector2.new(0, 0),
+        TR = Vector2.new(1, 0),
+        BL = Vector2.new(0, 1),
+        BR = Vector2.new(1, 1),
+    }
+    local ResizeHandles = {}
 
-local function updateResizeHandlePositions()
-    local pos, size = MainUI.AbsolutePosition, MainUI.AbsoluteSize
-    for cornerName, handle in pairs(ResizeHandles) do
-        local a = CORNER_ANCHORS[cornerName]
-        handle.Position = UDim2.fromOffset(pos.X + size.X * a.X, pos.Y + size.Y * a.Y)
-    end
-end
-
-for cornerName, anchor in pairs(CORNER_ANCHORS) do
-    local Handle = new("Frame", {
-        Name = "ResizeHandle",
-        AnchorPoint = ANCHOR_CENTER,
-        Size = UDim2.fromOffset(RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE),
-        BackgroundColor3 = Theme.AccentPink,
-        BorderSizePixel = 0,
-        Visible = false,
-        Active = true,
-        ZIndex = 100,
-    }, ScreenGui)
-    corner(Handle, 6)
-    stroke(Handle, Theme.Text, 1.5)
-    ResizeHandles[cornerName] = Handle
-
-    local Grip = new("TextButton", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 101,
-    }, Handle)
-
-    Grip.InputBegan:Connect(function(input)
-        if not resizeMode or not isPress(input) then return end
-
+    local function updateResizeHandlePositions()
         local pos, size = MainUI.AbsolutePosition, MainUI.AbsoluteSize
-        resizeFixedX = pos.X + size.X * (1 - anchor.X)
-        resizeFixedY = pos.Y + size.Y * (1 - anchor.Y)
-        resizeDragCorner = cornerName
+        for cornerName, handle in pairs(ResizeHandles) do
+            local a = CORNER_ANCHORS[cornerName]
+            handle.Position = UDim2.fromOffset(pos.X + size.X * a.X, pos.Y + size.Y * a.Y)
+        end
+    end
 
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End and resizeDragCorner == cornerName then
-                resizeDragCorner = nil
-                commitUIState()
-            end
+    for cornerName, anchor in pairs(CORNER_ANCHORS) do
+        local Handle = new("Frame", {
+            Name = "ResizeHandle",
+            AnchorPoint = ANCHOR_CENTER,
+            Size = UDim2.fromOffset(RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE),
+            BackgroundColor3 = Theme.AccentPink,
+            BorderSizePixel = 0,
+            Visible = false,
+            Active = true,
+            ZIndex = 100,
+        }, ScreenGui)
+        corner(Handle, 6)
+        stroke(Handle, Theme.Text, 1.5)
+        ResizeHandles[cornerName] = Handle
+
+        local Grip = new("TextButton", {
+            Size = UDim2.fromScale(1, 1),
+            BackgroundTransparency = 1,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 101,
+        }, Handle)
+
+        Grip.InputBegan:Connect(function(input)
+            if not resizeMode or not isPress(input) then return end
+
+            local pos, size = MainUI.AbsolutePosition, MainUI.AbsoluteSize
+            resizeFixedX = pos.X + size.X * (1 - anchor.X)
+            resizeFixedY = pos.Y + size.Y * (1 - anchor.Y)
+            resizeDragCorner = cornerName
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End and resizeDragCorner == cornerName then
+                    resizeDragCorner = nil
+                    commitUIState()
+                end
+            end)
         end)
+    end
+
+    local function onMainUIRectChanged()
+        if resizeMode then updateResizeHandlePositions() end
+    end
+    MainUI:GetPropertyChangedSignal("AbsolutePosition"):Connect(onMainUIRectChanged)
+    MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(onMainUIRectChanged)
+
+    track(UserInputService.InputChanged:Connect(function(input)
+        if not resizeMode or not resizeDragCorner or not isMove(input) then return end
+
+        local mouseX, mouseY = input.Position.X, input.Position.Y
+        local newW = math.max(Cfg.MIN_UI_W, math.abs(mouseX - resizeFixedX))
+        local newH = math.max(Cfg.MIN_UI_H, math.abs(mouseY - resizeFixedY))
+
+        local movingX = resizeFixedX + (mouseX >= resizeFixedX and 1 or -1) * newW
+        local movingY = resizeFixedY + (mouseY >= resizeFixedY and 1 or -1) * newH
+        local viewport = getViewport()
+
+        MainUI.Size = UDim2.fromOffset(newW, newH)
+        MainUI.Position = UDim2.new(
+            0.5, (resizeFixedX + movingX) / 2 - viewport.X * 0.5,
+            0.5, (resizeFixedY + movingY) / 2 - viewport.Y * 0.5
+        )
+        updateResizeHandlePositions()
+    end))
+
+    local function setResizeMode(enabled)
+        resizeMode = enabled
+        uiLocked = enabled
+        resizeDragCorner = nil
+        drawIcon(ResizeIcon, "resize", enabled and Theme.AccentPink or Theme.Text, Theme.PanelAlt)
+        tween(MainUIStroke, 0.2, {
+            Color = enabled and Theme.AccentPink or Theme.Border,
+            Thickness = enabled and 2 or 1,
+        })
+        for _, h in pairs(ResizeHandles) do h.Visible = enabled end
+        if enabled then updateResizeHandlePositions() end
+    end
+
+    TopBtn.Resize.MouseButton1Click:Connect(function()
+        setResizeMode(not resizeMode)
     end)
 end
-
-local function onMainUIRectChanged()
-    if resizeMode then updateResizeHandlePositions() end
-end
-MainUI:GetPropertyChangedSignal("AbsolutePosition"):Connect(onMainUIRectChanged)
-MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(onMainUIRectChanged)
-
-track(UserInputService.InputChanged:Connect(function(input)
-    if not resizeMode or not resizeDragCorner or not isMove(input) then return end
-
-    local mouseX, mouseY = input.Position.X, input.Position.Y
-    local newW = math.max(MIN_UI_W, math.abs(mouseX - resizeFixedX))
-    local newH = math.max(MIN_UI_H, math.abs(mouseY - resizeFixedY))
-
-    local movingX = resizeFixedX + (mouseX >= resizeFixedX and 1 or -1) * newW
-    local movingY = resizeFixedY + (mouseY >= resizeFixedY and 1 or -1) * newH
-    local viewport = getViewport()
-
-    MainUI.Size = UDim2.fromOffset(newW, newH)
-    MainUI.Position = UDim2.new(
-        0.5, (resizeFixedX + movingX) / 2 - viewport.X * 0.5,
-        0.5, (resizeFixedY + movingY) / 2 - viewport.Y * 0.5
-    )
-    updateResizeHandlePositions()
-end))
-
-local function setResizeMode(enabled)
-    resizeMode = enabled
-    uiLocked = enabled
-    resizeDragCorner = nil
-    drawIcon(ResizeIcon, "resize", enabled and Theme.AccentPink or Theme.Text, Theme.PanelAlt)
-    tween(MainUIStroke, 0.2, {
-        Color = enabled and Theme.AccentPink or Theme.Border,
-        Thickness = enabled and 2 or 1,
-    })
-    for _, h in pairs(ResizeHandles) do h.Visible = enabled end
-    if enabled then updateResizeHandlePositions() end
-end
-
-ResizeBtn.MouseButton1Click:Connect(function()
-    setResizeMode(not resizeMode)
-end)
 
 --// ================= TAB SYSTEM =================
-local TAB_HEIGHT          = 34
-local TAB_GAP             = 6
-local TAB_TEXT_PAD        = 14
-local TAB_TEXT_PAD_ACTIVE = 18
-local TAB_BAR_HEIGHT      = 20
-
-local CONTENT_EDGE     = 2
-local CONTENT_FADE_OUT = 0.12
-local CONTENT_FADE_IN  = 0.22
-local CONTENT_SLIDE    = 10
-
+-- These are read outside the do-block below (refreshStateColors, ctx, the public API), so they are declared before it.
+local CONTENT_EDGE = 2
 local TabData = {}
-local tabCount = 0
 local activeTab
-local switchToken = 0
-local ContentTweens = {}
-
--- The tab that is shown when the script loads for the first time (must match a CreateTab name below)
-local DEFAULT_TAB = "Status & Server"
-
-local TabPill = new("Frame", {
-    Name = "TabPill",
-    Size = UDim2.new(1, 0, 0, TAB_HEIGHT),
-    BackgroundColor3 = Color3.new(1, 1, 1),
-    BackgroundTransparency = 0,
-    BorderSizePixel = 0,
-    Visible = false,
-    ZIndex = 1,
-}, TabScroll)
-corner(TabPill, 6)
-
--- Highlight style of the tab list: purple -> pink background fading from left to right + an accent bar on the left
--- (different from Player Info: a bright purple border that runs around)
-new("UIGradient", {
-    Color = ColorSequence.new(Theme.AccentPurple, Theme.AccentPink),
-    Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0.00, 0.55),
-        NumberSequenceKeypoint.new(0.60, 0.85),
-        NumberSequenceKeypoint.new(1.00, 1.00),
-    }),
-}, TabPill)
-
-local PillBar = new("Frame", {
-    Name = "AccentBar",
-    AnchorPoint = Vector2.new(0, 0.5),
-    Position = UDim2.new(0, 6, 0.5, 0),
-    Size = UDim2.fromOffset(3, TAB_BAR_HEIGHT),
-    BackgroundColor3 = Theme.AccentPink,
-    BorderSizePixel = 0,
-}, TabPill)
-corner(PillBar, 2)
-local PillBarGlow = stroke(PillBar, Theme.AccentPink, 3)
-PillBarGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-PillBarGlow.Transparency = 0.75
-
-local function cancelContentTween(content)
-    local t = ContentTweens[content]
-    if t then
-        t:Cancel()
-        ContentTweens[content] = nil
-    end
-end
-
--- Some devices drop the cached render of a CanvasGroup when another overlay (a dropdown list, a collapsible section)
--- appears or disappears, and every function in the panel vanishes until the next touch. Changing GroupTransparency by an
--- invisible amount for a moment makes the engine redraw the group, exactly like that touch does.
+local selectTab, CreateTab
 do
-    local repaintToken = 0
-    repaintContent = function()
-        task.defer(function()
-            local data = activeTab and TabData[activeTab]
-            local content = data and data.content
-            if not content or not content.Parent or not content.Visible then return end
-            if content.GroupTransparency ~= 0 then return end -- a fade is running: it already repaints the group
-            repaintToken += 1
-            local token = repaintToken
-            content.GroupTransparency = 0.004
-            task.wait(0.06)
-            if token == repaintToken and content.GroupTransparency == 0.004 then
-                content.GroupTransparency = 0
-            end
-        end)
+    local TAB_HEIGHT          = 34
+    local TAB_GAP             = 6
+    local TAB_TEXT_PAD        = 14
+    local TAB_TEXT_PAD_ACTIVE = 18
+    local TAB_BAR_HEIGHT      = 20
+
+    local CONTENT_FADE_OUT = 0.12
+    local CONTENT_FADE_IN  = 0.22
+    local CONTENT_SLIDE    = 10
+
+    local tabCount = 0
+    local switchToken = 0
+    local ContentTweens = {}
+
+    local TabPill = new("Frame", {
+        Name = "TabPill",
+        Size = UDim2.new(1, 0, 0, TAB_HEIGHT),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 0,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 1,
+    }, TabScroll)
+    corner(TabPill, 6)
+
+    -- Highlight style of the tab list: purple -> pink background fading from left to right + an accent bar on the left
+    -- (different from Player Info: a bright purple border that runs around)
+    new("UIGradient", {
+        Color = ColorSequence.new(Theme.AccentPurple, Theme.AccentPink),
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0.00, 0.55),
+            NumberSequenceKeypoint.new(0.60, 0.85),
+            NumberSequenceKeypoint.new(1.00, 1.00),
+        }),
+    }, TabPill)
+
+    local PillBar = new("Frame", {
+        Name = "AccentBar",
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 6, 0.5, 0),
+        Size = UDim2.fromOffset(3, TAB_BAR_HEIGHT),
+        BackgroundColor3 = Theme.AccentPink,
+        BorderSizePixel = 0,
+    }, TabPill)
+    corner(PillBar, 2)
+    local PillBarGlow = stroke(PillBar, Theme.AccentPink, 3)
+    PillBarGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    PillBarGlow.Transparency = 0.75
+
+    local function cancelContentTween(content)
+        local t = ContentTweens[content]
+        if t then
+            t:Cancel()
+            ContentTweens[content] = nil
+        end
     end
-end
 
--- instant = true: no animation (used for the default tab on first load, so the UI opens with that tab fully shown)
-local function selectTab(name, instant)
-    local data = TabData[name]
-    if not data or activeTab == name then return end
-    local previous = activeTab
-    activeTab = name
-    switchToken += 1
-    local token = switchToken
+    -- Some devices drop the cached render of a CanvasGroup when another overlay (a dropdown list, a collapsible section)
+    -- appears or disappears, and every function in the panel vanishes until the next touch. Changing GroupTransparency by an
+    -- invisible amount for a moment makes the engine redraw the group, exactly like that touch does.
+    do
+        local repaintToken = 0
+        repaintContent = function()
+            task.defer(function()
+                local data = activeTab and TabData[activeTab]
+                local content = data and data.content
+                if not content or not content.Parent or not content.Visible then return end
+                if content.GroupTransparency ~= 0 then return end -- a fade is running: it already repaints the group
+                repaintToken += 1
+                local token = repaintToken
+                content.GroupTransparency = 0.004
+                task.wait(0.06)
+                if token == repaintToken and content.GroupTransparency == 0.004 then
+                    content.GroupTransparency = 0
+                end
+            end)
+        end
+    end
 
-    if instant then
+    -- instant = true: no animation (used for the default tab on first load, so the UI opens with that tab fully shown)
+    function selectTab(name, instant)
+        local data = TabData[name]
+        if not data or activeTab == name then return end
+        local previous = activeTab
+        activeTab = name
+        switchToken += 1
+        local token = switchToken
+
+        if instant then
+            for tabName, t in pairs(TabData) do
+                local selected = tabName == name
+                cancelContentTween(t.content)
+                t.btn.BackgroundTransparency = 1
+                t.btn.TextColor3 = selected and Theme.Sakura or Theme.SubText
+                t.pad.PaddingLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD)
+                t.content.Visible = selected
+                if selected then
+                    t.content.GroupTransparency = 0
+                    t.contentPad.PaddingTop = UDim.new(0, CONTENT_EDGE)
+                end
+            end
+            TabPill.Position = UDim2.fromOffset(0, data.index * (TAB_HEIGHT + TAB_GAP))
+            TabPill.Visible = true
+            return
+        end
+
         for tabName, t in pairs(TabData) do
             local selected = tabName == name
-            cancelContentTween(t.content)
-            t.btn.BackgroundTransparency = 1
-            t.btn.TextColor3 = selected and Theme.Sakura or Theme.SubText
-            t.pad.PaddingLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD)
-            t.content.Visible = selected
-            if selected then
-                t.content.GroupTransparency = 0
-                t.contentPad.PaddingTop = UDim.new(0, CONTENT_EDGE)
+            tween(t.btn, 0.2, {
+                BackgroundTransparency = 1,
+                TextColor3 = selected and Theme.Sakura or Theme.SubText,
+            })
+            tween(t.pad, 0.25, {
+                PaddingLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD),
+            }, EASE_QUINT, DIR_OUT)
+        end
+
+        local target = UDim2.fromOffset(0, TabData[name].index * (TAB_HEIGHT + TAB_GAP))
+        if TabPill.Visible then
+            tween(TabPill, 0.25, { Position = target }, EASE_QUINT, DIR_OUT)
+            tween(PillBar, 0.1, { Size = UDim2.fromOffset(3, 8) }).Completed:Once(function()
+                tween(PillBar, 0.25, { Size = UDim2.fromOffset(3, TAB_BAR_HEIGHT) }, EASE_BACK, DIR_OUT)
+            end)
+        else
+            TabPill.Position = target
+            TabPill.Visible = true
+        end
+
+        for tabName, t in pairs(TabData) do
+            if tabName ~= name and tabName ~= previous then
+                cancelContentTween(t.content)
+                t.content.Visible = false
             end
         end
-        TabPill.Position = UDim2.fromOffset(0, data.index * (TAB_HEIGHT + TAB_GAP))
-        TabPill.Visible = true
-        return
-    end
 
-    for tabName, t in pairs(TabData) do
-        local selected = tabName == name
-        tween(t.btn, 0.2, {
-            BackgroundTransparency = 1,
-            TextColor3 = selected and Theme.Sakura or Theme.SubText,
-        })
-        tween(t.pad, 0.25, {
-            PaddingLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD),
-        }, EASE_QUINT, DIR_OUT)
-    end
+        local newContent, pad = TabData[name].content, TabData[name].contentPad
 
-    local target = UDim2.fromOffset(0, TabData[name].index * (TAB_HEIGHT + TAB_GAP))
-    if TabPill.Visible then
-        tween(TabPill, 0.25, { Position = target }, EASE_QUINT, DIR_OUT)
-        tween(PillBar, 0.1, { Size = UDim2.fromOffset(3, 8) }).Completed:Once(function()
-            tween(PillBar, 0.25, { Size = UDim2.fromOffset(3, TAB_BAR_HEIGHT) }, EASE_BACK, DIR_OUT)
-        end)
-    else
-        TabPill.Position = target
-        TabPill.Visible = true
-    end
+        local function fadeIn()
+            if token ~= switchToken then return end
+            cancelContentTween(newContent)
 
-    for tabName, t in pairs(TabData) do
-        if tabName ~= name and tabName ~= previous then
-            cancelContentTween(t.content)
-            t.content.Visible = false
-        end
-    end
+            if not newContent.Visible then
+                newContent.GroupTransparency = 1
+                pad.PaddingTop = UDim.new(0, CONTENT_EDGE + CONTENT_SLIDE)
+                newContent.Visible = true
+            end
 
-    local newContent, pad = TabData[name].content, TabData[name].contentPad
-
-    local function fadeIn()
-        if token ~= switchToken then return end
-        cancelContentTween(newContent)
-
-        if not newContent.Visible then
-            newContent.GroupTransparency = 1
-            pad.PaddingTop = UDim.new(0, CONTENT_EDGE + CONTENT_SLIDE)
-            newContent.Visible = true
+            ContentTweens[newContent] = tween(newContent, CONTENT_FADE_IN, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
+            tween(pad, CONTENT_FADE_IN, { PaddingTop = UDim.new(0, CONTENT_EDGE) }, EASE_QUINT, DIR_OUT)
         end
 
-        ContentTweens[newContent] = tween(newContent, CONTENT_FADE_IN, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
-        tween(pad, CONTENT_FADE_IN, { PaddingTop = UDim.new(0, CONTENT_EDGE) }, EASE_QUINT, DIR_OUT)
-    end
-
-    local oldContent = previous and TabData[previous].content
-    if oldContent and oldContent.Visible then
-        cancelContentTween(oldContent)
-        local fade = tween(oldContent, CONTENT_FADE_OUT, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
-        ContentTweens[oldContent] = fade
-        fade.Completed:Connect(function(state)
-            if state ~= Enum.PlaybackState.Completed then return end
-            oldContent.Visible = false
-            ContentTweens[oldContent] = nil
+        local oldContent = previous and TabData[previous].content
+        if oldContent and oldContent.Visible then
+            cancelContentTween(oldContent)
+            local fade = tween(oldContent, CONTENT_FADE_OUT, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
+            ContentTweens[oldContent] = fade
+            fade.Completed:Connect(function(state)
+                if state ~= Enum.PlaybackState.Completed then return end
+                oldContent.Visible = false
+                ContentTweens[oldContent] = nil
+                fadeIn()
+            end)
+        else
             fadeIn()
-        end)
-    else
-        fadeIn()
+        end
     end
-end
 
-local function CreateTab(name)
-    tabCount += 1
-    local index = tabCount - 1
-    TabScroll.CanvasSize = UDim2.fromOffset(0, tabCount * (TAB_HEIGHT + TAB_GAP) - TAB_GAP + 6)
+    function CreateTab(name)
+        tabCount += 1
+        local index = tabCount - 1
+        TabScroll.CanvasSize = UDim2.fromOffset(0, tabCount * (TAB_HEIGHT + TAB_GAP) - TAB_GAP + 6)
 
-    local Btn = new("TextButton", {
-        Name = "Tab_" .. name,
-        AnchorPoint = ANCHOR_CENTER,
-        Position = UDim2.new(0.5, 0, 0, index * (TAB_HEIGHT + TAB_GAP) + TAB_HEIGHT / 2),
-        Size = UDim2.new(1, 0, 0, TAB_HEIGHT),
-        BackgroundColor3 = Theme.Header,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Text = name,
-        Font = Enum.Font.GothamBold,
-        TextSize = 13,
-        TextColor3 = Theme.SubText,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        AutoButtonColor = false,
-        TextWrapped = true,
-        ZIndex = 2,
-    }, TabScroll)
-    corner(Btn, 6)
-    local Pad = padding(Btn, TAB_TEXT_PAD, 8)
-    pressScale(Btn, 0.97)
+        local Btn = new("TextButton", {
+            Name = "Tab_" .. name,
+            AnchorPoint = ANCHOR_CENTER,
+            Position = UDim2.new(0.5, 0, 0, index * (TAB_HEIGHT + TAB_GAP) + TAB_HEIGHT / 2),
+            Size = UDim2.new(1, 0, 0, TAB_HEIGHT),
+            BackgroundColor3 = Theme.Header,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = name,
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextColor3 = Theme.SubText,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            AutoButtonColor = false,
+            TextWrapped = true,
+            ZIndex = 2,
+        }, TabScroll)
+        corner(Btn, 6)
+        local Pad = padding(Btn, TAB_TEXT_PAD, 8)
+        pressScale(Btn, 0.97)
 
-    Btn.MouseEnter:Connect(function()
-        if uiLocked or activeTab == name then return end
-        tween(Btn, 0.15, { BackgroundTransparency = 0.5, TextColor3 = Theme.Text })
-        tween(Pad, 0.15, { PaddingLeft = UDim.new(0, TAB_TEXT_PAD + 2) })
-    end)
-    Btn.MouseLeave:Connect(function()
-        if activeTab == name then return end
-        tween(Btn, 0.15, { BackgroundTransparency = 1, TextColor3 = Theme.SubText })
-        tween(Pad, 0.15, { PaddingLeft = UDim.new(0, TAB_TEXT_PAD) })
-    end)
-    Btn.MouseButton1Click:Connect(function()
-        if uiLocked then return end
-        selectTab(name)
-    end)
+        Btn.MouseEnter:Connect(function()
+            if uiLocked or activeTab == name then return end
+            tween(Btn, 0.15, { BackgroundTransparency = 0.5, TextColor3 = Theme.Text })
+            tween(Pad, 0.15, { PaddingLeft = UDim.new(0, TAB_TEXT_PAD + 2) })
+        end)
+        Btn.MouseLeave:Connect(function()
+            if activeTab == name then return end
+            tween(Btn, 0.15, { BackgroundTransparency = 1, TextColor3 = Theme.SubText })
+            tween(Pad, 0.15, { PaddingLeft = UDim.new(0, TAB_TEXT_PAD) })
+        end)
+        Btn.MouseButton1Click:Connect(function()
+            if uiLocked then return end
+            selectTab(name)
+        end)
 
-    local Content = new("CanvasGroup", {
-        Name = "TabContent_" .. name,
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        GroupTransparency = 1,
-        Visible = false,
-    }, FunctionScroll)
-    local ContentPad = padding(Content, CONTENT_EDGE, CONTENT_EDGE, CONTENT_EDGE, CONTENT_EDGE)
-    list(Content, 10)
+        local Content = new("CanvasGroup", {
+            Name = "TabContent_" .. name,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            GroupTransparency = 1,
+            Visible = false,
+        }, FunctionScroll)
+        local ContentPad = padding(Content, CONTENT_EDGE, CONTENT_EDGE, CONTENT_EDGE, CONTENT_EDGE)
+        list(Content, 10)
 
-    TabData[name] = { index = index, btn = Btn, pad = Pad, content = Content, contentPad = ContentPad }
+        TabData[name] = { index = index, btn = Btn, pad = Pad, content = Content, contentPad = ContentPad }
 
-    -- The default tab is selected explicitly once every tab exists (see DEFAULT_TAB), not by creation order
-    return Content
+        -- The default tab is selected explicitly once every tab exists (see DEFAULT_TAB), not by creation order
+        return Content
+    end
 end
 
 --// ================= THEME: REFRESH STATE COLORS =================
@@ -1708,10 +1681,7 @@ local function CreateToggleOption(parent, title, height, opts)
         if not silent then
             for _, fn in ipairs(listeners) do task.spawn(fn, state) end
         end
-<<<<<<< HEAD
-=======
         if Core.session then Core.session.touch() end -- Restore last session: remember the new state
->>>>>>> f403d6d (UPD Script)
     end
 
     if opts and opts.initial then
@@ -1738,15 +1708,12 @@ local function CreateToggleOption(parent, title, height, opts)
             }
         end,
     }
-<<<<<<< HEAD
-=======
 
     -- Restore last session: the switch registers itself under "<tab>/<title>" (opts.key overrides it, opts.session = false opts out
     -- for switches that already keep their own state, like Auto Execute). Modules can attach a value (a text box) with Session.attach.
     if Core.session and not (opts and opts.session == false) then
         Core.session.add((opts and opts.key) or Core.session.keyFor(parent, title), function() return state end, function(on) setState(on) end, Switch)
     end
->>>>>>> f403d6d (UPD Script)
     return Switch, setState, api
 end
 
@@ -2105,8 +2072,6 @@ do
     end
 end
 
-<<<<<<< HEAD
-=======
 --// ================= TOAST (ctx.Toast) =================
 -- Short notification at the bottom of the screen, optionally with an action button. Shared by every module (ctx.Toast).
 --   Toast(message, kind, opts)   kind: "info" (default) | "success" | "warn" | "error"
@@ -2322,7 +2287,6 @@ do
     end
 end
 
->>>>>>> f403d6d (UPD Script)
 --// ================= REMOTE MODULE LOADER =================
 -- The modules (Status_Server.lua, Local.lua, Script.lua, FPS.lua, Settings.lua) are downloaded from GitHub (raw)
 -- and run with loadstring; they are no longer read from the executor's workspace folder.
@@ -2386,8 +2350,6 @@ do
         error(reason, 0)
     end
 
-<<<<<<< HEAD
-=======
     Loader.httpGet = httpGet -- modules reuse it (Settings: update check)
 
     -- Run the boot script again (the next run destroys this instance first): used after Import / Reset config and by "Update".
@@ -2402,7 +2364,6 @@ do
         return true
     end
 
->>>>>>> f403d6d (UPD Script)
     -- Download all 5 modules at the same time right from the start; running them (init) still follows the original order in the blocks below
     local moduleJobs = {}
     local moduleDeadline = os.clock() + MODULE_TIMEOUT
@@ -2609,7 +2570,7 @@ if ok and type(data) == "table" and data.autoExecute == true then
     env.__ElyseraBoot = game.JobId
     local okRun, err = pcall(function() %s end)
     if not okRun then warn("[Elysera] Auto Execute failed: " .. tostring(err)) end
-end]]):format(dataPath(SAVE_FILE), Loader.bootCode)
+end]]):format(dataPath(Cfg.SAVE_FILE), Loader.bootCode)
     end
 
     function AutoExec.queue()
@@ -2634,108 +2595,105 @@ end]]):format(dataPath(SAVE_FILE), Loader.bootCode)
     end
 end
 
---// ================= TABS =================
-local StatusServerTab = CreateTab("Status & Server")
-local LocalTab        = CreateTab("Local")
-local FPSTab          = CreateTab("FPS")
-local ScriptTab       = CreateTab("Script")
-local SettingsTab     = CreateTab("Settings")
-
--- First load: open on the default tab ("Status & Server") right away, before any module is mounted, so it is the
--- selected tab whatever order the modules finish loading in (and even when a module fails to load)
-selectTab(DEFAULT_TAB, true)
-
---// ================= SHARED CTX FOR MODULES =================
--- One shared table replaces 5 hand-assembled tables: every module receives its own ctx (only Tab is added) that points back to this table through __index,
--- so every module gets every helper and never has to rewrite what ctx is missing.
-local makeCtx
-do
-    local Shared = {
-        Theme = Theme, ScreenGui = ScreenGui, GuiRoot = GuiRoot, CoreGui = CoreGui, MainUI = MainUI,
-        LocalPlayer = LocalPlayer, Players = Players, RunService = RunService, UserInputService = UserInputService,
-        Workspace = Workspace, HttpService = HttpService, TeleportService = TeleportService,
-        UI_NAME = UI_NAME, canFS = canFS, dataPath = dataPath, Saved = Saved, saveSettings = saveSettings,
-        WHITE = WHITE, CENTER = CENTER, ANCHOR_CENTER = ANCHOR_CENTER,
-        EASE_QUAD = EASE_QUAD, EASE_BACK = EASE_BACK, DIR_IN = DIR_IN, DIR_OUT = DIR_OUT,
-        BUBBLE_IN_TIME = BUBBLE_IN_TIME, BUBBLE_OUT_TIME = BUBBLE_OUT_TIME,
-        FADE_IN_TIME = FADE_IN_TIME, FADE_OUT_TIME = FADE_OUT_TIME, CONTENT_EDGE = CONTENT_EDGE,
-        new = new, corner = corner, stroke = stroke, padding = padding, list = list, label = label,
-        tween = tween, pressScale = pressScale, drawIcon = drawIcon, setOverlay = setOverlay,
-        FunctionScroll = FunctionScroll, DeleteDialog = DeleteDialog, fadeMainUI = fadeMainUI,
-        refreshStateColors = refreshStateColors, settleColorTweens = settleColorTweens,
-        CreateCard = CreateCard, CreateInfoRow = CreateInfoRow, CreateStyledButton = CreateStyledButton,
-        CreateToggleOption = CreateToggleOption, flashButtonFeedback = flashButtonFeedback,
-        flashStrokeError = flashStrokeError, bindBoxFocus = bindBoxFocus, guarded = guarded,
-        UI = UI, Loader = Loader, AutoExecute = AutoExec, repaintContent = repaintContent,
-<<<<<<< HEAD
-=======
-        Toast = UI.Toast, Session = Core.session, Motion = Core.motion, Hotkey = Core.hotkey, VERSION = Core.VERSION,
-        writeSettings = Core.writeSettings,
-        -- get() = the scale of the window content; onChanged(fn) runs fn after it changed. Anything that turns an AbsoluteSize /
-        -- AbsolutePosition (screen pixels) into an offset INSIDE the window must divide by get() first.
-        UIScale = { get = function() return Core.scale.Scale end, set = Core.setUIScale, onChanged = Core.onUIScale },
-        toggleUI = function() if isOpen then closeUI() else openUI() end end,
->>>>>>> f403d6d (UPD Script)
-        requestClose = function() -- opens the "Close script" dialog (same flow as the close button in the top bar)
-            if uiLocked then return end
-            CloseDialog.show()
-        end,
-        isOpen = function() return isOpen end,
-        isLocked = function() return uiLocked end,
-        setLocked = function(v) uiLocked = v end,
-    }
-
-    function makeCtx(tab)
-        return setmetatable({ Tab = tab }, { __index = Shared })
-    end
-end
-
 local Elysera -- public API table, assigned in the EXPOSED API section (Settings' Retry needs to update Elysera.Themes)
 
---// ================= SCRIPT TAB =================
--- The tab's code lives in its own file, loaded from GitHub: Script.lua
--- The module returns ScriptDialog (declared up in the OPEN / CLOSE section so closeUI can use it)
-mountModule("Script.lua", ScriptTab, function(init)
-    ScriptDialog = init(makeCtx(ScriptTab))
-end)
+--// ================= TABS =================
+do
+    local StatusServerTab = CreateTab("Status & Server")
+    local LocalTab        = CreateTab("Local")
+    local FPSTab          = CreateTab("FPS")
+    local ScriptTab       = CreateTab("Script")
+    local SettingsTab     = CreateTab("Settings")
 
---// ================= STATUS & SERVER TAB =================
--- The tab's code lives in its own file, loaded from GitHub: Status_Server.lua
-mountModule("Status_Server.lua", StatusServerTab, function(init)
-    init(makeCtx(StatusServerTab))
-end)
+    -- First load: open on the default tab ("Status & Server") right away, before any module is mounted, so it is the
+    -- selected tab whatever order the modules finish loading in (and even when a module fails to load)
+    selectTab(Cfg.DEFAULT_TAB, true)
 
---// ================= LOCAL TAB =================
--- The tab's code lives in its own file, loaded from GitHub: Local.lua
-mountModule("Local.lua", LocalTab, function(init)
-    init(makeCtx(LocalTab))
-end)
+    --// ================= SHARED CTX FOR MODULES =================
+    -- One shared table replaces 5 hand-assembled tables: every module receives its own ctx (only Tab is added) that points back to this table through __index,
+    -- so every module gets every helper and never has to rewrite what ctx is missing.
+    local makeCtx
+    do
+        local Shared = {
+            Theme = Theme, ScreenGui = ScreenGui, GuiRoot = GuiRoot, CoreGui = CoreGui, MainUI = MainUI,
+            LocalPlayer = LocalPlayer, Players = Players, RunService = game:GetService("RunService"), UserInputService = UserInputService,
+            Workspace = Workspace, HttpService = HttpService, TeleportService = game:GetService("TeleportService"),
+            UI_NAME = Cfg.UI_NAME, canFS = canFS, dataPath = dataPath, Saved = Saved, saveSettings = saveSettings,
+            WHITE = WHITE, CENTER = CENTER, ANCHOR_CENTER = ANCHOR_CENTER,
+            EASE_QUAD = EASE_QUAD, EASE_BACK = EASE_BACK, DIR_IN = DIR_IN, DIR_OUT = DIR_OUT,
+            BUBBLE_IN_TIME = BUBBLE_IN_TIME, BUBBLE_OUT_TIME = BUBBLE_OUT_TIME,
+            FADE_IN_TIME = FADE_IN_TIME, FADE_OUT_TIME = FADE_OUT_TIME, CONTENT_EDGE = CONTENT_EDGE,
+            new = new, corner = corner, stroke = stroke, padding = padding, list = list, label = label,
+            tween = tween, pressScale = pressScale, drawIcon = drawIcon, setOverlay = setOverlay,
+            FunctionScroll = FunctionScroll, DeleteDialog = DeleteDialog, fadeMainUI = fadeMainUI,
+            refreshStateColors = refreshStateColors, settleColorTweens = settleColorTweens,
+            CreateCard = CreateCard, CreateInfoRow = CreateInfoRow, CreateStyledButton = CreateStyledButton,
+            CreateToggleOption = CreateToggleOption, flashButtonFeedback = flashButtonFeedback,
+            flashStrokeError = flashStrokeError, bindBoxFocus = bindBoxFocus, guarded = guarded,
+            UI = UI, Loader = Loader, AutoExecute = AutoExec, repaintContent = repaintContent,
+            Toast = UI.Toast, Session = Core.session, Motion = Core.motion, Hotkey = Core.hotkey, VERSION = Core.VERSION,
+            writeSettings = Core.writeSettings,
+            -- get() = the scale of the window content; onChanged(fn) runs fn after it changed. Anything that turns an AbsoluteSize /
+            -- AbsolutePosition (screen pixels) into an offset INSIDE the window must divide by get() first.
+            UIScale = { get = function() return Core.scale.Scale end, set = Core.setUIScale, onChanged = Core.onUIScale },
+            toggleUI = function() if isOpen then closeUI() else openUI() end end,
+            requestClose = function() -- opens the "Close script" dialog (same flow as the close button in the top bar)
+                if uiLocked then return end
+                CloseDialog.show()
+            end,
+            isOpen = function() return isOpen end,
+            isLocked = function() return uiLocked end,
+            setLocked = function(v) uiLocked = v end,
+        }
 
---// ================= FPS TAB =================
--- The tab's code lives in its own file, loaded from GitHub: FPS.lua
-mountModule("FPS.lua", FPSTab, function(init)
-    init(makeCtx(FPSTab))
-end)
+        function makeCtx(tab)
+            return setmetatable({ Tab = tab }, { __index = Shared })
+        end
+    end
 
---// ================= SETTINGS TAB =================
--- The tab's code lives in its own file, loaded from GitHub: Settings.lua (Anti Chat, Auto Execute, Theme, Diagnostics)
--- Loaded LAST so the first theme application (the saved theme) also covers the tabs above.
--- If it cannot be downloaded or fails -> the Settings tab shows an error card (Retry) and the UI keeps running with the default theme.
--- The module returns the Theme API (ThemeAPI is declared up in the OPEN / CLOSE section so closeUI can use it)
-mountModule("Settings.lua", SettingsTab, function(init)
-    ThemeAPI = init(makeCtx(SettingsTab))
-    if Elysera then Elysera.Themes = ThemeAPI.Themes end -- only happens on Retry (during the first load Elysera does not exist yet)
-end)
 
--- Auto Execute was on last time: queue it right away (even when the Settings tab failed to load)
-if AutoExec.isOn() and AutoExec.supported() then AutoExec.queue() end
+    --// ================= SCRIPT TAB =================
+    -- The tab's code lives in its own file, loaded from GitHub: Script.lua
+    -- The module returns ScriptDialog (declared up in the OPEN / CLOSE section so closeUI can use it)
+    mountModule("Script.lua", ScriptTab, function(init)
+        ScriptDialog = init(makeCtx(ScriptTab))
+    end)
 
-<<<<<<< HEAD
-=======
--- Restore last session: every module has registered its switches now (does nothing unless the setting is ON)
-Core.session.restore()
+    --// ================= STATUS & SERVER TAB =================
+    -- The tab's code lives in its own file, loaded from GitHub: Status_Server.lua
+    mountModule("Status_Server.lua", StatusServerTab, function(init)
+        init(makeCtx(StatusServerTab))
+    end)
 
->>>>>>> f403d6d (UPD Script)
+    --// ================= LOCAL TAB =================
+    -- The tab's code lives in its own file, loaded from GitHub: Local.lua
+    mountModule("Local.lua", LocalTab, function(init)
+        init(makeCtx(LocalTab))
+    end)
+
+    --// ================= FPS TAB =================
+    -- The tab's code lives in its own file, loaded from GitHub: FPS.lua
+    mountModule("FPS.lua", FPSTab, function(init)
+        init(makeCtx(FPSTab))
+    end)
+
+    --// ================= SETTINGS TAB =================
+    -- The tab's code lives in its own file, loaded from GitHub: Settings.lua (Anti Chat, Auto Execute, Theme, Diagnostics)
+    -- Loaded LAST so the first theme application (the saved theme) also covers the tabs above.
+    -- If it cannot be downloaded or fails -> the Settings tab shows an error card (Retry) and the UI keeps running with the default theme.
+    -- The module returns the Theme API (ThemeAPI is declared up in the OPEN / CLOSE section so closeUI can use it)
+    mountModule("Settings.lua", SettingsTab, function(init)
+        ThemeAPI = init(makeCtx(SettingsTab))
+        if Elysera then Elysera.Themes = ThemeAPI.Themes end -- only happens on Retry (during the first load Elysera does not exist yet)
+    end)
+
+    -- Auto Execute was on last time: queue it right away (even when the Settings tab failed to load)
+    if AutoExec.isOn() and AutoExec.supported() then AutoExec.queue() end
+
+    -- Restore last session: every module has registered its switches now (does nothing unless the setting is ON)
+    Core.session.restore()
+end
+
 --// ================= EXPOSED API =================
 Elysera = {
     ScreenGui = ScreenGui,
@@ -2747,11 +2705,8 @@ Elysera = {
     CreateSectionLabel = CreateSectionLabel,
     SelectTab = selectTab,
     Unload = unloadUI,       -- unload Elysera for good (same as the close script button) and turn Auto Execute off
-<<<<<<< HEAD
-=======
     Toast = UI.Toast,        -- Toast(message, kind, opts) -> { dismiss }
     Version = Core.VERSION,
->>>>>>> f403d6d (UPD Script)
     AutoExecute = AutoExec,  -- supported() / isOn() / set(on) / reason()
 
     -- Theme (provided by Settings.lua; if the module cannot be loaded, SetTheme returns false)
