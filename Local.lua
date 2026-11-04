@@ -14,13 +14,8 @@
 --   Core     : shared foundation (input parsing, toggle binding, character lifecycle, fly input, teleport history)
 --              + shared UI pieces (toggle row, status badge, presets, mode dropdown, button, input; sections come from ctx.UI)
 --   Features : Movement (Speed, Jump Boost, Gravity, Infinite Jump, Noclip, Fly)
-<<<<<<< HEAD
---              Teleport (Click Teleport, Waypoints, Players) + Quick actions (Back, Unstuck, Respawn)
---              Camera (Field of View, Max Zoom), Visual (ESP, Hide Players, Full Bright)
-=======
 --              Teleport (Click Teleport, Coordinates, Waypoints, Players) + Quick actions (Back, Unstuck, Respawn)
 --              Camera (Field of View, Max Zoom, Min Zoom, Freecam), Visual (ESP, Hide Players, Full Bright, Time of Day)
->>>>>>> f403d6d (UPD Script)
 --              Safety (Anti AFK, Anti Void), Reset All
 -- Grouped into 2 tables to stay under Luau's limit of 200 locals per chunk.
 
@@ -450,12 +445,8 @@ return function(ctx)
 
         -- Narrow window: the box drops below the label
         local function relayout()
-<<<<<<< HEAD
-            local rowW = Row.AbsoluteSize.X
-=======
             -- AbsoluteSize is in screen pixels, the offsets below are in UI Scale units
             local rowW = Row.AbsoluteSize.X / ((ctx.UIScale and ctx.UIScale.get()) or 1)
->>>>>>> f403d6d (UPD Script)
             local stacked = rowW > 0 and rowW < 300
             local lw = labelW
             if rowW > 0 then lw = math.min(labelW, math.max(40, rowW * 0.45)) end
@@ -476,10 +467,7 @@ return function(ctx)
         end
         relayout()
         Row:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
-<<<<<<< HEAD
-=======
         if ctx.UIScale and ctx.UIScale.onChanged then ctx.UIScale.onChanged(relayout) end
->>>>>>> f403d6d (UPD Script)
 
         -- While typing, only filter characters; write the normalized value once the box loses focus
         Box:GetPropertyChangedSignal("Text"):Connect(function()
@@ -496,14 +484,11 @@ return function(ctx)
 
         R.Box = Box
         R.flashError = function() flashStrokeError(BoxStroke) end
-<<<<<<< HEAD
-=======
 
         -- Restore last session: the text of the box is saved with the switch and written back before the switch turns on
         if ctx.Session and R.Switch then
             ctx.Session.attach(R.Switch, function() return Box.Text end, function(v) Box.Text = tostring(v) end)
         end
->>>>>>> f403d6d (UPD Script)
         return R
     end
 
@@ -1029,11 +1014,7 @@ return function(ctx)
     --//  FEATURES
     --// =====================================================
 
-<<<<<<< HEAD
-    --// ---------------- Boost: one value on one instance (Speed, Jump, Gravity, FOV, Max Zoom) ----------------
-=======
     --// ---------------- Boost: one value on one instance (Speed, Jump, Gravity, FOV, Max / Min Zoom, Time of Day) ----------------
->>>>>>> f403d6d (UPD Script)
     -- The game's own value is snapshotted, restored when turned off, and put back whenever the game changes it.
     -- Three layers keep our value in place, so a game that changes it now and then cannot switch the boost off for good:
     --   1. The property signal answers the moment the game writes (at most Core.Boost.reapply times per
@@ -2098,8 +2079,6 @@ return function(ctx)
         presets = boostPresets(1000),
     }
 
-<<<<<<< HEAD
-=======
     -- Min Zoom: how close the camera may get to the character (Roblox default 0.5). A higher value keeps the camera away.
     local MIN_ZOOM_CFG = {
         title = "Min Zoom", max = 400, waitFor = "player",
@@ -2139,7 +2118,6 @@ return function(ctx)
         },
     }
 
->>>>>>> f403d6d (UPD Script)
     local GRAVITY_CFG = {
         title = "Gravity", max = 500, waitFor = "workspace",
         props = { "Gravity" },
@@ -2158,8 +2136,6 @@ return function(ctx)
         },
     }
 
-<<<<<<< HEAD
-=======
     --// ---------------- Freecam ----------------
     -- Detaches the camera from the character and flies it around; the character is anchored in place meanwhile.
     -- Move: thumbstick / WASD (the same input as Fly), Space or the jump button = up, Q / Ctrl = down.
@@ -2289,7 +2265,6 @@ return function(ctx)
         return handle
     end
 
->>>>>>> f403d6d (UPD Script)
     --// ---------------- Anti AFK ----------------
     -- Roblox kicks players after 20 minutes without input. VirtualUser "clicks" when the Idled event fires,
     -- which resets that timer. Nothing runs until Idled fires, so it costs nothing while you play.
@@ -2711,8 +2686,6 @@ return function(ctx)
             })
         end
 
-<<<<<<< HEAD
-=======
         -- Export / Import: the waypoints of THIS game as text (clipboard; Elysera_Waypoints_Export.json when there is no clipboard)
         local ToolsRow = new("Frame", {
             LayoutOrder = 5,
@@ -2737,7 +2710,6 @@ return function(ctx)
             Text = "Tap a name to rename it.",
         })
 
->>>>>>> f403d6d (UPD Script)
         local rebuild
 
         local function makeRow(p)
@@ -2751,16 +2723,6 @@ return function(ctx)
             corner(Row, 6)
             stroke(Row)
 
-<<<<<<< HEAD
-            Core.Label(Row, {
-                Position = UDim2.fromOffset(10, 5),
-                Size = UDim2.new(1, -100, 0, 18),
-                Font = Enum.Font.GothamBold,
-                TextSize = 13,
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                Text = p.n,
-            })
-=======
             -- The name is a TextBox: tap it to rename the waypoint (saved when the box loses focus)
             local NameBox = new("TextBox", {
                 Name = "NameBox",
@@ -2796,7 +2758,6 @@ return function(ctx)
                 save()
                 note.flash("Renamed to " .. newName)
             end)
->>>>>>> f403d6d (UPD Script)
             Core.Label(Row, {
                 Position = UDim2.fromOffset(10, 23),
                 Size = UDim2.new(1, -100, 0, 14),
@@ -2842,10 +2803,7 @@ return function(ctx)
             end
             for _, p in ipairs(points) do makeRow(p) end
             Empty.Visible = (#points == 0)
-<<<<<<< HEAD
-=======
             Hint.Visible = (#points > 0)
->>>>>>> f403d6d (UPD Script)
             note.setBase(#points .. "/" .. MAX)
         end
 
@@ -2887,8 +2845,6 @@ return function(ctx)
             if enter and not isLocked() then saveHere() end
         end)
 
-<<<<<<< HEAD
-=======
         local EXPORT_FILE = dataPath("Elysera_Waypoints_Export.json")
         ExportBtn.onClick(function()
             if #points == 0 then
@@ -2967,13 +2923,10 @@ return function(ctx)
             end
         end)
 
->>>>>>> f403d6d (UPD Script)
         rebuild()
         return Card
     end
 
-<<<<<<< HEAD
-=======
     --// ---------------- Coordinates: teleport to X Y Z, copy / fill in your own position ----------------
     -- Pasting "12, 5, -40" into any box spreads the three numbers over X, Y and Z.
     function Features.CreateCoords(parent)
@@ -3086,7 +3039,6 @@ return function(ctx)
         return Card
     end
 
->>>>>>> f403d6d (UPD Script)
     --// ---------------- Players: find, teleport, view ----------------
     -- Only 6 rows exist and they are reused, so a 100-player server costs the same as a 6-player one;
     -- the search box narrows the list. While viewing someone, a floating "Stop" pill stays on screen so
@@ -3450,15 +3402,6 @@ return function(ctx)
         subtitle = "Speed, jump, gravity, noclip, fly",
     })
     local Teleport = Core.CreateSectionGroup(LocalTab, "Teleport", 3, {
-<<<<<<< HEAD
-        subtitle = "Click teleport, waypoints, players", collapsed = true,
-    })
-    local Camera = Core.CreateSectionGroup(LocalTab, "Camera", 4, {
-        subtitle = "Field of view and zoom distance", collapsed = true,
-    })
-    local Visual = Core.CreateSectionGroup(LocalTab, "Visual", 5, {
-        subtitle = "ESP, hide players, full bright", collapsed = true,
-=======
         subtitle = "Click teleport, coordinates, waypoints, players", collapsed = true,
     })
     local Camera = Core.CreateSectionGroup(LocalTab, "Camera", 4, {
@@ -3466,7 +3409,6 @@ return function(ctx)
     })
     local Visual = Core.CreateSectionGroup(LocalTab, "Visual", 5, {
         subtitle = "ESP, hide players, full bright, time of day", collapsed = true,
->>>>>>> f403d6d (UPD Script)
     })
     local Safety = Core.CreateSectionGroup(LocalTab, "Safety", 6, {
         subtitle = "Anti AFK and Anti Void", collapsed = true,
@@ -3480,28 +3422,19 @@ return function(ctx)
     Movement.trackSwitch(Features.CreateFly(Movement.Body))
 
     Teleport.trackSwitch(Features.CreateClickTp(Teleport.Body))
-<<<<<<< HEAD
-=======
     Features.CreateCoords(Teleport.Body)
->>>>>>> f403d6d (UPD Script)
     Features.CreateWaypoints(Teleport.Body)
     Teleport.trackSwitch(Features.CreatePlayers(Teleport.Body))
 
     Camera.trackSwitch(Features.CreateTargetBoost(Camera.Body, FOV_CFG))
     Camera.trackSwitch(Features.CreateTargetBoost(Camera.Body, ZOOM_CFG))
-<<<<<<< HEAD
-=======
     Camera.trackSwitch(Features.CreateTargetBoost(Camera.Body, MIN_ZOOM_CFG))
     Camera.trackSwitch(Features.CreateFreecam(Camera.Body))
->>>>>>> f403d6d (UPD Script)
 
     Visual.trackSwitch(Features.CreateEsp(Visual.Body))
     Visual.trackSwitch(Features.CreateHidePlayers(Visual.Body))
     Visual.trackSwitch(Features.CreateFullBright(Visual.Body))
-<<<<<<< HEAD
-=======
     Visual.trackSwitch(Features.CreateTargetBoost(Visual.Body, TIME_CFG))
->>>>>>> f403d6d (UPD Script)
 
     Safety.trackSwitch(Features.CreateAntiAfk(Safety.Body))
     Safety.trackSwitch(Features.CreateAntiVoid(Safety.Body))

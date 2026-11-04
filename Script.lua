@@ -13,13 +13,9 @@
 --
 -- Library : save / edit / duplicate / pin / export / import / undo delete, search and sort (Added, A-Z, Edited, Recent)
 -- Running : Run / Stop, Output panel, Run clipboard, test run from the dialog, last run info on every script
-<<<<<<< HEAD
--- Startup : Auto-run per script (global pause in the menu); imported scripts must be reviewed before they run
-=======
 -- Startup : Auto-run per script, in every game or only in chosen games (global pause in the menu); imported scripts must be reviewed before they run
 -- Stop    : a script may end with "return function() ... end": that function is its cleanup and Stop calls it (the script then stays "running")
 -- Editor  : line numbers, syntax colors while the editor is not focused; the library search also looks inside the code
->>>>>>> f403d6d (UPD Script)
 
 return function(ctx)
     local ScriptTab           = ctx.Tab
@@ -80,10 +76,7 @@ return function(ctx)
     local REVIEW_SECONDS      = 5                            -- imported script: a second tap within this window runs it
 
     local SEARCH_MIN_ITEMS    = 5
-<<<<<<< HEAD
-=======
     local MAX_AUTO_GAMES      = 20 -- games one script can be limited to
->>>>>>> f403d6d (UPD Script)
     local SEARCH_H            = 30
     local PINNED_HEIGHT       = 36
     local TAB_LIST_GAP        = 10
@@ -210,14 +203,9 @@ return function(ctx)
         return Btn
     end
 
-<<<<<<< HEAD
-    --// ---- showToast: short notification, optionally with an action button ----
-    local TOAST_W, MAX_TOASTS = 300, 3
-=======
     --// ---- Toast: short notification, shared by every module (ctx.Toast, implemented in the main script) ----
     local showToast = ctx.Toast or function(message) warn("[Elysera/Script] " .. tostring(message)) end
 
->>>>>>> f403d6d (UPD Script)
     -- Token names, resolved on every lookup so the colors follow theme changes
     local function themedColors(tokens)
         return setmetatable({}, {
@@ -228,115 +216,6 @@ return function(ctx)
         })
     end
 
-<<<<<<< HEAD
-    local TOAST_COLORS = themedColors({
-        info    = "SubText",
-        success = "Sakura",
-        warn    = "AccentPurple",
-        error   = "Danger",
-    })
-    local ToastHost
-    local toastQueue, toastSeq = {}, 0
-    local lastToast = { text = "", at = 0 }
-
-    local function getToastHost()
-        if ToastHost and ToastHost.Parent then return ToastHost end
-        local w = math.min(TOAST_W, ScreenGui.AbsoluteSize.X - 24)
-        ToastHost = new("Frame", {
-            Name = "ToastHost",
-            AnchorPoint = Vector2.new(0.5, 1),
-            Position = UDim2.new(0.5, 0, 1, -20),
-            Size = UDim2.fromOffset(w, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-            ZIndex = 70,
-        }, ScreenGui)
-        new("UIListLayout", {
-            Padding = UDim.new(0, 6),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            HorizontalAlignment = Enum.HorizontalAlignment.Center,
-            VerticalAlignment = Enum.VerticalAlignment.Bottom,
-        }, ToastHost)
-        return ToastHost
-    end
-
-    local function showToast(message, kind, opts)
-        opts = opts or {}
-        message = tostring(message)
-        local noop = { dismiss = function() end }
-        if not ScreenGui.Parent then return noop end
-
-        local now = os.clock()
-        if message == lastToast.text and now - lastToast.at < 1 then return noop end
-        lastToast.text, lastToast.at = message, now
-
-        local host = getToastHost()
-        if #toastQueue >= MAX_TOASTS then toastQueue[1].dismiss() end
-
-        toastSeq = toastSeq + 1
-        local color = TOAST_COLORS[kind or "info"] or TOAST_COLORS.info
-        local Pill = new("CanvasGroup", {
-            LayoutOrder = toastSeq,
-            Size = UDim2.new(1, 0, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundColor3 = Theme.Panel,
-            GroupTransparency = 1,
-            ZIndex = 71,
-        }, host)
-        corner(Pill, 8)
-        stroke(Pill, color, 1)
-        padding(Pill, 12, 12, 6, 6)
-
-        local actionW = opts.actionText and 64 or 0
-        new("TextLabel", {
-            Size = UDim2.new(1, -actionW, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-            Text = message,
-            TextWrapped = true,
-            Font = Enum.Font.Gotham,
-            TextSize = 13,
-            TextColor3 = Theme.Text,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = 72,
-        }, Pill)
-
-        local toast, closed = {}, false
-        function toast.dismiss()
-            if closed then return end
-            closed = true
-            local i = table.find(toastQueue, toast)
-            if i then table.remove(toastQueue, i) end
-            local t = tween(Pill, 0.2, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
-            t.Completed:Connect(function()
-                if Pill.Parent then Pill:Destroy() end
-            end)
-        end
-
-        if opts.actionText then
-            local Act = new("TextButton", {
-                AnchorPoint = Vector2.new(1, 0.5),
-                Position = UDim2.new(1, 0, 0.5, 0),
-                Size = UDim2.fromOffset(actionW - 6, 32),
-                BackgroundTransparency = 1,
-                Text = opts.actionText,
-                Font = Enum.Font.GothamBold,
-                TextSize = 13,
-                TextColor3 = Theme.AccentPink,
-                ZIndex = 73,
-            }, Pill)
-            Act.MouseButton1Click:Connect(function()
-                if closed then return end
-                toast.dismiss()
-                if opts.onAction then task.spawn(opts.onAction) end
-            end)
-        end
-
-        toastQueue[#toastQueue + 1] = toast
-        tween(Pill, 0.15, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
-        task.delay(opts.duration or (kind == "error" and 5 or 2.5), toast.dismiss)
-        return toast
-=======
     --// ---- Auto: where a script may auto-run. entry.auto = run on startup; entry.autoGames = nil (every game) or a list of game ids ----
     -- "Game" is the experience (game.GameId), so every place of one experience counts as the same game.
     local Auto = {}
@@ -359,7 +238,6 @@ return function(ctx)
 
     function Auto.here(entry)
         return entry.auto == true and (entry.autoGames == nil or Auto.listed(entry))
->>>>>>> f403d6d (UPD Script)
     end
 
     --// ---- createEntry: the single source for creating v2 entries ----
@@ -434,10 +312,7 @@ return function(ctx)
             updatedAt = tonumber(base.updatedAt) or now,
             favorite  = base.favorite == true,
             auto      = (base.auto == true) or nil,                           -- run on startup
-<<<<<<< HEAD
-=======
             autoGames = (base.auto == true) and Auto.clean(base.autoGames) or nil, -- nil = every game, else only these game ids
->>>>>>> f403d6d (UPD Script)
             review    = (base.review == true or opts.review == true) or nil,  -- imported, not reviewed yet
         }, (name ~= wanted) and "renamed" or nil
     end
@@ -735,9 +610,6 @@ return function(ctx)
             local okRun, err = xpcall(fn, function(e)
                 return debug.traceback(tostring(e), 2)
             end)
-<<<<<<< HEAD
-            if Running[entry.id] ~= state then return end -- already Stopped
-=======
             if Running[entry.id] ~= state then -- already Stopped
                 -- the script returned its cleanup only after Stop: nothing will call it later, so call it now
                 if okRun and type(err) == "function" then task.spawn(pcall, err) end
@@ -751,7 +623,6 @@ return function(ctx)
                 finishRun(entry, true)
                 return
             end
->>>>>>> f403d6d (UPD Script)
             Running[entry.id] = nil
             if okRun then
                 logOut("ok", entry.name,
@@ -772,9 +643,6 @@ return function(ctx)
         if not state then return false end
         Running[entry.id] = nil
         if state.thread and task.cancel then pcall(task.cancel, state.thread) end
-<<<<<<< HEAD
-        logOut("info", entry.name, "Stopped (main thread only)")
-=======
         local cleanup = state.cleanup
         if cleanup then
             state.cleanup = nil
@@ -789,7 +657,6 @@ return function(ctx)
         else
             logOut("info", entry.name, "Stopped (main thread only)")
         end
->>>>>>> f403d6d (UPD Script)
         state.onState("idle")
         return true
     end
@@ -1090,8 +957,6 @@ return function(ctx)
     end
 
     --// ---- NotBoxA: Add / Edit / Import ----
-<<<<<<< HEAD
-=======
     --// ---- Syntax: colors a script for the editor (RichText; no bold / italic, so every glyph keeps its width) ----
     local Syntax = {}
     do
@@ -1232,7 +1097,6 @@ return function(ctx)
         end
     end
 
->>>>>>> f403d6d (UPD Script)
     local function createScriptDialog()
         local ACCENT = Theme.AccentPink
         local TEXT = {
@@ -1387,8 +1251,6 @@ return function(ctx)
         padding(CodeBox, 8, 8, 6, 6)
         bindBoxFocus(CodeBox, CodeStroke)
 
-<<<<<<< HEAD
-=======
         --// ---- Line numbers + syntax colors ----
         -- Both sit inside CodeHolder next to the text box, so they scroll with it. The code never wraps (TextWrapped = false),
         -- so line n of the numbers / of the colored copy is always at the same height as line n of the box.
@@ -1488,7 +1350,6 @@ return function(ctx)
         CodeBox.Focused:Connect(function() setColored(false) end)
         CodeBox.FocusLost:Connect(refreshColored)
 
->>>>>>> f403d6d (UPD Script)
         -- the scrolling frame doesn't follow the cursor on its own: drag CanvasPosition manually so the cursor always stays in view
         local TextService = game:GetService("TextService")
         local HUGE = Vector2.new(1e6, 1e6)
@@ -1505,11 +1366,7 @@ return function(ctx)
                 local lastLine = before:match("([^\n]*)$")
                 local _, breaks = before:gsub("\n", "")
                 local w = TextService:GetTextSize(lastLine, CodeBox.TextSize, CodeBox.Font, HUGE).X
-<<<<<<< HEAD
-                local cx, cy = 8 + w, 6 + breaks * lineH
-=======
                 local cx, cy = GUTTER_W + 8 + w, 6 + breaks * lineH
->>>>>>> f403d6d (UPD Script)
                 local win, pos = CodeHolder.AbsoluteWindowSize, CodeHolder.CanvasPosition
                 local nx, ny = pos.X, pos.Y
                 if cx > pos.X + win.X - 16 then
@@ -1621,12 +1478,8 @@ return function(ctx)
             Cancel.Text, discardUntil = TEXT.cancel, 0
 
             local target = fitSize()
-<<<<<<< HEAD
-            CodeBox.Size = UDim2.fromOffset(target.X.Offset - 34, 96)
-=======
             CodeBox.Size = UDim2.fromOffset(target.X.Offset - 34 - GUTTER_W, 96)
             Colored.Size = CodeBox.Size
->>>>>>> f403d6d (UPD Script)
 
             hideToken = hideToken + 1
             setOverlay(true)
@@ -1909,19 +1762,6 @@ return function(ctx)
         return entry.favorite
     end
 
-<<<<<<< HEAD
-    local function toggleAuto(entry)
-        entry.auto = (not entry.auto) or nil
-        local rec = Rows[entry.id]
-        if rec then rec.refresh() end
-        scheduleSave()
-        if entry.auto then
-            showToast(entry.review and "Runs on startup once you have reviewed it" or "Runs on startup",
-                "info", { duration = 2 })
-        else
-            showToast("Auto-run off", "info", { duration = 1.5 })
-        end
-=======
     -- mode: "all" (every game), "only" (this game only), "add" / "remove" (this game in / out of the list), "off"
     function Auto.set(entry, mode)
         local here = game.GameId
@@ -1980,7 +1820,6 @@ return function(ctx)
         end
         items[#items + 1] = { text = "Disable auto-run", run = function() Auto.set(entry, "off") end }
         return items
->>>>>>> f403d6d (UPD Script)
     end
 
     local function toggleGlobalAuto()
@@ -2061,25 +1900,11 @@ return function(ctx)
     end
 
     local function buildRowItems(entry)
-<<<<<<< HEAD
-        return {
-=======
         local items = {
->>>>>>> f403d6d (UPD Script)
             { text = "Edit",      run = function() openEditDialog(entry) end },
             { text = "Duplicate", run = function() duplicateScript(entry) end },
             { text = entry.favorite and "Unpin from top" or "Pin to top",
               run = function() toggleFavorite(entry) end },
-<<<<<<< HEAD
-            { text = entry.auto and "Disable auto-run" or "Enable auto-run",
-              run = function() toggleAuto(entry) end },
-            { text = "Export",    run = function() exportLibrary(entry) end },
-            { text = "Delete", color = Theme.Danger, run = function()
-                askConfirm(('Do you want to delete "%s"?'):format(shorten(entry.name, 30)),
-                    function() deleteScript(entry) end)
-            end },
-        }
-=======
         }
         for _, item in ipairs(buildAutoItems(entry)) do items[#items + 1] = item end
         items[#items + 1] = { text = "Export", run = function() exportLibrary(entry) end }
@@ -2088,7 +1913,6 @@ return function(ctx)
                 function() deleteScript(entry) end)
         end }
         return items
->>>>>>> f403d6d (UPD Script)
     end
 
     local function buildLibraryItems()
@@ -2158,11 +1982,7 @@ return function(ctx)
             BackgroundColor3 = Theme.PanelAlt,
             BorderSizePixel = 0,
             Text = "",
-<<<<<<< HEAD
-            PlaceholderText = "Search scripts",
-=======
             PlaceholderText = "Search name or code",
->>>>>>> f403d6d (UPD Script)
             PlaceholderColor3 = Theme.SubText,
             ClearTextOnFocus = false,
             ClipsDescendants = true,
@@ -2282,14 +2102,6 @@ return function(ctx)
 
         -- List frame height = what remains of FunctionScroll after subtracting the blocks above/below -> the Script tab doesn't scroll on the outside
         fitListPanel = function()
-<<<<<<< HEAD
-            local used = CONTENT_EDGE * 2 + PINNED_HEIGHT + TAB_LIST_GAP + 2
-            if SearchRow.Visible then used = used + SEARCH_H + TAB_LIST_GAP end
-            if OutputPanel then used = used + OutputPanel.Frame.AbsoluteSize.Y + TAB_LIST_GAP end
-            ListPanel.Size = UDim2.new(1, 0, 0, math.max(80, FunctionScroll.AbsoluteSize.Y - used))
-        end
-        FunctionScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitListPanel)
-=======
             -- AbsoluteSize is in screen pixels, the sizes below are in UI Scale units
             local scale = (ctx.UIScale and ctx.UIScale.get()) or 1
             local used = CONTENT_EDGE * 2 + PINNED_HEIGHT + TAB_LIST_GAP + 2
@@ -2299,7 +2111,6 @@ return function(ctx)
         end
         FunctionScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitListPanel)
         if ctx.UIScale and ctx.UIScale.onChanged then ctx.UIScale.onChanged(fitListPanel) end
->>>>>>> f403d6d (UPD Script)
 
         local function orderedEntries()
             local arr = table.clone(ScriptList)
@@ -2326,8 +2137,6 @@ return function(ctx)
             return arr
         end
 
-<<<<<<< HEAD
-=======
         -- The search looks at the name first, then inside the code. The lower-case copy of a script is made the first time it
         -- is needed and renewed when the script changes (comparing strings is a pointer check, so this costs nothing).
         local function codeContains(entry, rec, q)
@@ -2337,18 +2146,13 @@ return function(ctx)
             return rec.codeLower:find(q, 1, true) ~= nil
         end
 
->>>>>>> f403d6d (UPD Script)
         applyListView = function()
             local q = View.query:lower()
             local shown = 0
             for i, entry in ipairs(orderedEntries()) do
                 local rec = Rows[entry.id]
                 if rec then
-<<<<<<< HEAD
-                    local match = q == "" or rec.nameLower:find(q, 1, true) ~= nil
-=======
                     local match = q == "" or rec.nameLower:find(q, 1, true) ~= nil or codeContains(entry, rec, q)
->>>>>>> f403d6d (UPD Script)
                     rec.Row.Visible = match
                     rec.Row.LayoutOrder = (entry.favorite and 0 or 100000) + i
                     if match then shown = shown + 1 end
@@ -2485,15 +2289,12 @@ return function(ctx)
                         text, dot = "Ran " .. ago(st.t) .. runs, Theme.Sakura
                     end
                 end
-<<<<<<< HEAD
-=======
                 if entry.auto and entry.autoGames and not Running[entry.id] and not entry.review then
                     -- limited to some games: say whether it is going to run in this one
                     local n = #entry.autoGames
                     text = text .. (Auto.listed(entry) and " - auto here"
                         or (" - auto in " .. n .. (n == 1 and " other game" or " games")))
                 end
->>>>>>> f403d6d (UPD Script)
                 Sub.Text, Sub.TextColor3, Dot.BackgroundColor3 = text, color, dot
             end
             rec.paintInfo = paintInfo
@@ -2503,10 +2304,7 @@ return function(ctx)
                 Title.TextColor3 = entry.favorite and Theme.Sakura or Theme.Text
                 FavBar.Visible = entry.favorite
                 AutoPill.Visible = entry.auto == true
-<<<<<<< HEAD
-=======
                 AutoPill.BackgroundTransparency = Auto.here(entry) and 0 or 0.55 -- dimmed: auto-run, but not in this game
->>>>>>> f403d6d (UPD Script)
                 Left.Size = UDim2.new(1, -(76 + (entry.auto and 46 or 0)), 1, 0)
                 rec.nameLower = entry.name:lower()
                 paintInfo()
@@ -2679,11 +2477,7 @@ return function(ctx)
         if State.autoRun then
             local queue = {}
             for _, e in ipairs(ScriptList) do
-<<<<<<< HEAD
-                if e.auto and not e.review then queue[#queue + 1] = e end
-=======
                 if Auto.here(e) and not e.review then queue[#queue + 1] = e end
->>>>>>> f403d6d (UPD Script)
             end
             if #queue > 0 then
                 task.delay(STARTUP_DELAY, function()
@@ -2693,11 +2487,7 @@ return function(ctx)
                     for _, e in ipairs(queue) do
                         if not ScreenGui.Parent then break end
                         local rec = Rows[e.id]
-<<<<<<< HEAD
-                        if rec and e.auto and not e.review and not Running[e.id] then
-=======
                         if rec and Auto.here(e) and not e.review and not Running[e.id] then
->>>>>>> f403d6d (UPD Script)
                             logOut("info", e.name, "Auto-run on startup")
                             rec.start()
                             task.wait(0.25)
