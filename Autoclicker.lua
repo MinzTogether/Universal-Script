@@ -16,9 +16,9 @@ local HOLD_DEFAULT = 1200
 local TP_Y        = 2514   -- độ cao khi TP tới mỗi điểm
 local Y_LOW       = 1674   -- chạm (<=) mức này thì sang điểm tiếp theo
 local Y_HIGH      = 3354   -- chạm (>=) mức này thì sang điểm tiếp theo
-local CAM_HEIGHT  = 30     -- camera đặt cao hơn nhân vật bao nhiêu stud (nhìn thẳng xuống)
+local CAM_HEIGHT  = 15     -- camera đặt cao hơn nhân vật bao nhiêu stud (nhìn thẳng xuống)
 local SETTLE_TIME = 0.5    -- chờ sau khi TP trước khi ấn giữ (giây)
-local ENTER_DELAY = 3      -- chờ sau khi gọi Mining (vào minigame) rồi mới TP tới điểm 1 (giây)
+local ENTER_DELAY = 1      -- chờ sau khi gọi Mining (vào minigame) rồi mới TP tới điểm 1 (giây)
 local LOOP_WAIT   = 25 * 60 -- chờ sau khi LeaveMining rồi mới bắt đầu vòng mới (giây) = 25 phút
 local TARGET_SIZE = 80     -- kích thước ảnh mục tiêu trên màn hình (px). Tâm ảnh = điểm click/ấn giữ
 -- [FIX LỆCH CHUỘT] Độ lệch cố định giữa toạ độ GỬI cho VirtualInputManager và vị trí con trỏ THẬT trên màn hình (đơn vị: px GUI).
