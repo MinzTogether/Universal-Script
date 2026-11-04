@@ -249,6 +249,13 @@ if oldGui then oldGui:Destroy() end
 decalGui = Instance.new("ScreenGui")
 decalGui.Name = "Sp1ngAutoClicker"
 decalGui.ResetOnSpawn = false
+-- [FIX LỆCH CLICK] Cho ScreenGui phủ kín màn hình, KHÔNG chừa inset (thanh topbar + tai thỏ/viền an toàn).
+-- Nguyên nhân cũ: AbsolutePosition tính theo gốc GUI (đã trừ inset) còn VirtualInputManager nhận toạ độ MÀN HÌNH THẬT
+--   => click ảo bị lệch lên-trái đúng bằng inset (trên máy bạn ~36px ngang, ~57px dọc) nên không trúng tâm vòng tròn.
+-- Bỏ inset thì AbsolutePosition == toạ độ màn hình thật => click rơi đúng tâm.
+-- Thứ tự quan trọng: đặt IgnoreGuiInset trước, ScreenInsets sau để None là giá trị cuối cùng.
+decalGui.IgnoreGuiInset = true
+pcall(function() decalGui.ScreenInsets = Enum.ScreenInsets.None end) -- client cũ chưa có ScreenInsets thì bỏ qua
 decalGui.Parent = playerGui
 
 -- Bouton cible à glisser (Draggable target)
@@ -256,18 +263,21 @@ decalGui.Parent = playerGui
 local targetImage = loadTargetImage()
 local targetSize = targetImage and TARGET_SIZE or 50
 local targetBtn
+-- [FIX] Dùng ImageLabel/TextLabel (không phải *Button) + thuộc tính Active để bật/tắt việc "nuốt" input:
+--   click ảo giờ rơi đúng TÂM vòng tròn, nếu vòng tròn là nút thì chính nó sẽ chặn cú click, game không nhận được.
+--   Lúc rảnh Active = true (kéo thả được); lúc đang chạy Active = false (click xuyên qua xuống game) - xem setTargetSolid().
 if targetImage then
-    targetBtn = Instance.new("ImageButton")
+    targetBtn = Instance.new("ImageLabel")
     targetBtn.Image = targetImage
     targetBtn.ScaleType = Enum.ScaleType.Stretch
     targetBtn.BackgroundTransparency = 1 -- giữ phần trong suốt của ảnh
-    targetBtn.AutoButtonColor = false
 else
-    targetBtn = Instance.new("TextButton") -- dự phòng: như bản cũ
+    targetBtn = Instance.new("TextLabel") -- dự phòng: như bản cũ
     targetBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     targetBtn.Text = "🎯"
     targetBtn.TextSize = 22
 end
+targetBtn.Active = true
 targetBtn.Size = UDim2.new(0, targetSize, 0, targetSize)
 targetBtn.Position = UDim2.new(0.5, -targetSize / 2, 0.4, 0)
 targetBtn.Parent = decalGui
@@ -423,7 +433,7 @@ local holdSeconds = HOLD_DEFAULT    -- thời gian giữ hiện tại (giây)
 -- Logique de glissement (Drag) pour le bouton cible
 local dragging, dragInput, dragStart, startPos
 targetBtn.InputBegan:Connect(function(input)
-    if holding then return end -- [MỚI] đang giữ thì khoá vị trí mục tiêu (bấm STOP rồi mới kéo được)
+    if holding or clicking then return end -- [MỚI] đang giữ/click thì khoá vị trí mục tiêu (bấm STOP rồi mới kéo được)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
@@ -449,8 +459,26 @@ local function formatTime(sec)
     return string.format("%02d:%02d", math.floor(sec / 60), sec % 60)
 end
 
+-- Tâm vòng tròn (= giao điểm 2 đường thẳng trong ảnh) theo toạ độ MÀN HÌNH THẬT.
+-- Đúng vì ScreenGui đã bỏ inset (xem phần tạo decalGui) nên AbsolutePosition trùng toạ độ của VirtualInputManager.
 local function getTargetPos()
     return targetBtn.AbsolutePosition + (targetBtn.AbsoluteSize / 2)
+end
+
+-- [FIX] solid = false: vòng tròn "xuyên thấu" - click/giữ ảo tại tâm sẽ đi thẳng xuống game, không bị vòng tròn chặn
+--       solid = true : vòng tròn nhận chạm lại (kéo thả được). Bật lại chậm 0.2s để cú NHẢ chuột ảo cuối cùng
+--                      (gửi lúc STOP, xử lý ở khung hình sau) vẫn đi xuyên xuống game, không bị kẹt chuột.
+local function setTargetSolid(solid)
+    if not solid then
+        dragging = false -- huỷ thao tác kéo đang dở (nếu có)
+        targetBtn.Active = false
+        return
+    end
+    task.delay(0.2, function()
+        if not (clicking or holding) then -- lỡ bấm START lại trong 0.2s thì giữ nguyên xuyên thấu
+            targetBtn.Active = true
+        end
+    end)
 end
 
 -- Đọc ô Hold (s); nhập sai/để trống thì giữ lại giá trị trước đó
@@ -531,6 +559,7 @@ local function stopAll()
     end
     holdSession = holdSession + 1
     unlockCamera() -- [MỚI] trả camera về bình thường
+    setTargetSolid(true) -- [FIX] dừng rồi thì vòng tròn kéo thả lại được
     startBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 90)
     statusLabel.Text = "IDLE"
 end
@@ -678,6 +707,7 @@ end
 -- Logique d'autoclick puissant
 startBtn.MouseButton1Click:Connect(function()
     if clicking or holding then return end
+    setTargetSolid(false) -- [FIX] click ảo rơi đúng tâm vòng tròn => cho vòng tròn xuyên thấu để game nhận được click
     startBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 45)
     if mode == "GRID" then
         startGrid()
