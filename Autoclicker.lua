@@ -21,6 +21,12 @@ local SETTLE_TIME = 0.5    -- chờ sau khi TP trước khi ấn giữ (giây)
 local ENTER_DELAY = 3      -- chờ sau khi gọi Mining (vào minigame) rồi mới TP tới điểm 1 (giây)
 local LOOP_WAIT   = 25 * 60 -- chờ sau khi LeaveMining rồi mới bắt đầu vòng mới (giây) = 25 phút
 local TARGET_SIZE = 80     -- kích thước ảnh mục tiêu trên màn hình (px). Tâm ảnh = điểm click/ấn giữ
+-- [FIX LỆCH CHUỘT] Độ lệch cố định giữa toạ độ GỬI cho VirtualInputManager và vị trí con trỏ THẬT trên màn hình (đơn vị: px GUI).
+--   Đo từ ảnh chụp: gửi click đúng tâm ảnh thì con trỏ rơi lệch lên-trái ~(37, 58) => cộng bù lại để con trỏ rơi ĐÚNG tâm ảnh.
+--   Chỉnh nhanh ngay trong game bằng ô "Offset X / Y" trên bảng điều khiển: con trỏ còn nằm TRÊN-TRÁI tâm => TĂNG số; nằm DƯỚI-PHẢI tâm => GIẢM số; 0 / 0 = tắt bù.
+local CLICK_OFFSET_X = 37
+local CLICK_OFFSET_Y = 58
+local clickOffset = Vector2.new(CLICK_OFFSET_X, CLICK_OFFSET_Y) -- giá trị đang dùng (ô Offset X / Y trong game sửa biến này)
 
 -- Bảng toạ độ theo đúng thứ tự STT trong file Excel: Z từ -155 -> -107, mỗi hàng X từ 1520 -> 1568, bước 4 (169 điểm)
 local GRID_X0, GRID_Z0, GRID_STEP, GRID_N = 1520, -155, 4, 13
@@ -253,6 +259,8 @@ decalGui.ResetOnSpawn = false
 -- Nguyên nhân cũ: AbsolutePosition tính theo gốc GUI (đã trừ inset) còn VirtualInputManager nhận toạ độ MÀN HÌNH THẬT
 --   => click ảo bị lệch lên-trái đúng bằng inset (trên máy bạn ~36px ngang, ~57px dọc) nên không trúng tâm vòng tròn.
 -- Bỏ inset thì AbsolutePosition == toạ độ màn hình thật => click rơi đúng tâm.
+-- [FIX 2] Bỏ inset vẫn CHƯA đủ trên máy này: engine còn dịch click ảo lên-trái ~(37, 58) px.
+--   => đã cộng bù trong getTargetPos() bằng clickOffset (chỉnh bằng CLICK_OFFSET_X/Y hoặc ô Offset X / Y).
 -- Thứ tự quan trọng: đặt IgnoreGuiInset trước, ScreenInsets sau để None là giá trị cuối cùng.
 decalGui.IgnoreGuiInset = true
 pcall(function() decalGui.ScreenInsets = Enum.ScreenInsets.None end) -- client cũ chưa có ScreenInsets thì bỏ qua
@@ -294,7 +302,7 @@ targetStroke.Parent = targetBtn
 -- Panneau de contrôle (Start / Stop)
 -- [ĐỔI] Panel rộng 260 (cũ 160) để chứa thêm nút MODE, ô Hold (s) và dòng trạng thái
 local controlFrame = Instance.new("Frame")
-controlFrame.Size = UDim2.new(0, 260, 0, 95)
+controlFrame.Size = UDim2.new(0, 260, 0, 126) -- [ĐỔI] 95 -> 126 để chứa hàng Offset X / Y
 controlFrame.Position = UDim2.new(0.5, -130, 0.6, 0)
 controlFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 controlFrame.BorderSizePixel = 0
@@ -422,6 +430,55 @@ statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Text = "IDLE"
 statusLabel.Parent = controlFrame
 
+-- [MỚI] Hàng chỉnh độ lệch chuột "Offset X / Y": bù cho việc click ảo bị dịch lên-trái. Chỉnh ngay trong game, áp dụng từ lần ấn kế tiếp.
+do
+    local offLabel = Instance.new("TextLabel")
+    offLabel.Size = UDim2.new(0, 110, 0, 22)
+    offLabel.Position = UDim2.new(0, 10, 0, 96)
+    offLabel.BackgroundTransparency = 1
+    offLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    offLabel.TextSize = 12
+    offLabel.Font = Enum.Font.Gotham
+    offLabel.TextXAlignment = Enum.TextXAlignment.Left
+    offLabel.Text = "Offset X / Y"
+    offLabel.Parent = controlFrame
+
+    local function makeOffsetBox(xPos, initial)
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(0, 56, 0, 22)
+        box.Position = UDim2.new(0, xPos, 0, 96)
+        box.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+        box.TextColor3 = Color3.fromRGB(255, 255, 255)
+        box.PlaceholderText = "0"
+        box.ClearTextOnFocus = true
+        box.TextSize = 13
+        box.Font = Enum.Font.GothamBold
+        box.Text = tostring(initial)
+        box.Parent = controlFrame
+
+        local boxCorner = Instance.new("UICorner")
+        boxCorner.CornerRadius = UDim.new(0, 6)
+        boxCorner.Parent = box
+        return box
+    end
+
+    local offXBox = makeOffsetBox(130, CLICK_OFFSET_X)
+    local offYBox = makeOffsetBox(194, CLICK_OFFSET_Y)
+
+    -- Đọc lại cả 2 ô; nhập sai/để trống thì giữ giá trị trước đó
+    local function applyOffset()
+        local x = tonumber(offXBox.Text)
+        local y = tonumber(offYBox.Text)
+        if not (x and x == x and math.abs(x) <= 500) then x = clickOffset.X end
+        if not (y and y == y and math.abs(y) <= 500) then y = clickOffset.Y end
+        clickOffset = Vector2.new(x, y)
+        offXBox.Text = tostring(x)
+        offYBox.Text = tostring(y)
+    end
+    offXBox.FocusLost:Connect(applyOffset)
+    offYBox.FocusLost:Connect(applyOffset)
+end
+
 -- [MỚI] Trạng thái
 local mode = "GRID"                 -- "GRID" (mặc định: TP theo bảng + giữ chuột), "HOLD" (giữ chuột theo giây) hoặc "CLICK" (click liên tục như bản cũ)
 local clicking = false              -- đang autoclick (chế độ CLICK)
@@ -459,10 +516,16 @@ local function formatTime(sec)
     return string.format("%02d:%02d", math.floor(sec / 60), sec % 60)
 end
 
--- Tâm vòng tròn (= giao điểm 2 đường thẳng trong ảnh) theo toạ độ MÀN HÌNH THẬT.
--- Đúng vì ScreenGui đã bỏ inset (xem phần tạo decalGui) nên AbsolutePosition trùng toạ độ của VirtualInputManager.
-local function getTargetPos()
+-- Tâm vòng tròn (= giao điểm 2 đường thẳng trong ảnh) theo toạ độ MÀN HÌNH THẬT (chỉ để nhìn / tính toán).
+local function getTargetCenter()
     return targetBtn.AbsolutePosition + (targetBtn.AbsoluteSize / 2)
+end
+
+-- [FIX LỆCH CHUỘT] Toạ độ gửi cho VirtualInputManager = tâm ảnh + độ lệch bù (clickOffset).
+-- Engine dịch click ảo lên-trái đúng bằng độ lệch đó => cộng bù ở đây thì con trỏ chuột rơi ĐÚNG tâm ảnh.
+-- MỌI chỗ ấn / nhả / click (START, HOLD, GRID, CLICK) đều lấy toạ độ qua hàm này nên luôn thống nhất.
+local function getTargetPos()
+    return getTargetCenter() + clickOffset
 end
 
 -- [FIX] solid = false: vòng tròn "xuyên thấu" - click/giữ ảo tại tâm sẽ đi thẳng xuống game, không bị vòng tròn chặn
