@@ -1,34 +1,29 @@
--- Autoclicker (+ Hold + Grid TP)
--- use this in your favorite executor: Delta, Fluxus, Codex, Seliware and others.
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- [MỚI] Thời gian giữ mặc định: 1200 giây = 20 phút (đổi được ngay trong ô "Hold (s)" trên UI)
 local HOLD_DEFAULT = 1200
-
--- [MỚI] Cấu hình chế độ GRID (tự TP theo bảng toạ độ 13x13 + giữ chuột)
-local TP_Y        = 2514   -- độ cao khi TP tới mỗi điểm
-local Y_LOW       = 1674   -- chạm (<=) mức này thì sang điểm tiếp theo
-local Y_HIGH      = 3354   -- chạm (>=) mức này thì sang điểm tiếp theo
-local CAM_HEIGHT  = 15     -- camera đặt cao hơn nhân vật bao nhiêu stud (nhìn thẳng xuống)
-local SETTLE_TIME = 0.5    -- chờ sau khi TP trước khi ấn giữ (giây)
-local ENTER_DELAY = 1      -- chờ sau khi gọi Mining (vào minigame) rồi mới TP tới điểm 1 (giây)
-local LOOP_WAIT   = 25 * 60 -- chờ sau khi LeaveMining rồi mới bắt đầu vòng mới (giây) = 25 phút
-local TARGET_SIZE = 80     -- kích thước ảnh mục tiêu trên màn hình (px). Tâm ảnh = điểm click/ấn giữ
--- [FIX LỆCH CHUỘT] Độ lệch cố định giữa toạ độ GỬI cho VirtualInputManager và vị trí con trỏ THẬT trên màn hình (đơn vị: px GUI).
---   Đo từ ảnh chụp: gửi click đúng tâm ảnh thì con trỏ rơi lệch lên-trái ~(37, 58) => cộng bù lại để con trỏ rơi ĐÚNG tâm ảnh.
---   Chỉnh nhanh ngay trong game bằng ô "Offset X / Y" trên bảng điều khiển: con trỏ còn nằm TRÊN-TRÁI tâm => TĂNG số; nằm DƯỚI-PHẢI tâm => GIẢM số; 0 / 0 = tắt bù.
+local TP_Y = 2514
+local Y_LOW = 1674
+local Y_HIGH = 3354
+local CAM_HEIGHT = 30
+local SETTLE_TIME = 0.5
+local ENTER_DELAY = 3
+local LOOP_WAIT = 25 * 60
+local TARGET_SIZE = 80
 local CLICK_OFFSET_X = 37
 local CLICK_OFFSET_Y = 58
-local clickOffset = Vector2.new(CLICK_OFFSET_X, CLICK_OFFSET_Y) -- giá trị đang dùng (ô Offset X / Y trong game sửa biến này)
+local clickOffset = Vector2.new(CLICK_OFFSET_X, CLICK_OFFSET_Y)
 
--- Bảng toạ độ theo đúng thứ tự STT trong file Excel: Z từ -155 -> -107, mỗi hàng X từ 1520 -> 1568, bước 4 (169 điểm)
 local GRID_X0, GRID_Z0, GRID_STEP, GRID_N = 1520, -155, 4, 13
 local GRID_POINTS = {}
 for j = 0, GRID_N - 1 do
@@ -36,8 +31,8 @@ for j = 0, GRID_N - 1 do
         table.insert(GRID_POINTS, { GRID_X0 + i * GRID_STEP, GRID_Z0 + j * GRID_STEP })
     end
 end
+local POINT_COUNT = #GRID_POINTS
 
--- [MỚI] Ảnh mục tiêu (PNG 240x240, nhúng dạng base64). Tâm giao điểm 2 đường thẳng = tâm ảnh = điểm click/ấn giữ
 local TARGET_FILE = "Sp1ngTarget_v1.png"
 local TARGET_PNG_B64 = [==[
 iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+VemSAAAvAElEQVR42u29yZMcV7bm97uDR0TeBItAwd2qyGIhTNYb5bo22vRSW20Ue61ksif1I0VQrIGGoQjAQLL4kGzWazO1mZa99YV2tZJM/w
@@ -162,8 +157,8 @@ local function base64Decode(data)
     for i = 1, #data, 4 do
         local c1 = B64_LOOKUP[data:sub(i, i)]
         local c2 = B64_LOOKUP[data:sub(i + 1, i + 1)]
-        local c3 = B64_LOOKUP[data:sub(i + 2, i + 2)] -- nil nếu là '='
-        local c4 = B64_LOOKUP[data:sub(i + 3, i + 3)] -- nil nếu là '='
+        local c3 = B64_LOOKUP[data:sub(i + 2, i + 2)]
+        local c4 = B64_LOOKUP[data:sub(i + 3, i + 3)]
         local v = c1 * 262144 + c2 * 4096 + (c3 or 0) * 64 + (c4 or 0)
         n = n + 1
         out[n] = string.char(math.floor(v / 65536) % 256)
@@ -179,7 +174,6 @@ local function base64Decode(data)
     return table.concat(out)
 end
 
--- Ghi ảnh ra file của executor rồi lấy asset (cần writefile + getcustomasset). Không hỗ trợ -> trả nil, dùng 🎯 như cũ
 local function loadTargetImage()
     local ok, asset = pcall(function()
         local getAsset = getcustomasset or getsynasset
@@ -194,371 +188,1133 @@ local function loadTargetImage()
     if ok and type(asset) == "string" and asset ~= "" then
         return asset
     end
-    warn("[Autoclicker] Không tải được ảnh mục tiêu, dùng 🎯: " .. tostring(asset))
+    warn("[Autoclicker] Không tải được ảnh mục tiêu, dùng vòng vẽ bằng code: " .. tostring(asset))
     return nil
 end
 
--- 1. Notification initiale
-local notifGui = Instance.new("ScreenGui")
-notifGui.Name = "Sp1ngNotification"
-notifGui.ResetOnSpawn = false
-notifGui.Parent = playerGui
+local THEME = {
+    panelTop = Color3.fromRGB(27, 32, 46),
+    panelBottom = Color3.fromRGB(16, 19, 28),
+    surface = Color3.fromRGB(22, 26, 38),
+    field = Color3.fromRGB(35, 41, 58),
+    line = Color3.fromRGB(55, 63, 87),
+    text = Color3.fromRGB(236, 240, 248),
+    soft = Color3.fromRGB(190, 199, 217),
+    dim = Color3.fromRGB(139, 149, 172),
+    faint = Color3.fromRGB(96, 106, 130),
+    ink = Color3.fromRGB(14, 17, 25),
+    go = Color3.fromRGB(52, 211, 153),
+    stop = Color3.fromRGB(244, 96, 108),
+    warn = Color3.fromRGB(255, 188, 72),
+    ring = Color3.fromRGB(230, 57, 70),
+    mapDone = Color3.fromRGB(72, 146, 196),
+}
 
-local notifFrame = Instance.new("Frame")
-notifFrame.Size = UDim2.new(0, 240, 0, 65)
-notifFrame.Position = UDim2.new(1, -250, 0, 20)
-notifFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-notifFrame.BorderSizePixel = 0
-notifFrame.Parent = notifGui
+local MODE_ORDER = { "GRID", "HOLD", "CLICK" }
+local MODE_INDEX = { GRID = 1, HOLD = 2, CLICK = 3 }
+local MODE_NAMES = { GRID = "Grid", HOLD = "Hold", CLICK = "Click" }
+local MODE_COLORS = {
+    GRID = Color3.fromRGB(96, 190, 255),
+    HOLD = Color3.fromRGB(184, 148, 255),
+    CLICK = Color3.fromRGB(255, 188, 72),
+}
 
-local notifCorner = Instance.new("UICorner")
-notifCorner.CornerRadius = UDim.new(0, 8)
-notifCorner.Parent = notifFrame
+local PANEL_W, PANEL_H = 324, 224
+local MINI_W, MINI_H = 240, 44
+local HEADER_H = 44
+local PAGE_Y, PAGE_H = 44, 122
+local PAD = 14
+local MAP_SIZE = 98
 
-local notifStroke = Instance.new("UIStroke")
-notifStroke.Color = Color3.fromRGB(0, 255, 120)
-notifStroke.Thickness = 1.5
-notifStroke.Parent = notifFrame
+local mode = "GRID"
+local clicking = false
+local holding = false
+local holdPos = nil
+local holdSession = 0
+local holdSeconds = HOLD_DEFAULT
+local gridIndex = 1
+local clickCount = 0
+local minimized = false
+local setupOpen = false
+local camLocked = false
+local uiScale = 1
+local dockX, dockY = 12, 76
+local targetX, targetY = 0, 0
+local activeToast = nil
+local pulsing = false
 
-local notifTitle = Instance.new("TextLabel")
-notifTitle.Size = UDim2.new(1, -15, 0, 25)
-notifTitle.Position = UDim2.new(0, 10, 0, 8)
-notifTitle.BackgroundTransparency = 1
-notifTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-notifTitle.TextSize = 14
-notifTitle.Font = Enum.Font.GothamBold
-notifTitle.TextXAlignment = Enum.TextXAlignment.Left
-notifTitle.Text = "auto click"
-notifTitle.Parent = notifFrame
+local connections = {}
+local ui = {}
 
-local notifSub = Instance.new("TextLabel")
-notifSub.Size = UDim2.new(1, -15, 0, 20)
-notifSub.Position = UDim2.new(0, 10, 0, 33)
-notifSub.BackgroundTransparency = 1
-notifSub.TextColor3 = Color3.fromRGB(0, 255, 120)
-notifSub.TextSize = 12
-notifSub.Font = Enum.Font.Gotham
-notifSub.TextXAlignment = Enum.TextXAlignment.Left
-notifSub.Text = "made by sp1ng"
-notifSub.Parent = notifFrame
-
--- Disparition de la notification après 4 secondes
-task.delay(4, function()
-    if notifGui then notifGui:Destroy() end
-end)
-
--- [MỚI] Chạy lại script thì xoá GUI cũ (sự kiện Destroying bên dưới sẽ tự nhả chuột nếu đang giữ)
-local oldGui = playerGui:FindFirstChild("Sp1ngAutoClicker")
-if oldGui then oldGui:Destroy() end
-
--- 2. UI Principale de l'Autoclicker avec cible déplaçable
-decalGui = Instance.new("ScreenGui")
-decalGui.Name = "Sp1ngAutoClicker"
-decalGui.ResetOnSpawn = false
--- [FIX LỆCH CLICK] Cho ScreenGui phủ kín màn hình, KHÔNG chừa inset (thanh topbar + tai thỏ/viền an toàn).
--- Nguyên nhân cũ: AbsolutePosition tính theo gốc GUI (đã trừ inset) còn VirtualInputManager nhận toạ độ MÀN HÌNH THẬT
---   => click ảo bị lệch lên-trái đúng bằng inset (trên máy bạn ~36px ngang, ~57px dọc) nên không trúng tâm vòng tròn.
--- Bỏ inset thì AbsolutePosition == toạ độ màn hình thật => click rơi đúng tâm.
--- [FIX 2] Bỏ inset vẫn CHƯA đủ trên máy này: engine còn dịch click ảo lên-trái ~(37, 58) px.
---   => đã cộng bù trong getTargetPos() bằng clickOffset (chỉnh bằng CLICK_OFFSET_X/Y hoặc ô Offset X / Y).
--- Thứ tự quan trọng: đặt IgnoreGuiInset trước, ScreenInsets sau để None là giá trị cuối cùng.
-decalGui.IgnoreGuiInset = true
-pcall(function() decalGui.ScreenInsets = Enum.ScreenInsets.None end) -- client cũ chưa có ScreenInsets thì bỏ qua
-decalGui.Parent = playerGui
-
--- Bouton cible à glisser (Draggable target)
--- [ĐỔI] Dùng ảnh thay cho 🎯; tâm nút (AbsolutePosition + AbsoluteSize/2) = tâm ảnh = điểm click/ấn giữ
-local targetImage = loadTargetImage()
-local targetSize = targetImage and TARGET_SIZE or 50
-local targetBtn
--- [FIX] Dùng ImageLabel/TextLabel (không phải *Button) + thuộc tính Active để bật/tắt việc "nuốt" input:
---   click ảo giờ rơi đúng TÂM vòng tròn, nếu vòng tròn là nút thì chính nó sẽ chặn cú click, game không nhận được.
---   Lúc rảnh Active = true (kéo thả được); lúc đang chạy Active = false (click xuyên qua xuống game) - xem setTargetSolid().
-if targetImage then
-    targetBtn = Instance.new("ImageLabel")
-    targetBtn.Image = targetImage
-    targetBtn.ScaleType = Enum.ScaleType.Stretch
-    targetBtn.BackgroundTransparency = 1 -- giữ phần trong suốt của ảnh
-else
-    targetBtn = Instance.new("TextLabel") -- dự phòng: như bản cũ
-    targetBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    targetBtn.Text = "🎯"
-    targetBtn.TextSize = 22
-end
-targetBtn.Active = true
-targetBtn.Size = UDim2.new(0, targetSize, 0, targetSize)
-targetBtn.Position = UDim2.new(0.5, -targetSize / 2, 0.4, 0)
-targetBtn.Parent = decalGui
-
-local targetCorner = Instance.new("UICorner")
-targetCorner.CornerRadius = UDim.new(1, 0)
-targetCorner.Parent = targetBtn
-
-local targetStroke = Instance.new("UIStroke")
-targetStroke.Color = Color3.fromRGB(0, 255, 120)
-targetStroke.Thickness = 2
-targetStroke.Parent = targetBtn
-
--- Panneau de contrôle (Start / Stop)
--- [ĐỔI] Panel rộng 260 (cũ 160) để chứa thêm nút MODE, ô Hold (s) và dòng trạng thái
-local controlFrame = Instance.new("Frame")
-controlFrame.Size = UDim2.new(0, 260, 0, 126) -- [ĐỔI] 95 -> 126 để chứa hàng Offset X / Y
-controlFrame.Position = UDim2.new(0.5, -130, 0.6, 0)
-controlFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-controlFrame.BorderSizePixel = 0
-controlFrame.Parent = decalGui
-
-local controlCorner = Instance.new("UICorner")
-controlCorner.CornerRadius = UDim.new(0, 10)
-controlCorner.Parent = controlFrame
-
-local controlStroke = Instance.new("UIStroke")
-controlStroke.Color = Color3.fromRGB(50, 50, 50)
-controlStroke.Thickness = 1
-controlStroke.Parent = controlFrame
-
-local startBtn = Instance.new("TextButton")
-startBtn.Size = UDim2.new(0, 110, 0, 35) -- [ĐỔI] 140 -> 110
-startBtn.Position = UDim2.new(0, 10, 0, 10)
-startBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 90)
-startBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-startBtn.TextSize = 14
-startBtn.Font = Enum.Font.GothamBold
-startBtn.Text = "START"
-startBtn.Parent = controlFrame
-
-local startCorner = Instance.new("UICorner")
-startCorner.CornerRadius = UDim.new(0, 6)
-startCorner.Parent = startBtn
-
-local stopBtn = Instance.new("TextButton")
-stopBtn.Size = UDim2.new(0, 110, 0, 35) -- [ĐỔI] 140 -> 110
-stopBtn.Position = UDim2.new(0, 10, 0, 52)
-stopBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-stopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-stopBtn.TextSize = 14
-stopBtn.Font = Enum.Font.GothamBold
-stopBtn.Text = "STOP"
-stopBtn.Parent = controlFrame
-
-local stopCorner = Instance.new("UICorner")
-stopCorner.CornerRadius = UDim.new(0, 6)
-stopCorner.Parent = stopBtn
-
--- [MỚI] Nút đổi chế độ: HOLD (giữ chuột) <-> CLICK (click liên tục như bản cũ)
-local modeBtn = Instance.new("TextButton")
-modeBtn.Size = UDim2.new(0, 120, 0, 26)
-modeBtn.Position = UDim2.new(0, 130, 0, 10)
-modeBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-modeBtn.TextColor3 = Color3.fromRGB(80, 200, 255)
-modeBtn.TextSize = 13
-modeBtn.Font = Enum.Font.GothamBold
-modeBtn.Text = "MODE: GRID"
-modeBtn.Parent = controlFrame
-
-local modeCorner = Instance.new("UICorner")
-modeCorner.CornerRadius = UDim.new(0, 6)
-modeCorner.Parent = modeBtn
-
--- [MỚI] Ô nhập thời gian giữ (giây) - chỉ hiện ở chế độ HOLD
-local holdLabel = Instance.new("TextLabel")
-holdLabel.Size = UDim2.new(0, 56, 0, 22)
-holdLabel.Position = UDim2.new(0, 130, 0, 40)
-holdLabel.BackgroundTransparency = 1
-holdLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-holdLabel.TextSize = 12
-holdLabel.Font = Enum.Font.Gotham
-holdLabel.TextXAlignment = Enum.TextXAlignment.Left
-holdLabel.Text = "Hold (s)"
-holdLabel.Visible = false -- [ĐỔI] mặc định là GRID nên ẩn ô Hold
-holdLabel.Parent = controlFrame
-
-local holdBox = Instance.new("TextBox")
-holdBox.Size = UDim2.new(0, 60, 0, 22)
-holdBox.Position = UDim2.new(0, 190, 0, 40)
-holdBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-holdBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-holdBox.PlaceholderText = tostring(HOLD_DEFAULT)
-holdBox.ClearTextOnFocus = true
-holdBox.TextSize = 13
-holdBox.Font = Enum.Font.GothamBold
-holdBox.Text = tostring(HOLD_DEFAULT)
-holdBox.Visible = false -- [ĐỔI] mặc định là GRID nên ẩn ô Hold
-holdBox.Parent = controlFrame
-
-local holdBoxCorner = Instance.new("UICorner")
-holdBoxCorner.CornerRadius = UDim.new(0, 6)
-holdBoxCorner.Parent = holdBox
-
--- [MỚI] Ô chọn điểm bắt đầu (chỉ hiện ở chế độ GRID): 1..169, tự cập nhật theo điểm đang chạy để START lại thì chạy tiếp
-local idxLabel = Instance.new("TextLabel")
-idxLabel.Size = UDim2.new(0, 56, 0, 22)
-idxLabel.Position = UDim2.new(0, 130, 0, 40)
-idxLabel.BackgroundTransparency = 1
-idxLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-idxLabel.TextSize = 12
-idxLabel.Font = Enum.Font.Gotham
-idxLabel.TextXAlignment = Enum.TextXAlignment.Left
-idxLabel.Text = "Point #"
-idxLabel.Parent = controlFrame
-
-local idxBox = Instance.new("TextBox")
-idxBox.Size = UDim2.new(0, 60, 0, 22)
-idxBox.Position = UDim2.new(0, 190, 0, 40)
-idxBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-idxBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-idxBox.PlaceholderText = "1"
-idxBox.ClearTextOnFocus = true
-idxBox.TextSize = 13
-idxBox.Font = Enum.Font.GothamBold
-idxBox.Text = "1"
-idxBox.Parent = controlFrame
-
-local idxBoxCorner = Instance.new("UICorner")
-idxBoxCorner.CornerRadius = UDim.new(0, 6)
-idxBoxCorner.Parent = idxBox
-
--- [MỚI] Dòng trạng thái (IDLE / HOLD mm:ss / CLICKING / GRID n/169)
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(0, 120, 0, 22)
-statusLabel.Position = UDim2.new(0, 130, 0, 66)
-statusLabel.BackgroundTransparency = 1
-statusLabel.TextColor3 = Color3.fromRGB(0, 255, 120)
-statusLabel.TextSize = 12
-statusLabel.Font = Enum.Font.GothamBold
-statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-statusLabel.Text = "IDLE"
-statusLabel.Parent = controlFrame
-
--- [MỚI] Hàng chỉnh độ lệch chuột "Offset X / Y": bù cho việc click ảo bị dịch lên-trái. Chỉnh ngay trong game, áp dụng từ lần ấn kế tiếp.
-do
-    local offLabel = Instance.new("TextLabel")
-    offLabel.Size = UDim2.new(0, 110, 0, 22)
-    offLabel.Position = UDim2.new(0, 10, 0, 96)
-    offLabel.BackgroundTransparency = 1
-    offLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    offLabel.TextSize = 12
-    offLabel.Font = Enum.Font.Gotham
-    offLabel.TextXAlignment = Enum.TextXAlignment.Left
-    offLabel.Text = "Offset X / Y"
-    offLabel.Parent = controlFrame
-
-    local function makeOffsetBox(xPos, initial)
-        local box = Instance.new("TextBox")
-        box.Size = UDim2.new(0, 56, 0, 22)
-        box.Position = UDim2.new(0, xPos, 0, 96)
-        box.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-        box.TextColor3 = Color3.fromRGB(255, 255, 255)
-        box.PlaceholderText = "0"
-        box.ClearTextOnFocus = true
-        box.TextSize = 13
-        box.Font = Enum.Font.GothamBold
-        box.Text = tostring(initial)
-        box.Parent = controlFrame
-
-        local boxCorner = Instance.new("UICorner")
-        boxCorner.CornerRadius = UDim.new(0, 6)
-        boxCorner.Parent = box
-        return box
-    end
-
-    local offXBox = makeOffsetBox(130, CLICK_OFFSET_X)
-    local offYBox = makeOffsetBox(194, CLICK_OFFSET_Y)
-
-    -- Đọc lại cả 2 ô; nhập sai/để trống thì giữ giá trị trước đó
-    local function applyOffset()
-        local x = tonumber(offXBox.Text)
-        local y = tonumber(offYBox.Text)
-        if not (x and x == x and math.abs(x) <= 500) then x = clickOffset.X end
-        if not (y and y == y and math.abs(y) <= 500) then y = clickOffset.Y end
-        clickOffset = Vector2.new(x, y)
-        offXBox.Text = tostring(x)
-        offYBox.Text = tostring(y)
-    end
-    offXBox.FocusLost:Connect(applyOffset)
-    offYBox.FocusLost:Connect(applyOffset)
+local function connect(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(connections, connection)
+    return connection
 end
 
--- [MỚI] Trạng thái
-local mode = "GRID"                 -- "GRID" (mặc định: TP theo bảng + giữ chuột), "HOLD" (giữ chuột theo giây) hoặc "CLICK" (click liên tục như bản cũ)
-local clicking = false              -- đang autoclick (chế độ CLICK)
-local holding = false               -- đang giữ chuột (chế độ HOLD)
-local holdPos = nil                 -- vị trí đã nhấn xuống, dùng để nhả đúng chỗ
-local holdSession = 0               -- đổi mỗi lần start/stop để huỷ bộ đếm giờ cũ
-local holdSeconds = HOLD_DEFAULT    -- thời gian giữ hiện tại (giây)
+local function create(className, props, parent)
+    local instance = Instance.new(className)
+    for key, value in pairs(props) do
+        instance[key] = value
+    end
+    instance.Parent = parent
+    return instance
+end
 
--- Logique de glissement (Drag) pour le bouton cible
-local dragging, dragInput, dragStart, startPos
-targetBtn.InputBegan:Connect(function(input)
-    if holding or clicking then return end -- [MỚI] đang giữ/click thì khoá vị trí mục tiêu (bấm STOP rồi mới kéo được)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = targetBtn.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
+local function addCorner(parent, radius)
+    return create("UICorner", { CornerRadius = UDim.new(0, radius) }, parent)
+end
+
+local function addPill(parent)
+    return create("UICorner", { CornerRadius = UDim.new(1, 0) }, parent)
+end
+
+local function addStroke(parent, color, thickness)
+    return create("UIStroke", {
+        Color = color,
+        Thickness = thickness or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, parent)
+end
+
+local function makeLabel(parent, props)
+    local merged = {
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium,
+        TextColor3 = THEME.text,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    }
+    for key, value in pairs(props) do
+        merged[key] = value
+    end
+    return create("TextLabel", merged, parent)
+end
+
+local function makeButton(parent, props)
+    local merged = {
+        AutoButtonColor = false,
+        BorderSizePixel = 0,
+        BackgroundColor3 = THEME.field,
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.text,
+        TextSize = 13,
+        Text = "",
+    }
+    for key, value in pairs(props) do
+        merged[key] = value
+    end
+    return create("TextButton", merged, parent)
+end
+
+local function makeBox(parent, props)
+    local box = create("TextBox", {
+        Name = props.Name,
+        Position = props.Position,
+        Size = props.Size,
+        BackgroundColor3 = THEME.field,
+        BorderSizePixel = 0,
+        TextColor3 = THEME.text,
+        PlaceholderColor3 = THEME.faint,
+        PlaceholderText = props.Placeholder or "",
+        Font = Enum.Font.RobotoMono,
+        TextSize = 13,
+        ClearTextOnFocus = true,
+        Text = props.Text or "",
+        TextXAlignment = Enum.TextXAlignment.Center,
+    }, parent)
+    addCorner(box, 8)
+    local boxStroke = addStroke(box, THEME.line, 1)
+    connect(box.Focused, function()
+        boxStroke.Color = MODE_COLORS[mode]
+    end)
+    connect(box.FocusLost, function()
+        boxStroke.Color = THEME.line
+    end)
+    return box
+end
+
+local function iconBar(parent, width, height, rotation, color)
+    local bar = create("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(width, height),
+        Rotation = rotation,
+        BackgroundColor3 = color,
+        BorderSizePixel = 0,
+    }, parent)
+    addCorner(bar, 1)
+    return bar
+end
+
+local function iconSquare(parent, size, color)
+    local square = create("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(size, size),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+    }, parent)
+    addCorner(square, 2)
+    addStroke(square, color, 2)
+    return square
+end
+
+local function addPressFeedback(button, radius)
+    local shade = create("Frame", {
+        Name = "Shade",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+    }, button)
+    addCorner(shade, radius)
+    connect(button.InputBegan, function(input)
+        local inputType = input.UserInputType
+        if inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.Touch then
+            shade.BackgroundTransparency = 0.8
+            local changed
+            changed = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    shade.BackgroundTransparency = 1
+                    if changed then
+                        changed:Disconnect()
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+local function makeDraggable(handles, getOrigin, onMove, canDrag)
+    local dragging = false
+    local dragInput = nil
+    local dragStart = nil
+    local origin = nil
+
+    for _, handle in ipairs(handles) do
+        connect(handle.InputBegan, function(input)
+            if canDrag and not canDrag() then
+                return
+            end
+            local inputType = input.UserInputType
+            if inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragInput = input
+                dragStart = input.Position
+                origin = getOrigin()
+                local changed
+                changed = input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        if dragInput == input then
+                            dragging = false
+                            dragInput = nil
+                        end
+                        if changed then
+                            changed:Disconnect()
+                        end
+                    end
+                end)
             end
         end)
     end
-end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        targetBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    connect(UserInputService.InputChanged, function(input)
+        if not dragging then
+            return
+        end
+        local inputType = input.UserInputType
+        if inputType == Enum.UserInputType.MouseMovement or (inputType == Enum.UserInputType.Touch and input == dragInput) then
+            local delta = input.Position - dragStart
+            onMove(origin, delta)
+        end
+    end)
+
+    return function()
+        dragging = false
+        dragInput = nil
     end
-end)
+end
 
--- [MỚI] Hàm hỗ trợ
 local function formatTime(sec)
     sec = math.max(0, math.floor(sec))
     return string.format("%02d:%02d", math.floor(sec / 60), sec % 60)
 end
 
--- Tâm vòng tròn (= giao điểm 2 đường thẳng trong ảnh) theo toạ độ MÀN HÌNH THẬT (chỉ để nhìn / tính toán).
-local function getTargetCenter()
-    return targetBtn.AbsolutePosition + (targetBtn.AbsoluteSize / 2)
+local function isRunning()
+    return clicking or holding
 end
 
--- [FIX LỆCH CHUỘT] Toạ độ gửi cho VirtualInputManager = tâm ảnh + độ lệch bù (clickOffset).
--- Engine dịch click ảo lên-trái đúng bằng độ lệch đó => cộng bù ở đây thì con trỏ chuột rơi ĐÚNG tâm ảnh.
--- MỌI chỗ ấn / nhả / click (START, HOLD, GRID, CLICK) đều lấy toạ độ qua hàm này nên luôn thống nhất.
+local oldGui = playerGui:FindFirstChild("Sp1ngAutoClicker")
+if oldGui then
+    oldGui:Destroy()
+end
+
+ui.gui = Instance.new("ScreenGui")
+ui.gui.Name = "Sp1ngAutoClicker"
+ui.gui.ResetOnSpawn = false
+ui.gui.DisplayOrder = 10000
+ui.gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ui.gui.IgnoreGuiInset = true
+pcall(function()
+    ui.gui.ScreenInsets = Enum.ScreenInsets.None
+end)
+ui.gui.Parent = playerGui
+
+local function screenSize()
+    local size = ui.gui.AbsoluteSize
+    if size.X > 0 and size.Y > 0 then
+        return size
+    end
+    local camera = workspace.CurrentCamera
+    if camera then
+        return camera.ViewportSize
+    end
+    return Vector2.new(1280, 720)
+end
+
+local function clampToScreen(x, y, width, height)
+    local screen = screenSize()
+    local maxX = math.max(0, screen.X - width)
+    local maxY = math.max(0, screen.Y - height)
+    return math.floor(math.clamp(x, 0, maxX) + 0.5), math.floor(math.clamp(y, 0, maxY) + 0.5)
+end
+
+local function buildTarget()
+    local screen = screenSize()
+    targetX = math.floor(screen.X / 2 - TARGET_SIZE / 2)
+    targetY = math.floor(screen.Y * 0.4)
+    local image = loadTargetImage()
+    local target
+    if image then
+        target = create("ImageLabel", {
+            Name = "Target",
+            Image = image,
+            ScaleType = Enum.ScaleType.Stretch,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Active = true,
+            Size = UDim2.fromOffset(TARGET_SIZE, TARGET_SIZE),
+            Position = UDim2.fromOffset(targetX, targetY),
+        }, ui.gui)
+    else
+        target = create("Frame", {
+            Name = "Target",
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Active = true,
+            Size = UDim2.fromOffset(TARGET_SIZE, TARGET_SIZE),
+            Position = UDim2.fromOffset(targetX, targetY),
+        }, ui.gui)
+        local ring = create("Frame", {
+            Name = "Ring",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, -6, 1, -6),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+        }, target)
+        addPill(ring)
+        addStroke(ring, THEME.ring, 2)
+        create("Frame", {
+            Name = "LineH",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, -10, 0, 1),
+            BackgroundColor3 = THEME.text,
+            BackgroundTransparency = 0.2,
+            BorderSizePixel = 0,
+        }, target)
+        create("Frame", {
+            Name = "LineV",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(0, 1, 1, -10),
+            BackgroundColor3 = THEME.text,
+            BackgroundTransparency = 0.2,
+            BorderSizePixel = 0,
+        }, target)
+    end
+    addPill(target)
+    ui.targetStroke = addStroke(target, MODE_COLORS.GRID, 2)
+    ui.target = target
+end
+
+local function buildPanel()
+    local full = create("Frame", {
+        Name = "Panel",
+        Size = UDim2.fromOffset(PANEL_W, PANEL_H),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        Active = true,
+    }, ui.gui)
+    addCorner(full, 14)
+    addStroke(full, THEME.line, 1)
+    create("UIGradient", {
+        Rotation = 90,
+        Color = ColorSequence.new(THEME.panelTop, THEME.panelBottom),
+    }, full)
+    ui.fullScale = create("UIScale", { Scale = 1 }, full)
+    ui.full = full
+
+    local header = create("Frame", {
+        Name = "Header",
+        Size = UDim2.fromOffset(PANEL_W, HEADER_H),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+    }, full)
+
+    ui.statusDot = create("Frame", {
+        Name = "Dot",
+        Position = UDim2.fromOffset(PAD, 18),
+        Size = UDim2.fromOffset(8, 8),
+        BackgroundColor3 = THEME.dim,
+        BorderSizePixel = 0,
+    }, header)
+    addPill(ui.statusDot)
+
+    makeLabel(header, {
+        Name = "Title",
+        Position = UDim2.fromOffset(PAD + 18, 6),
+        Size = UDim2.fromOffset(130, 18),
+        Text = "Autoclicker",
+        Font = Enum.Font.GothamBold,
+        TextSize = 15,
+    })
+    makeLabel(header, {
+        Name = "Credit",
+        Position = UDim2.fromOffset(PAD + 18, 24),
+        Size = UDim2.fromOffset(130, 13),
+        Text = "by MinzTogether",
+        TextSize = 11,
+        TextColor3 = THEME.dim,
+    })
+
+    ui.dragZone = create("Frame", {
+        Name = "DragZone",
+        Size = UDim2.fromOffset(190, HEADER_H),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Active = true,
+    }, header)
+
+    ui.setupBtn = makeButton(header, {
+        Name = "Setup",
+        Position = UDim2.fromOffset(196, 9),
+        Size = UDim2.fromOffset(52, 26),
+        Text = "Setup",
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        TextColor3 = THEME.soft,
+    })
+    addPill(ui.setupBtn)
+    ui.setupStroke = addStroke(ui.setupBtn, THEME.line, 1)
+    addPressFeedback(ui.setupBtn, 13)
+
+    ui.minBtn = makeButton(header, {
+        Name = "Minimize",
+        Position = UDim2.fromOffset(254, 9),
+        Size = UDim2.fromOffset(26, 26),
+    })
+    addPill(ui.minBtn)
+    iconBar(ui.minBtn, 10, 2, 0, THEME.soft)
+    addPressFeedback(ui.minBtn, 13)
+
+    ui.closeBtn = makeButton(header, {
+        Name = "Close",
+        Position = UDim2.fromOffset(286, 9),
+        Size = UDim2.fromOffset(26, 26),
+    })
+    addPill(ui.closeBtn)
+    iconBar(ui.closeBtn, 12, 2, 45, THEME.soft)
+    iconBar(ui.closeBtn, 12, 2, -45, THEME.soft)
+    addPressFeedback(ui.closeBtn, 13)
+
+    local track = create("Frame", {
+        Name = "Progress",
+        Position = UDim2.fromOffset(0, HEADER_H - 3),
+        Size = UDim2.fromOffset(PANEL_W, 3),
+        BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0,
+    }, full)
+    ui.fill = create("Frame", {
+        Name = "Fill",
+        Size = UDim2.fromScale(0, 1),
+        BackgroundColor3 = THEME.dim,
+        BorderSizePixel = 0,
+    }, track)
+
+    ui.runPage = create("Frame", {
+        Name = "RunPage",
+        Position = UDim2.fromOffset(0, PAGE_Y),
+        Size = UDim2.fromOffset(PANEL_W, PAGE_H),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+    }, full)
+
+    ui.modePill = makeLabel(ui.runPage, {
+        Name = "Mode",
+        Position = UDim2.fromOffset(PAD, 14),
+        Size = UDim2.fromOffset(88, 20),
+        BackgroundTransparency = 0,
+        BackgroundColor3 = THEME.field,
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Text = "Grid mode",
+    })
+    addPill(ui.modePill)
+    ui.modeStroke = addStroke(ui.modePill, MODE_COLORS.GRID, 1)
+
+    ui.stateLabel = makeLabel(ui.runPage, {
+        Name = "State",
+        Position = UDim2.fromOffset(PAD, 40),
+        Size = UDim2.fromOffset(188, 26),
+        Font = Enum.Font.GothamBold,
+        TextSize = 20,
+        Text = "Idle",
+    })
+    ui.detailLabel = makeLabel(ui.runPage, {
+        Name = "Detail",
+        Position = UDim2.fromOffset(PAD, 68),
+        Size = UDim2.fromOffset(188, 16),
+        TextColor3 = THEME.soft,
+        Text = "",
+    })
+    ui.hintLabel = makeLabel(ui.runPage, {
+        Name = "Hint",
+        Position = UDim2.fromOffset(PAD, 94),
+        Size = UDim2.fromOffset(188, 16),
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextColor3 = THEME.dim,
+        Text = "",
+    })
+
+    ui.mapFrame = create("Frame", {
+        Name = "Map",
+        Position = UDim2.fromOffset(PANEL_W - PAD - MAP_SIZE, 12),
+        Size = UDim2.fromOffset(MAP_SIZE, MAP_SIZE),
+        BackgroundColor3 = THEME.surface,
+        BorderSizePixel = 0,
+    }, ui.runPage)
+    addCorner(ui.mapFrame, 8)
+    addStroke(ui.mapFrame, THEME.line, 1)
+
+    ui.cellHolder = create("Frame", {
+        Name = "Cells",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+    }, ui.mapFrame)
+    ui.cells = {}
+    for i = 1, POINT_COUNT do
+        local col = (i - 1) % GRID_N
+        local row = math.floor((i - 1) / GRID_N)
+        ui.cells[i] = create("Frame", {
+            Name = "Cell" .. i,
+            Position = UDim2.fromOffset(4 + col * 7, 4 + row * 7),
+            Size = UDim2.fromOffset(6, 6),
+            BackgroundColor3 = THEME.line,
+            BorderSizePixel = 0,
+        }, ui.cellHolder)
+    end
+
+    ui.readoutValue = makeLabel(ui.mapFrame, {
+        Name = "ReadoutValue",
+        Position = UDim2.fromOffset(0, 28),
+        Size = UDim2.fromOffset(MAP_SIZE, 26),
+        Font = Enum.Font.RobotoMono,
+        TextSize = 20,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Text = "",
+        Visible = false,
+    })
+    ui.readoutCaption = makeLabel(ui.mapFrame, {
+        Name = "ReadoutCaption",
+        Position = UDim2.fromOffset(0, 56),
+        Size = UDim2.fromOffset(MAP_SIZE, 14),
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextColor3 = THEME.dim,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Text = "",
+        Visible = false,
+    })
+
+    ui.setupPage = create("Frame", {
+        Name = "SetupPage",
+        Position = UDim2.fromOffset(0, PAGE_Y),
+        Size = UDim2.fromOffset(PANEL_W, PAGE_H),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Visible = false,
+    }, full)
+
+    local seg = create("Frame", {
+        Name = "Modes",
+        Position = UDim2.fromOffset(PAD, 10),
+        Size = UDim2.fromOffset(PANEL_W - PAD * 2, 34),
+        BackgroundColor3 = THEME.field,
+        BorderSizePixel = 0,
+    }, ui.setupPage)
+    addCorner(seg, 10)
+    addStroke(seg, THEME.line, 1)
+    ui.indicator = create("Frame", {
+        Name = "Indicator",
+        Position = UDim2.new(0, 3, 0, 3),
+        Size = UDim2.new(1 / 3, -6, 1, -6),
+        BackgroundColor3 = MODE_COLORS.GRID,
+        BackgroundTransparency = 0.82,
+        BorderSizePixel = 0,
+    }, seg)
+    addCorner(ui.indicator, 8)
+    ui.indicatorStroke = addStroke(ui.indicator, MODE_COLORS.GRID, 1)
+    ui.segButtons = {}
+    for index, name in ipairs(MODE_ORDER) do
+        ui.segButtons[name] = makeButton(seg, {
+            Name = name,
+            Position = UDim2.new((index - 1) / 3, 0, 0, 0),
+            Size = UDim2.new(1 / 3, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Text = MODE_NAMES[name],
+            TextColor3 = THEME.dim,
+        })
+    end
+
+    local function makeRow(name, y)
+        return create("Frame", {
+            Name = name,
+            Position = UDim2.fromOffset(0, y),
+            Size = UDim2.fromOffset(PANEL_W, 28),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+        }, ui.setupPage)
+    end
+
+    ui.gridRow = makeRow("GridRow", 54)
+    makeLabel(ui.gridRow, {
+        Position = UDim2.fromOffset(PAD, 0),
+        Size = UDim2.fromOffset(110, 28),
+        Text = "Start point",
+        TextColor3 = THEME.soft,
+    })
+    ui.idxBox = makeBox(ui.gridRow, {
+        Name = "StartPoint",
+        Position = UDim2.fromOffset(130, 0),
+        Size = UDim2.fromOffset(64, 28),
+        Text = "1",
+        Placeholder = "1",
+    })
+    makeLabel(ui.gridRow, {
+        Position = UDim2.fromOffset(204, 0),
+        Size = UDim2.fromOffset(100, 28),
+        Text = "of " .. POINT_COUNT,
+        TextColor3 = THEME.dim,
+    })
+
+    ui.holdRow = makeRow("HoldRow", 54)
+    ui.holdRow.Visible = false
+    makeLabel(ui.holdRow, {
+        Position = UDim2.fromOffset(PAD, 0),
+        Size = UDim2.fromOffset(110, 28),
+        Text = "Hold for",
+        TextColor3 = THEME.soft,
+    })
+    ui.holdBox = makeBox(ui.holdRow, {
+        Name = "HoldSeconds",
+        Position = UDim2.fromOffset(130, 0),
+        Size = UDim2.fromOffset(64, 28),
+        Text = tostring(HOLD_DEFAULT),
+        Placeholder = tostring(HOLD_DEFAULT),
+    })
+    makeLabel(ui.holdRow, {
+        Position = UDim2.fromOffset(204, 0),
+        Size = UDim2.fromOffset(100, 28),
+        Text = "seconds",
+        TextColor3 = THEME.dim,
+    })
+
+    ui.clickRow = makeRow("ClickRow", 54)
+    ui.clickRow.Visible = false
+    makeLabel(ui.clickRow, {
+        Position = UDim2.fromOffset(PAD, 0),
+        Size = UDim2.fromOffset(PANEL_W - PAD * 2, 28),
+        Text = "Clicks once per frame at the ring",
+        TextColor3 = THEME.soft,
+    })
+
+    local offsetRow = makeRow("OffsetRow", 90)
+    makeLabel(offsetRow, {
+        Position = UDim2.fromOffset(PAD, 0),
+        Size = UDim2.fromOffset(46, 28),
+        Text = "Offset",
+        TextColor3 = THEME.soft,
+    })
+
+    local function makeStepper(x, axis, initial)
+        makeLabel(offsetRow, {
+            Position = UDim2.fromOffset(x, 0),
+            Size = UDim2.fromOffset(12, 28),
+            Text = axis,
+            Font = Enum.Font.GothamBold,
+            TextColor3 = THEME.dim,
+        })
+        local minus = makeButton(offsetRow, {
+            Name = axis .. "Minus",
+            Position = UDim2.fromOffset(x + 14, 0),
+            Size = UDim2.fromOffset(26, 28),
+        })
+        addCorner(minus, 8)
+        iconBar(minus, 10, 2, 0, THEME.soft)
+        addPressFeedback(minus, 8)
+        local box = makeBox(offsetRow, {
+            Name = axis .. "Offset",
+            Position = UDim2.fromOffset(x + 42, 0),
+            Size = UDim2.fromOffset(42, 28),
+            Text = tostring(initial),
+            Placeholder = "0",
+        })
+        local plus = makeButton(offsetRow, {
+            Name = axis .. "Plus",
+            Position = UDim2.fromOffset(x + 86, 0),
+            Size = UDim2.fromOffset(26, 28),
+        })
+        addCorner(plus, 8)
+        iconBar(plus, 10, 2, 0, THEME.soft)
+        iconBar(plus, 2, 10, 0, THEME.soft)
+        addPressFeedback(plus, 8)
+        return box, minus, plus
+    end
+
+    ui.offXBox, ui.offXMinus, ui.offXPlus = makeStepper(62, "X", CLICK_OFFSET_X)
+    ui.offYBox, ui.offYMinus, ui.offYPlus = makeStepper(184, "Y", CLICK_OFFSET_Y)
+
+    ui.startBtn = makeButton(full, {
+        Name = "Start",
+        Position = UDim2.fromOffset(PAD, 174),
+        Size = UDim2.fromOffset(143, 38),
+        Text = "Start",
+        TextSize = 14,
+    })
+    addCorner(ui.startBtn, 11)
+    addPressFeedback(ui.startBtn, 11)
+
+    ui.stopBtn = makeButton(full, {
+        Name = "Stop",
+        Position = UDim2.fromOffset(PAD + 143 + 10, 174),
+        Size = UDim2.fromOffset(143, 38),
+        Text = "Stop",
+        TextSize = 14,
+    })
+    addCorner(ui.stopBtn, 11)
+    addPressFeedback(ui.stopBtn, 11)
+end
+
+local function buildMini()
+    local mini = create("Frame", {
+        Name = "Mini",
+        Size = UDim2.fromOffset(MINI_W, MINI_H),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        Active = true,
+        Visible = false,
+    }, ui.gui)
+    addCorner(mini, 12)
+    addStroke(mini, THEME.line, 1)
+    create("UIGradient", {
+        Rotation = 90,
+        Color = ColorSequence.new(THEME.panelTop, THEME.panelBottom),
+    }, mini)
+    ui.miniScale = create("UIScale", { Scale = 1 }, mini)
+    ui.mini = mini
+
+    ui.miniDot = create("Frame", {
+        Name = "Dot",
+        Position = UDim2.fromOffset(PAD, 18),
+        Size = UDim2.fromOffset(8, 8),
+        BackgroundColor3 = THEME.dim,
+        BorderSizePixel = 0,
+    }, mini)
+    addPill(ui.miniDot)
+
+    ui.miniLabel = makeLabel(mini, {
+        Name = "State",
+        Position = UDim2.fromOffset(PAD + 16, 0),
+        Size = UDim2.fromOffset(98, MINI_H - 3),
+        Text = "Idle",
+    })
+
+    ui.miniDrag = create("Frame", {
+        Name = "DragZone",
+        Size = UDim2.fromOffset(128, MINI_H),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Active = true,
+    }, mini)
+
+    ui.miniToggle = makeButton(mini, {
+        Name = "Toggle",
+        Position = UDim2.fromOffset(132, 9),
+        Size = UDim2.fromOffset(58, 26),
+        Text = "Start",
+        TextSize = 12,
+    })
+    addPill(ui.miniToggle)
+    addPressFeedback(ui.miniToggle, 13)
+
+    ui.miniExpand = makeButton(mini, {
+        Name = "Expand",
+        Position = UDim2.fromOffset(MINI_W - 12 - 26, 9),
+        Size = UDim2.fromOffset(26, 26),
+    })
+    addPill(ui.miniExpand)
+    iconSquare(ui.miniExpand, 10, THEME.soft)
+    addPressFeedback(ui.miniExpand, 13)
+
+    local track = create("Frame", {
+        Name = "Progress",
+        Position = UDim2.fromOffset(14, MINI_H - 4),
+        Size = UDim2.fromOffset(MINI_W - 28, 3),
+        BackgroundColor3 = THEME.line,
+        BorderSizePixel = 0,
+    }, mini)
+    ui.miniFill = create("Frame", {
+        Name = "Fill",
+        Size = UDim2.fromScale(0, 1),
+        BackgroundColor3 = THEME.dim,
+        BorderSizePixel = 0,
+    }, track)
+end
+
+local function panelSize()
+    if minimized then
+        return Vector2.new(MINI_W * uiScale, MINI_H * uiScale)
+    end
+    return Vector2.new(PANEL_W * uiScale, PANEL_H * uiScale)
+end
+
+local function placePanel(x, y)
+    dockX, dockY = x, y
+    local position = UDim2.fromOffset(x, y)
+    ui.full.Position = position
+    ui.mini.Position = position
+end
+
+local function placeTarget(x, y)
+    targetX, targetY = x, y
+    ui.target.Position = UDim2.fromOffset(x, y)
+end
+
+local function applyScale()
+    local screen = screenSize()
+    uiScale = math.clamp(math.min(screen.X / 760, screen.Y / 440), 0.7, 1)
+    ui.fullScale.Scale = uiScale
+    ui.miniScale.Scale = uiScale
+end
+
+local function keepOnScreen()
+    local size = panelSize()
+    placePanel(clampToScreen(dockX, dockY, size.X, size.Y))
+    placeTarget(clampToScreen(targetX, targetY, TARGET_SIZE, TARGET_SIZE))
+end
+
+local function notify(title, body, tone, duration)
+    if activeToast then
+        activeToast:Destroy()
+        activeToast = nil
+    end
+    local toast = create("Frame", {
+        Name = "Toast",
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, -72),
+        Size = UDim2.fromOffset(276, 56),
+        BackgroundColor3 = THEME.panelTop,
+        BorderSizePixel = 0,
+    }, ui.gui)
+    addCorner(toast, 12)
+    addStroke(toast, THEME.line, 1)
+    local accent = create("Frame", {
+        Name = "Accent",
+        Position = UDim2.fromOffset(12, 14),
+        Size = UDim2.fromOffset(4, 28),
+        BackgroundColor3 = tone or THEME.go,
+        BorderSizePixel = 0,
+    }, toast)
+    addPill(accent)
+    makeLabel(toast, {
+        Name = "Title",
+        Position = UDim2.fromOffset(26, 9),
+        Size = UDim2.fromOffset(240, 18),
+        Text = title,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+    })
+    makeLabel(toast, {
+        Name = "Body",
+        Position = UDim2.fromOffset(26, 28),
+        Size = UDim2.fromOffset(240, 16),
+        Text = body,
+        TextColor3 = THEME.dim,
+    })
+    activeToast = toast
+    TweenService:Create(toast, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, 0, 0, 14),
+    }):Play()
+    task.delay(duration or 3.5, function()
+        if activeToast ~= toast or not toast.Parent then
+            return
+        end
+        activeToast = nil
+        local tween = TweenService:Create(toast, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(0.5, 0, 0, -72),
+        })
+        tween.Completed:Connect(function()
+            toast:Destroy()
+        end)
+        tween:Play()
+    end)
+end
+
+local function setProgress(ratio, color)
+    local size = UDim2.fromScale(math.clamp(ratio, 0, 1), 1)
+    ui.fill.Size = size
+    ui.fill.BackgroundColor3 = color
+    ui.miniFill.Size = size
+    ui.miniFill.BackgroundColor3 = color
+end
+
+local function setStatus(state, detail, short, ratio, tone)
+    ui.stateLabel.Text = state
+    ui.detailLabel.Text = detail
+    ui.miniLabel.Text = short
+    ui.statusDot.BackgroundColor3 = tone
+    ui.miniDot.BackgroundColor3 = tone
+    setProgress(ratio, tone)
+end
+
+local cellStates = {}
+
+local function renderMap(done, current)
+    for i = 1, POINT_COUNT do
+        local wanted = 0
+        if i == current then
+            wanted = 2
+        elseif i <= done then
+            wanted = 1
+        end
+        if cellStates[i] ~= wanted then
+            cellStates[i] = wanted
+            local cell = ui.cells[i]
+            if wanted == 2 then
+                cell.BackgroundColor3 = THEME.text
+            elseif wanted == 1 then
+                cell.BackgroundColor3 = THEME.mapDone
+            else
+                cell.BackgroundColor3 = THEME.line
+            end
+        end
+    end
+end
+
+local function setReadout(value, caption)
+    ui.readoutValue.Text = value
+    ui.readoutCaption.Text = caption
+end
+
+local function styleAction(button, lit, color)
+    if lit then
+        button.BackgroundColor3 = color
+        button.TextColor3 = THEME.ink
+    else
+        button.BackgroundColor3 = THEME.field
+        button.TextColor3 = THEME.faint
+    end
+end
+
+local function applyTargetLook()
+    if isRunning() then
+        ui.targetStroke.Color = THEME.go
+    else
+        ui.targetStroke.Color = MODE_COLORS[mode]
+    end
+end
+
+local function setPulse(on)
+    if on == pulsing then
+        return
+    end
+    pulsing = on
+    for _, tween in ipairs(ui.pulses) do
+        if on then
+            tween:Play()
+        else
+            tween:Cancel()
+        end
+    end
+    if not on then
+        ui.statusDot.BackgroundTransparency = 0
+        ui.miniDot.BackgroundTransparency = 0
+    end
+end
+
+local function refreshControls()
+    local running = isRunning()
+    styleAction(ui.startBtn, not running, THEME.go)
+    styleAction(ui.stopBtn, running, THEME.stop)
+    ui.miniToggle.Text = running and "Stop" or "Start"
+    styleAction(ui.miniToggle, true, running and THEME.stop or THEME.go)
+    for _, button in pairs(ui.segButtons) do
+        button.TextTransparency = running and 0.55 or 0
+    end
+    ui.hintLabel.Text = running and "Stop to move the ring." or "Drag the ring to aim."
+    applyTargetLook()
+    setPulse(running)
+end
+
+local function refreshIdle()
+    if isRunning() then
+        return
+    end
+    local detail
+    if mode == "GRID" then
+        detail = string.format("Next: point %d of %d", gridIndex, POINT_COUNT)
+        renderMap(gridIndex - 1, gridIndex)
+    elseif mode == "HOLD" then
+        detail = "Holds for " .. formatTime(holdSeconds)
+        setReadout(formatTime(holdSeconds), "hold time")
+    else
+        detail = "Every frame at the ring"
+        setReadout(tostring(clickCount), "clicks")
+    end
+    setStatus("Idle", detail, "Idle", 0, THEME.dim)
+end
+
+local function setPage(open)
+    setupOpen = open
+    local color = MODE_COLORS[mode]
+    ui.runPage.Visible = not open
+    ui.setupPage.Visible = open
+    ui.setupBtn.Text = open and "Done" or "Setup"
+    ui.setupBtn.TextColor3 = open and color or THEME.soft
+    ui.setupStroke.Color = open and color or THEME.line
+end
+
+local function applyMode()
+    local color = MODE_COLORS[mode]
+    ui.modePill.Text = MODE_NAMES[mode] .. " mode"
+    ui.modePill.TextColor3 = color
+    ui.modeStroke.Color = color
+    ui.indicator.BackgroundColor3 = color
+    ui.indicatorStroke.Color = color
+    for name, button in pairs(ui.segButtons) do
+        button.TextColor3 = name == mode and color or THEME.dim
+    end
+    TweenService:Create(ui.indicator, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Position = UDim2.new((MODE_INDEX[mode] - 1) / 3, 3, 0, 3),
+    }):Play()
+    ui.gridRow.Visible = mode == "GRID"
+    ui.holdRow.Visible = mode == "HOLD"
+    ui.clickRow.Visible = mode == "CLICK"
+    ui.cellHolder.Visible = mode == "GRID"
+    ui.readoutValue.Visible = mode ~= "GRID"
+    ui.readoutCaption.Visible = mode ~= "GRID"
+    setPage(setupOpen)
+    applyTargetLook()
+    refreshIdle()
+end
+
+local function setMode(name)
+    if isRunning() or name == mode then
+        return
+    end
+    mode = name
+    applyMode()
+end
+
+local function setMinimized(value)
+    minimized = value
+    ui.full.Visible = not value
+    ui.mini.Visible = value
+    keepOnScreen()
+end
+
+local function readGridIndex()
+    local n = tonumber(ui.idxBox.Text)
+    if n and n == n then
+        gridIndex = math.clamp(math.floor(n), 1, POINT_COUNT)
+    end
+    ui.idxBox.Text = tostring(gridIndex)
+    return gridIndex
+end
+
+local function setGridIndex(n)
+    gridIndex = n
+    ui.idxBox.Text = tostring(n)
+end
+
+local function readHoldDuration()
+    local n = tonumber(ui.holdBox.Text)
+    if n and n == n and n >= 1 and n < math.huge then
+        holdSeconds = math.floor(n)
+    end
+    ui.holdBox.Text = tostring(holdSeconds)
+    return holdSeconds
+end
+
+local function applyOffset()
+    local x = tonumber(ui.offXBox.Text)
+    local y = tonumber(ui.offYBox.Text)
+    if not (x and x == x and math.abs(x) <= 500) then
+        x = clickOffset.X
+    end
+    if not (y and y == y and math.abs(y) <= 500) then
+        y = clickOffset.Y
+    end
+    clickOffset = Vector2.new(x, y)
+    ui.offXBox.Text = tostring(x)
+    ui.offYBox.Text = tostring(y)
+end
+
+local function nudgeOffset(axis, amount)
+    applyOffset()
+    local x, y = clickOffset.X, clickOffset.Y
+    if axis == "X" then
+        x = math.clamp(x + amount, -500, 500)
+    else
+        y = math.clamp(y + amount, -500, 500)
+    end
+    clickOffset = Vector2.new(x, y)
+    ui.offXBox.Text = tostring(x)
+    ui.offYBox.Text = tostring(y)
+end
+
+local function getTargetCenter()
+    return ui.target.AbsolutePosition + (ui.target.AbsoluteSize / 2)
+end
+
 local function getTargetPos()
     return getTargetCenter() + clickOffset
 end
 
--- [FIX] solid = false: vòng tròn "xuyên thấu" - click/giữ ảo tại tâm sẽ đi thẳng xuống game, không bị vòng tròn chặn
---       solid = true : vòng tròn nhận chạm lại (kéo thả được). Bật lại chậm 0.2s để cú NHẢ chuột ảo cuối cùng
---                      (gửi lúc STOP, xử lý ở khung hình sau) vẫn đi xuyên xuống game, không bị kẹt chuột.
 local function setTargetSolid(solid)
     if not solid then
-        dragging = false -- huỷ thao tác kéo đang dở (nếu có)
-        targetBtn.Active = false
+        ui.cancelTargetDrag()
+        ui.target.Active = false
+        ui.full.Active = false
         return
     end
     task.delay(0.2, function()
-        if not (clicking or holding) then -- lỡ bấm START lại trong 0.2s thì giữ nguyên xuyên thấu
-            targetBtn.Active = true
+        if not isRunning() then
+            ui.target.Active = true
+            ui.full.Active = true
         end
     end)
 end
 
--- Đọc ô Hold (s); nhập sai/để trống thì giữ lại giá trị trước đó
-local function readHoldDuration()
-    local n = tonumber(holdBox.Text)
-    if n and n == n and n >= 1 and n < math.huge then
-        holdSeconds = math.floor(n)
-    end
-    holdBox.Text = tostring(holdSeconds)
-    return holdSeconds
-end
-
-holdBox.FocusLost:Connect(function()
-    readHoldDuration()
-end)
-
--- [MỚI] Nhả chuột tại đúng vị trí đã nhấn (không đổi cờ holding)
 local function mouseUp()
     if holdPos then
         local p = holdPos
@@ -574,10 +1330,11 @@ local function releaseHold()
     mouseUp()
 end
 
--- [MỚI] Lấy HumanoidRootPart của nhân vật đang sống (nil nếu đang chết / chưa respawn)
 local function getHRP()
     local char = player.Character
-    if not char then return nil end
+    if not char then
+        return nil
+    end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hrp and hum and hum.Health > 0 then
@@ -586,51 +1343,61 @@ local function getHRP()
     return nil
 end
 
--- [MỚI] Ghim camera nhìn thẳng xuống, bám theo nhân vật mỗi khung hình
-local camLocked = false
 local function lockCamera()
-    if camLocked then return end
-    camLocked = true
+    if camLocked then
+        return
+    end
     local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+    camLocked = true
     camera.CameraType = Enum.CameraType.Scriptable
-    pcall(function() RunService:UnbindFromRenderStep("Sp1ngTopDownCam") end)
+    pcall(function()
+        RunService:UnbindFromRenderStep("Sp1ngTopDownCam")
+    end)
     RunService:BindToRenderStep("Sp1ngTopDownCam", Enum.RenderPriority.Camera.Value + 1, function()
         local hrp = getHRP()
         if hrp then
-            -- xoay -90 độ quanh trục X = nhìn thẳng xuống (+X bên phải màn hình, -Z lên trên)
             camera.CFrame = CFrame.new(hrp.Position + Vector3.new(0, CAM_HEIGHT, 0)) * CFrame.Angles(-math.pi / 2, 0, 0)
         end
     end)
 end
 
 local function unlockCamera()
-    if not camLocked then return end
+    if not camLocked then
+        return
+    end
     camLocked = false
-    pcall(function() RunService:UnbindFromRenderStep("Sp1ngTopDownCam") end)
+    pcall(function()
+        RunService:UnbindFromRenderStep("Sp1ngTopDownCam")
+    end)
     local camera = workspace.CurrentCamera
-    camera.CameraType = Enum.CameraType.Custom
-    local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then camera.CameraSubject = hum end
+    if camera then
+        camera.CameraType = Enum.CameraType.Custom
+        local char = player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            camera.CameraSubject = hum
+        end
+    end
 end
 
--- [MỚI] Dừng tất cả (click + hold) và trả UI về trạng thái chờ
 local function stopAll()
     clicking = false
     if holding then
         releaseHold()
     end
     holdSession = holdSession + 1
-    unlockCamera() -- [MỚI] trả camera về bình thường
-    setTargetSolid(true) -- [FIX] dừng rồi thì vòng tròn kéo thả lại được
-    startBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 90)
-    statusLabel.Text = "IDLE"
+    unlockCamera()
+    setTargetSolid(true)
+    refreshControls()
+    refreshIdle()
 end
 
--- [MỚI] Bắt đầu giữ chuột: nhấn xuống 1 lần tại 🎯 rồi giữ đến khi hết giờ hoặc bấm STOP
 local function startHold()
     local duration = readHoldDuration()
-    holding = true -- đặt trước khi nhấn để logic kéo thả ở trên bỏ qua cú nhấn ảo này
+    holding = true
     holdSession = holdSession + 1
     local session = holdSession
 
@@ -647,182 +1414,318 @@ local function startHold()
             if remaining <= 0 then
                 break
             end
-            statusLabel.Text = "HOLD " .. formatTime(remaining)
+            setStatus(
+                "Holding",
+                "Releases in " .. formatTime(remaining),
+                "Holding " .. formatTime(remaining),
+                1 - remaining / duration,
+                MODE_COLORS.HOLD
+            )
+            setReadout(formatTime(remaining), "left")
             task.wait(0.5)
         end
         if holding and session == holdSession then
-            stopAll() -- hết giờ -> tự nhả
+            stopAll()
+            notify("Hold finished", "Mouse button released", THEME.go)
         end
     end)
 end
 
--- [MỚI] Vào minigame Mining (đầu mỗi vòng)
 local function enterMining()
     local ok, err = pcall(function()
         local Event = game:GetService("ReplicatedStorage").Remotes.Minigames.Mining
         Event:InvokeServer()
     end)
-    if not ok then warn("[GRID] Mining:InvokeServer lỗi: " .. tostring(err)) end
+    if not ok then
+        warn("[GRID] Mining:InvokeServer lỗi: " .. tostring(err))
+        notify("Could not enter mining", "Open the console (F9) for details.", THEME.warn, 4)
+    end
 end
 
--- [MỚI] Rời minigame Mining (sau điểm cuối cùng)
 local function leaveMining()
     local ok, err = pcall(function()
         local Event = game:GetService("ReplicatedStorage").Services.Minigame.MiningGameNetwork.LeaveMining
         Event:FireServer()
     end)
-    if not ok then warn("[GRID] LeaveMining:FireServer lỗi: " .. tostring(err)) end
+    if not ok then
+        warn("[GRID] LeaveMining:FireServer lỗi: " .. tostring(err))
+        notify("Could not leave mining", "Open the console (F9) for details.", THEME.warn, 4)
+    end
 end
 
--- [MỚI] Chế độ GRID (lặp vô hạn đến khi bấm STOP):
---   Mining:InvokeServer -> chờ 3s -> với mỗi điểm: TP -> ghim camera nhìn xuống -> ấn giữ -> Y chạm Y_LOW/Y_HIGH thì sang điểm kế
---   -> xong điểm cuối: LeaveMining:FireServer -> chờ 25 phút -> vòng mới từ điểm 1
-local function startGrid()
-    local idx = math.floor(tonumber(idxBox.Text) or 1)
-    idx = math.clamp(idx, 1, #GRID_POINTS)
-    idxBox.Text = tostring(idx)
+local function showMining(idx, y)
+    local fraction
+    if y < TP_Y then
+        fraction = (TP_Y - y) / (TP_Y - Y_LOW)
+    else
+        fraction = (y - TP_Y) / (Y_HIGH - TP_Y)
+    end
+    fraction = math.clamp(fraction, 0, 1)
+    setStatus(
+        "Mining",
+        string.format("Point %d of %d, Y %d", idx, POINT_COUNT, math.floor(y)),
+        string.format("Mining %d/%d", idx, POINT_COUNT),
+        (idx - 1 + fraction) / POINT_COUNT,
+        MODE_COLORS.GRID
+    )
+end
 
-    holding = true -- khoá kéo 🎯 trong lúc chạy (bấm STOP rồi mới kéo được)
+local function startGrid()
+    local idx = readGridIndex()
+
+    holding = true
     holdSession = holdSession + 1
     local session = holdSession
-    local function alive() return holding and session == holdSession end
+    local function alive()
+        return holding and session == holdSession
+    end
 
     task.spawn(function()
-      while alive() do
-        -- [MỚI] 1. vào minigame rồi chờ ENTER_DELAY giây
-        statusLabel.Text = "ENTER MINING"
-        enterMining()
-        local t0 = os.clock()
-        while alive() and os.clock() - t0 < ENTER_DELAY do
-            task.wait(0.1)
-        end
-        if not alive() then break end
-
-        -- 2. chạy lần lượt các điểm trong bảng
-        while alive() and idx <= #GRID_POINTS do
-            -- chờ nhân vật sống (lỡ chết thì đợi respawn rồi TP lại đúng điểm đang làm)
-            local hrp = getHRP()
-            while alive() and not hrp do
-                statusLabel.Text = "WAIT RESPAWN"
-                task.wait(0.3)
-                hrp = getHRP()
-            end
-            if not alive() then break end
-
-            -- 2a. nhả chuột (nếu đang giữ) rồi TP tới điểm: x, z theo bảng, y = TP_Y
-            mouseUp()
-            local pt = GRID_POINTS[idx]
-            hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            hrp.CFrame = CFrame.new(pt[1], TP_Y, pt[2])
-            idxBox.Text = tostring(idx)
-
-            -- 2b. ghim camera nhìn thẳng xuống
-            lockCamera()
-            task.wait(SETTLE_TIME)
-            if not alive() then break end
-
-            -- 2c. ấn giữ tại 🎯
-            holdPos = getTargetPos()
-            local p = holdPos
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, 0, true, game, 1)
-            end)
-
-            -- 2d. giữ cho đến khi Y chạm Y_LOW hoặc Y_HIGH
-            local reached = false
-            while alive() do
-                local h = getHRP()
-                if not h then break end -- chết -> vòng ngoài sẽ TP lại điểm này
-                local y = h.Position.Y
-                statusLabel.Text = string.format("%d/%d Y%d", idx, #GRID_POINTS, math.floor(y))
-                if y <= Y_LOW or y >= Y_HIGH then
-                    reached = true
-                    break
-                end
+        while alive() do
+            setStatus("Entering", "Opening the mining minigame", "Entering", 0, THEME.warn)
+            renderMap(idx - 1, idx)
+            enterMining()
+            local t0 = os.clock()
+            while alive() and os.clock() - t0 < ENTER_DELAY do
                 task.wait(0.1)
             end
-            if reached then
-                idx = idx + 1
+            if not alive() then
+                break
+            end
+
+            while alive() and idx <= POINT_COUNT do
+                local hrp = getHRP()
+                while alive() and not hrp do
+                    setStatus(
+                        "Respawn",
+                        "Waiting for your character",
+                        "Respawn",
+                        (idx - 1) / POINT_COUNT,
+                        THEME.warn
+                    )
+                    task.wait(0.3)
+                    hrp = getHRP()
+                end
+                if not alive() then
+                    break
+                end
+
+                mouseUp()
+                local pt = GRID_POINTS[idx]
+                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                hrp.CFrame = CFrame.new(pt[1], TP_Y, pt[2])
+                setGridIndex(idx)
+                renderMap(idx - 1, idx)
+                showMining(idx, TP_Y)
+
+                lockCamera()
+                task.wait(SETTLE_TIME)
+                if not alive() then
+                    break
+                end
+
+                holdPos = getTargetPos()
+                local p = holdPos
+                pcall(function()
+                    VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, 0, true, game, 1)
+                end)
+
+                local reached = false
+                while alive() do
+                    local h = getHRP()
+                    if not h then
+                        break
+                    end
+                    local y = h.Position.Y
+                    showMining(idx, y)
+                    if y <= Y_LOW or y >= Y_HIGH then
+                        reached = true
+                        break
+                    end
+                    task.wait(0.1)
+                end
+                if reached then
+                    idx = idx + 1
+                end
+            end
+            if not alive() then
+                break
+            end
+
+            mouseUp()
+            unlockCamera()
+            leaveMining()
+            idx = 1
+            setGridIndex(1)
+            renderMap(POINT_COUNT, 0)
+            notify("Cycle complete", "Next run in " .. formatTime(LOOP_WAIT), THEME.go)
+
+            local endTime = os.time() + LOOP_WAIT
+            while alive() do
+                local remaining = endTime - os.time()
+                if remaining <= 0 then
+                    break
+                end
+                setStatus(
+                    "Cooldown",
+                    "Next cycle in " .. formatTime(remaining),
+                    "Cooldown " .. formatTime(remaining),
+                    1 - remaining / LOOP_WAIT,
+                    THEME.warn
+                )
+                task.wait(0.5)
             end
         end
-        if not alive() then break end
-
-        -- [MỚI] 3. xong điểm cuối: nhả chuột, trả camera, rời minigame
-        mouseUp()
-        unlockCamera()
-        leaveMining()
-        idx = 1
-        idxBox.Text = "1"
-
-        -- 4. chờ LOOP_WAIT giây (25 phút) rồi lặp lại từ đầu
-        local endTime = os.time() + LOOP_WAIT
-        while alive() do
-            local remaining = endTime - os.time()
-            if remaining <= 0 then break end
-            statusLabel.Text = "WAIT " .. formatTime(remaining)
-            task.wait(0.5)
-        end
-      end
     end)
 end
 
--- Logique d'autoclick puissant
-startBtn.MouseButton1Click:Connect(function()
-    if clicking or holding then return end
-    setTargetSolid(false) -- [FIX] click ảo rơi đúng tâm vòng tròn => cho vòng tròn xuyên thấu để game nhận được click
-    startBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 45)
+local function startClicking()
+    clicking = true
+    clickCount = 0
+    holdSession = holdSession + 1
+    local session = holdSession
+    setStatus("Clicking", "Every frame at the ring", "Clicking", 1, MODE_COLORS.CLICK)
+    setReadout("0", "clicks")
+    task.spawn(function()
+        while clicking and session == holdSession do
+            setReadout(tostring(clickCount), "clicks")
+            task.wait(0.25)
+        end
+    end)
+end
+
+local function startRun()
+    if isRunning() then
+        return
+    end
+    setTargetSolid(false)
+    setPage(false)
     if mode == "GRID" then
         startGrid()
     elseif mode == "HOLD" then
         startHold()
     else
-        clicking = true
-        statusLabel.Text = "CLICKING"
+        startClicking()
     end
-end)
+    refreshControls()
+end
 
-stopBtn.MouseButton1Click:Connect(function()
-    stopAll()
-end)
+local function bindEvents()
+    connect(ui.startBtn.MouseButton1Click, startRun)
+    connect(ui.stopBtn.MouseButton1Click, stopAll)
+    connect(ui.miniToggle.MouseButton1Click, function()
+        if isRunning() then
+            stopAll()
+        else
+            startRun()
+        end
+    end)
+    connect(ui.setupBtn.MouseButton1Click, function()
+        setPage(not setupOpen)
+    end)
+    connect(ui.minBtn.MouseButton1Click, function()
+        setMinimized(true)
+    end)
+    connect(ui.miniExpand.MouseButton1Click, function()
+        setMinimized(false)
+    end)
+    connect(ui.closeBtn.MouseButton1Click, function()
+        ui.gui:Destroy()
+    end)
 
--- [ĐỔI] Đổi chế độ GRID -> HOLD -> CLICK -> GRID (không đổi được khi đang chạy)
-modeBtn.MouseButton1Click:Connect(function()
-    if clicking or holding then return end
-    if mode == "GRID" then
-        mode = "HOLD"
-        modeBtn.TextColor3 = Color3.fromRGB(0, 255, 120)
-    elseif mode == "HOLD" then
-        mode = "CLICK"
-        modeBtn.TextColor3 = Color3.fromRGB(255, 190, 60)
-    else
-        mode = "GRID"
-        modeBtn.TextColor3 = Color3.fromRGB(80, 200, 255)
-    end
-    modeBtn.Text = "MODE: " .. mode
-    holdLabel.Visible = (mode == "HOLD")
-    holdBox.Visible = (mode == "HOLD")
-    idxLabel.Visible = (mode == "GRID")
-    idxBox.Visible = (mode == "GRID")
-end)
-
-RunService.RenderStepped:Connect(function()
-    if clicking then
-        local absPos = getTargetPos()
-        pcall(function()
-            VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, true, game, 1)
-            task.wait()
-            VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, false, game, 1)
+    for name, button in pairs(ui.segButtons) do
+        connect(button.MouseButton1Click, function()
+            setMode(name)
         end)
     end
-end)
 
--- [MỚI] Nếu GUI bị xoá khi đang giữ thì nhả chuột luôn, tránh bị kẹt nút
-decalGui.Destroying:Connect(function()
-    clicking = false
-    if holding then
-        releaseHold()
-    end
-    holdSession = holdSession + 1
-    unlockCamera() -- [MỚI] GUI bị xoá thì trả camera lại bình thường
-end)
+    connect(ui.idxBox.FocusLost, function()
+        readGridIndex()
+        refreshIdle()
+    end)
+    connect(ui.holdBox.FocusLost, function()
+        readHoldDuration()
+        refreshIdle()
+    end)
+    connect(ui.offXBox.FocusLost, applyOffset)
+    connect(ui.offYBox.FocusLost, applyOffset)
+    connect(ui.offXMinus.MouseButton1Click, function()
+        nudgeOffset("X", -1)
+    end)
+    connect(ui.offXPlus.MouseButton1Click, function()
+        nudgeOffset("X", 1)
+    end)
+    connect(ui.offYMinus.MouseButton1Click, function()
+        nudgeOffset("Y", -1)
+    end)
+    connect(ui.offYPlus.MouseButton1Click, function()
+        nudgeOffset("Y", 1)
+    end)
+
+    ui.cancelTargetDrag = makeDraggable({ ui.target }, function()
+        return Vector2.new(targetX, targetY)
+    end, function(origin, delta)
+        placeTarget(clampToScreen(origin.X + delta.X, origin.Y + delta.Y, TARGET_SIZE, TARGET_SIZE))
+    end, function()
+        return not isRunning()
+    end)
+
+    makeDraggable({ ui.dragZone, ui.miniDrag }, function()
+        return Vector2.new(dockX, dockY)
+    end, function(origin, delta)
+        local size = panelSize()
+        placePanel(clampToScreen(origin.X + delta.X, origin.Y + delta.Y, size.X, size.Y))
+    end)
+
+    connect(ui.gui:GetPropertyChangedSignal("AbsoluteSize"), function()
+        applyScale()
+        keepOnScreen()
+    end)
+
+    connect(RunService.RenderStepped, function()
+        if clicking then
+            local absPos = getTargetPos()
+            clickCount = clickCount + 1
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, true, game, 1)
+                task.wait()
+                VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, false, game, 1)
+            end)
+        end
+    end)
+
+    ui.gui.Destroying:Connect(function()
+        clicking = false
+        if holding then
+            releaseHold()
+        end
+        holdSession = holdSession + 1
+        unlockCamera()
+        setPulse(false)
+        for _, connection in ipairs(connections) do
+            connection:Disconnect()
+        end
+    end)
+end
+
+buildTarget()
+buildPanel()
+buildMini()
+
+ui.pulses = {}
+for _, dot in ipairs({ ui.statusDot, ui.miniDot }) do
+    table.insert(ui.pulses, TweenService:Create(
+        dot,
+        TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        { BackgroundTransparency = 0.65 }
+    ))
+end
+
+applyScale()
+local initialSize = panelSize()
+placePanel(clampToScreen(dockX, dockY, initialSize.X, initialSize.Y))
+bindEvents()
+applyMode()
+refreshControls()
+notify("Autoclicker", "made by MinzTogether", THEME.go, 4)
