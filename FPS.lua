@@ -56,7 +56,7 @@ return function(ctx)
 
     --// ================= SAVED CHOICES =================
     local Prefs = {}
-    do (function()
+    do
         local dataPath = ctx.dataPath or function(name) return name end
         local FILE = dataPath("Elysera_Fps.json")
         local canFS = typeof(readfile) == "function" and typeof(writefile) == "function"
@@ -88,11 +88,11 @@ return function(ctx)
                 pcall(writefile, FILE, HttpService:JSONEncode(data))
             end)
         end
-    end)() end
+    end
 
     --// ================= FPS CAP =================
     local FpsCap = {}
-    do (function()
+    do
         local COVER_CAP = 15
         local canSet = typeof(setfpscap) == "function"
         local original
@@ -139,7 +139,7 @@ return function(ctx)
             userCap, coverCap, afkCap = nil, nil, nil
             apply()
         end
-    end)() end
+    end
 
     --// ================= SHARED UI =================
     local borderStroke  = UI.BorderStroke
@@ -148,7 +148,7 @@ return function(ctx)
 
     --// ================= MODE SELECTOR (toggle + dropdown) =================
     local createModeRow
-    do (function()
+    do
         local POP_GAP, ITEM_H, POP_PAD = 4, 30, 4
         local BOX_H, ARROW_W, GAP = 26, 28, 6
         local BOX_MIN_W, BOX_MAX_W = 96, 220
@@ -171,12 +171,12 @@ return function(ctx)
             ZIndex = 15,
         }, MainUI)
 
-        local PopList = new("CanvasGroup", {
+        local PopList = new("Frame", {
             Name = "ModeList",
             AnchorPoint = Vector2.new(1, 0),
             BackgroundColor3 = Theme.Background,
             BorderSizePixel = 0,
-            GroupTransparency = 1,
+            ClipsDescendants = true,
             Visible = false,
             ZIndex = 16,
         }, MainUI)
@@ -193,11 +193,6 @@ return function(ctx)
 
         local Popup = { open = false, owner = nil, token = 0 }
 
-        local function repaint()
-            local fn = ctx.repaintContent
-            if fn then fn() end
-        end
-
         local function closePopup()
             if not Popup.open then return end
             Popup.open = false
@@ -208,10 +203,9 @@ return function(ctx)
             local owner = Popup.owner
             Popup.owner = nil
             if owner then owner.onClosed() end
-            tween(PopList, 0.1, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN).Completed:Connect(function()
+            tween(PopList, 0.1, { Size = UDim2.fromOffset(PopList.AbsoluteSize.X, 0) }, EASE_QUAD, DIR_IN).Completed:Connect(function()
                 if Popup.token == token then
                     PopList.Visible = false
-                    repaint()
                 end
             end)
         end
@@ -273,13 +267,11 @@ return function(ctx)
             setLocked(true)
             PopBlocker.Visible = true
 
-            PopList.Size = UDim2.fromOffset(w, h)
-            PopList.Position = UDim2.fromOffset(x, y - 4)
-            PopList.GroupTransparency = 1
+            PopList.Size = UDim2.fromOffset(w, 0)
+            PopList.Position = UDim2.fromOffset(x, y)
             PopList.Visible = true
-            tween(PopList, 0.12, { GroupTransparency = 0, Position = UDim2.fromOffset(x, y) }, EASE_QUAD, DIR_OUT)
+            tween(PopList, 0.12, { Size = UDim2.fromOffset(w, h) }, EASE_QUAD, DIR_OUT)
             api.onOpened()
-            repaint()
         end
 
         PopBlocker.Activated:Connect(closePopup)
@@ -287,6 +279,9 @@ return function(ctx)
         MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(closePopup)
         MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
             if not MainUI.Visible then closePopup() end
+        end)
+        FPSTab:GetPropertyChangedSignal("Visible"):Connect(function()
+            if not FPSTab.Visible then closePopup() end
         end)
         onDestroy(function()
             closePopup()
@@ -385,7 +380,7 @@ return function(ctx)
             end)
             return api
         end
-    end)() end
+    end
 
     --// ================= SECTIONS =================
     local Optimize  = createSection(FPSTab, "Optimize", 2, { subtitle = "FPS profile, cap, distant players" })
@@ -498,7 +493,7 @@ return function(ctx)
     --// ================= IDLE SAVER =================
     local Saver = {}
     local SAVER_MODES = { "After 1 min", "After 3 min", "After 5 min", "After 10 min" }
-    do (function()
+    do
         local conns, run, lastInput, covered = {}, 0, os.clock(), false
         local COUNTS = {
             [Enum.UserInputType.MouseMovement] = true,
@@ -552,11 +547,11 @@ return function(ctx)
         end
 
         onDestroy(Saver.stop)
-    end)() end
+    end
 
     --// ================= MUTE AUDIO =================
     local MuteAudio = {}
-    do (function()
+    do
         local active = false
         local savedMaster
         local savedVolumes = setmetatable({}, { __mode = "k" })
@@ -603,12 +598,12 @@ return function(ctx)
         end
 
         onDestroy(MuteAudio.disable)
-    end)() end
+    end
 
     --// ================= HIDE DISTANT PLAYERS =================
     local CullPlayers = {}
     local CULL_MODES = { "Beyond 50m", "Beyond 100m", "Beyond 200m", "Beyond 350m" }
-    do (function()
+    do
         local active, runId, maxDist = false, 0, 100
         local hiddenChars = setmetatable({}, { __mode = "k" }) -- char -> { parts, decals, hum, nameMode }
 
@@ -693,11 +688,11 @@ return function(ctx)
         end
 
         onDestroy(CullPlayers.stop)
-    end)() end
+    end
 
     --// ================= HIDE CHAT & PLAYER LIST =================
     local HideUi = {}
-    do (function()
+    do
         local TYPES = { Enum.CoreGuiType.PlayerList, Enum.CoreGuiType.Chat }
         local hiddenByUs, active = {}, false
 
@@ -723,11 +718,11 @@ return function(ctx)
         end
 
         onDestroy(HideUi.disable)
-    end)() end
+    end
 
     --// ================= REMOVE NOTIFICATION =================
     local Notif = {}
-    do (function()
+    do
         local NOTIF_WORDS = {
             notification = true, notifications = true, notif = true, toast = true,
             announcement = true, announce = true, notice = true,
@@ -753,7 +748,7 @@ return function(ctx)
         end
 
         local state
-        do (function()
+        do
             local okEnv, env = pcall(function() return getgenv() end)
             env = okEnv and env or _G
             state = env.__ElyseraNotif
@@ -761,7 +756,7 @@ return function(ctx)
                 state = { on = false, hooked = false }
                 env.__ElyseraNotif = state
             end
-        end)() end
+        end
 
         local function installHook()
             if state.hooked then return end
@@ -847,13 +842,13 @@ return function(ctx)
             table.clear(hidden)
             table.clear(nameCache)
         end
-    end)() end
+    end
 
     --// ================= OPTIMIZER =================
     local MODES = { "Balanced", "Performance", "Extreme" }
     local Ctl = { mode = "Balanced", enabled = false }
     local reconcile
-    do (function()
+    do
     local Opt = {
         snapshot = setmetatable({}, { __mode = "k" }),
         conns = {},
@@ -1267,7 +1262,7 @@ return function(ctx)
         Opt.restoring = false
         Opt.restore(true)
     end)
-    end)() end
+    end
 
     --// ================= PERFORMANCE METER (with Avg & 1% Low) =================
     local function statusEntry(text, token)
@@ -1284,11 +1279,11 @@ return function(ctx)
     }
 
     local Meter = { fps = 0, avg = 0, low1 = 0, ms = 0, ping = nil, mem = nil, listeners = {} }
-    do (function()
+    do
         local beat
         local wanted = {}
         local frames, elapsed, lastSlow = 0, 0, -1
-        local frameFpsWindow = {} -- rolling window of individual frame FPS (up to 300 frames)
+        local frameFpsWindow, winIdx = {}, 0 -- rolling ring buffer of individual frame FPS (up to 300 frames)
         local MAX_WINDOW = 300
 
         local function readPing()
@@ -1330,10 +1325,8 @@ return function(ctx)
             end
             frames = frames + 1
             elapsed = elapsed + dt
-            frameFpsWindow[#frameFpsWindow + 1] = 1 / dt
-            if #frameFpsWindow > MAX_WINDOW then
-                table.remove(frameFpsWindow, 1)
-            end
+            winIdx = (winIdx % MAX_WINDOW) + 1
+            frameFpsWindow[winIdx] = 1 / dt
             if elapsed < 0.5 then return end
 
             Meter.fps = frames / elapsed
@@ -1353,7 +1346,7 @@ return function(ctx)
             wanted[key] = on or nil
             local want = not destroyed and next(wanted) ~= nil
             if want and not beat then
-                frames, elapsed, lastSlow = 0, 0, -1
+                frames, elapsed, lastSlow, winIdx = 0, 0, -1, 0
                 table.clear(frameFpsWindow)
                 beat = RunService.Heartbeat:Connect(onBeat)
             elseif not want and beat then
@@ -1372,7 +1365,7 @@ return function(ctx)
         end
 
         onDestroy(function() Meter.want("card", false) Meter.want("overlay", false) end)
-    end)() end
+    end
 
     local function hex(color) return color:ToHex() end
     local function rounded(n) return math.floor(n + 0.5) end
@@ -1382,7 +1375,7 @@ return function(ctx)
     end
 
     --// ================= PERFORMANCE MONITOR CARD =================
-    do (function()
+    do
         local BARS = 40
         local hist = {}
 
@@ -1574,11 +1567,11 @@ return function(ctx)
         FPSTab:GetPropertyChangedSignal("Visible"):Connect(refresh)
         MainUI:GetPropertyChangedSignal("Visible"):Connect(refresh)
         refresh()
-    end)() end
+    end
 
     --// ================= FPS OVERLAY (with Avg / 1% Low / RAM) =================
     local Overlay = {}
-    do (function()
+    do
         local px, py = 0.5, 0.01
         local saved = Prefs.get("overlay")
         if type(saved) == "table" then
@@ -1693,7 +1686,7 @@ return function(ctx)
             stopDrag()
             Gui:Destroy()
         end)
-    end)() end
+    end
 
     --// ================= OPTIMIZE ROWS =================
     local startMode = "Balanced"
@@ -1749,7 +1742,7 @@ return function(ctx)
         function(m) Prefs.set("auto", m) end, { default = "Profile turns on if FPS stays low" })
     AutoRow.Frame.LayoutOrder = 3
     addToggle(Optimize, AutoRow.Switch, AutoRow.setState)
-    do (function()
+    do
         local LOW_SECONDS = 6
         local lowSince
 
@@ -1782,7 +1775,7 @@ return function(ctx)
         end
         AutoRow.Switch:GetAttributeChangedSignal("Toggled"):Connect(sync)
         Profile.Switch:GetAttributeChangedSignal("Toggled"):Connect(sync)
-    end)() end
+    end
 
     -- Hide Distant Players
     local CullRow

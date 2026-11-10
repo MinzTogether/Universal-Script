@@ -426,8 +426,11 @@ return function(ctx)
         local labelW = TextService:GetTextSize(Label.Text, Label.TextSize, Label.Font, Vector2.new(1000, 50)).X + 4
         Label.TextTruncate = Enum.TextTruncate.AtEnd
 
+        local lastRowW = -1
         local function relayout()
             local rowW = Row.AbsoluteSize.X
+            if rowW == lastRowW then return end
+            lastRowW = rowW
             local stacked = rowW > 0 and rowW < 300
             local lw = labelW
             if rowW > 0 then lw = math.min(labelW, math.max(40, rowW * 0.45)) end
@@ -533,7 +536,7 @@ return function(ctx)
         if DD.close then DD.close() end
     end
 
-    do (function()
+    do
         local MainUI, FunctionScroll = ctx.MainUI, ctx.FunctionScroll
         if MainUI then
             MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
@@ -544,7 +547,10 @@ return function(ctx)
         if FunctionScroll then
             FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function() Core.CloseDropdown() end)
         end
-    end)() end
+        LocalTab:GetPropertyChangedSignal("Visible"):Connect(function()
+            if not LocalTab.Visible then Core.CloseDropdown() end
+        end)
+    end
 
     local function ensureDropdownLayer()
         if DD.layer and DD.layer.Parent then return DD.layer end
@@ -2539,10 +2545,11 @@ return function(ctx)
         end)
 
         task.spawn(function()
+            local MainUI = ctx.MainUI
             while ScreenGui.Parent do
-                if LocalTab.Visible then
-                    local txt = currentXyzText()
-                    PosLabel.Text = "XYZ: " .. (txt or "--")
+                if LocalTab.Visible and parent.Visible and (not MainUI or MainUI.Visible) then
+                    local nextText = "XYZ: " .. (currentXyzText() or "--")
+                    if PosLabel.Text ~= nextText then PosLabel.Text = nextText end
                 end
                 task.wait(0.4)
             end

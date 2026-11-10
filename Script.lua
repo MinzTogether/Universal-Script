@@ -290,7 +290,7 @@ return function(ctx)
 
     --// ---- Save / load library ----
     local saveLibrary, scheduleSave, readJson, loadLibrary, announceLoad
-    do (function()
+    do
     local STATUS = {
         saved  = { "Saved",        "SubText" },
         error  = { "Save failed",  "Danger"  },
@@ -434,7 +434,7 @@ return function(ctx)
         end
     end
 
-    end)() end
+    end
     --// ---- Run info + auto-run switch: its own small file, so a run never rewrites the whole library ----
     local State = { autoRun = true, stats = {} }
 
@@ -927,7 +927,7 @@ return function(ctx)
 
     --// ---- Lua Syntax Highlighter (single-pass RichText lexer) ----
     local highlightLua
-    do (function()
+    do
     local KEYWORDS = {
         ["and"] = true, ["break"] = true, ["continue"] = true, ["do"] = true, ["else"] = true,
         ["elseif"] = true, ["end"] = true, ["false"] = true, ["for"] = true, ["function"] = true,
@@ -1010,7 +1010,7 @@ return function(ctx)
         end
         return table.concat(out)
     end
-    end)() end
+    end
 
     --// ---- NotBoxA: Add / Edit / Import ----
     local function createScriptDialog()
@@ -1026,7 +1026,7 @@ return function(ctx)
             importPlaceholder = "Paste exported JSON or a file name",
         }
 
-        local Box = new("CanvasGroup", {
+        local Box = new("Frame", {
             Name = "NotBoxA",
             Visible = false,
             AnchorPoint = ANCHOR_CENTER,
@@ -1034,7 +1034,7 @@ return function(ctx)
             Size = UDim2.new(),
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            GroupTransparency = 1,
+            ClipsDescendants = true,
             ZIndex = 51,
         }, ScreenGui)
         corner(Box, 12)
@@ -1358,10 +1358,8 @@ return function(ctx)
             hideToken = hideToken + 1
             setOverlay(true)
             Box.Visible = true
-            Box.GroupTransparency = 1
             Box.Size = UDim2.new()
             tween(Box, BUBBLE_IN_TIME, { Size = target }, EASE_QUAD, DIR_OUT)
-            tween(Box, FADE_IN_TIME, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
         end
 
         local function hide()
@@ -1370,7 +1368,6 @@ return function(ctx)
             NameBox:ReleaseFocus()
             CodeBox:ReleaseFocus()
             local sizeTween = tween(Box, BUBBLE_OUT_TIME, { Size = UDim2.new() }, EASE_QUAD, DIR_IN)
-            tween(Box, FADE_OUT_TIME, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
             sizeTween.Completed:Connect(function(state)
                 if state ~= Enum.PlaybackState.Completed or token ~= hideToken then return end
                 Box.Visible = false
@@ -1700,16 +1697,17 @@ return function(ctx)
         if y + h > screen.Y - 8 then y = ay - h - 4 end
         y = math.max(8, y)
 
-        local Menu = new("CanvasGroup", {
+        local Menu = new("Frame", {
             Position = UDim2.fromOffset(x, y),
             Size = UDim2.fromOffset(MENU_W, h),
             BackgroundColor3 = Theme.Panel,
-            GroupTransparency = 1,
+            BorderSizePixel = 0,
             ZIndex = 61,
         }, MenuCatcher)
         corner(Menu, 8)
         stroke(Menu, Theme.Border, 1)
         padding(Menu, PAD, PAD, PAD, PAD)
+        local MenuScale = new("UIScale", { Scale = 0.92 }, Menu)
         new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, Menu)
 
         for i, item in ipairs(items) do
@@ -1735,7 +1733,7 @@ return function(ctx)
                 if not isLocked() then item.run() end
             end)
         end
-        tween(Menu, 0.12, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
+        tween(MenuScale, 0.12, { Scale = 1 }, EASE_QUAD, DIR_OUT)
     end
 
     local function buildRowItems(entry)
@@ -2281,7 +2279,10 @@ return function(ctx)
         end)
 
         ScriptTab:GetPropertyChangedSignal("Visible"):Connect(function()
-            if not ScriptTab.Visible then return end
+            if not ScriptTab.Visible then
+                closeContextMenu()
+                return
+            end
             for _, rec in pairs(Rows) do rec.paintInfo() end
             applyListView()
         end)

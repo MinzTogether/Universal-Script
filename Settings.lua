@@ -55,7 +55,7 @@ return function(D)
     --// =====================================================================
     --// PART A. ANTI CHAT  (split out of MainLocal.lua)
     --// =====================================================================
-    do (function()
+    do
         local function setProp(inst, prop, value)
             pcall(function() inst[prop] = value end)
         end
@@ -198,25 +198,21 @@ return function(D)
         ScreenGui.Destroying:Connect(function()
             disableAntiChat()
         end)
-    end)() end
+    end
 
     --// =====================================================================
     --// PART B. THEME  (merged from Theme.lua)
     --// =====================================================================
     local DEFAULT_ID = "sakura"
     local THEMES, byId, currentId, stats, onChanged, applyTheme, closeList, listOpen
-    do (function()
+    do
     local V2          = Vector2.new
     local TextService = game:GetService("TextService")
 
     local function clamp(x, lo, hi) return math.max(lo, math.min(hi, x)) end
 
     --// ================= CONFIG =================
-    local HEAL        = true   -- automatically "heal" leftover old colors (see makeLookup)
-    local FADE_OUT_T  = 0.12   -- fade out
-    local FADE_IN_T   = 0.22   -- fade back in
-    local FADE_ALPHA  = 0.55   -- transparency at the faintest point (the remap runs here)
-    local YIELD_EVERY = 700    -- batching: yield one frame after this many Instances (only while the UI is visible)
+    local HEAL = true -- automatically "heal" leftover old colors (see makeLookup)
 
     local WIN_H, ARROW_ZONE      = 28, 26         -- winbox is 28 tall; the arrow button zone is 26
     local WIN_MIN_W, WIN_MAX_W   = 112, 190
@@ -428,7 +424,7 @@ return function(D)
     --// 2. ENGINE
     --// =====================================================================
     currentId = DEFAULT_ID
-    local applying, pendingId, pendingOpts = false, nil, nil
+    local applying = false
     stats = { scanned = 0, changed = 0, ms = 0 }
 
     local function noop() end
@@ -607,57 +603,18 @@ return function(D)
         fire(entry)
     end
 
-    local function drainPending()
-        local nextId, nextOpts = pendingId, pendingOpts
-        pendingId, pendingOpts = nil, nil
-        if nextId and nextId ~= currentId then applyTheme(nextId, nextOpts) end
-    end
-
     function applyTheme(id, opts)
         opts = opts or {}
         local entry = byId[id]
         if not entry then return false, "Theme does not exist: " .. tostring(id) end
+        if applying or (id == currentId and not opts.force) then return true end
 
-        if applying then
-            pendingId, pendingOpts = id, opts
-            return true
-        end
-        if id == currentId and not opts.force then return true end
-
-        local animate = opts.animate ~= false and not Saved.reduceMotion and isOpen() and MainUI.Visible
         closeList(true)
-
-        if not animate then
-            applying = true
-            local ok, err = pcall(commit, entry, opts)
-            applying = false
-            if not ok then warn("[Elysera/Theme] Error while applying '" .. id .. "': " .. tostring(err)) end
-            drainPending()
-            return ok, err
-        end
-
         applying = true
-        hold()
-        task.spawn(function()
-            local ok, err = pcall(function()
-                fadeMainUI(FADE_OUT_T, FADE_ALPHA, DIR_OUT)
-                task.wait(FADE_OUT_T)
-            end)
-            if not ok then warn("[Elysera/Theme] Error while fading out: " .. tostring(err)) end
-
-            ok, err = pcall(commit, entry, { noSave = opts.noSave, yieldEvery = YIELD_EVERY })
-            if not ok then warn("[Elysera/Theme] Error while applying '" .. id .. "': " .. tostring(err)) end
-
-            ok, err = pcall(function()
-                if isOpen() then fadeMainUI(FADE_IN_T, 0, DIR_OUT) end
-            end)
-            if not ok then warn("[Elysera/Theme] Error while fading back in: " .. tostring(err)) end
-
-            applying = false
-            release()
-            drainPending()
-        end)
-        return true
+        local ok, err = pcall(commit, entry, opts)
+        applying = false
+        if not ok then warn("[Elysera/Theme] Error while applying '" .. id .. "': " .. tostring(err)) end
+        return ok, err
     end
 
     --// =====================================================================
@@ -734,10 +691,7 @@ return function(D)
         end
     end
 
-    local function repaintTab()
-        local fn = D.repaintContent
-        if fn then fn() end
-    end
+
 
     local function positionList()
         local rp = Row.AbsolutePosition - MainUI.AbsolutePosition
@@ -788,7 +742,6 @@ return function(D)
         }, EASE_QUAD, DIR_OUT)
         tween(ListStroke, LIST_OPEN_T, { Transparency = 0 }, EASE_QUAD, DIR_OUT)
         setArrow(true)
-        repaintTab()
     end
 
     function closeList(instant)
@@ -802,7 +755,6 @@ return function(D)
 
         if instant then
             List.Visible = false
-            repaintTab()
             return
         end
         local t = tween(List, LIST_CLOSE_T, {
@@ -813,7 +765,6 @@ return function(D)
         t.Completed:Connect(function(state)
             if state == Enum.PlaybackState.Completed and token == listToken then
                 List.Visible = false
-                repaintTab()
             end
         end)
     end
@@ -1060,13 +1011,13 @@ return function(D)
         refreshItems()
     end)
     if not okUI then warn("[Elysera/Theme] Could not build the Theme row: " .. tostring(errUI)) end
-    end)() end
+    end
 
     --// =====================================================================
     --// PART C. AUTO EXECUTE, AUTO LOAD LAST SESSION, REDUCE MOTION, UI SCALE, KEYBIND
     --// =====================================================================
     local setAutoExecSwitch, setAutoLoadSwitch, setReduceMotionSwitch, refreshScaleUI, refreshKeyUI
-    do (function()
+    do
         local function addSubtitle(row, titleText, subText)
             for _, child in ipairs(row:GetChildren()) do
                 if child:IsA("TextLabel") and child.Text == titleText then
@@ -1251,12 +1202,12 @@ return function(D)
                 end)
             end)
         end)
-    end)() end
+    end
 
     --// =====================================================================
     --// PART E. CONFIG (Export / Import / Reset) & VERSION / CHECK UPDATE
     --// =====================================================================
-    do (function()
+    do
         local EXTRA_FILES = { "Elysera_Fps.json", "Elysera_Waypoints.json", "L-scr.state.json" }
 
         pcall(function()
@@ -1482,7 +1433,7 @@ return function(D)
                 end)
             end)
         end)
-    end)() end
+    end
 
     --// =====================================================================
     --// PART D. DIAGNOSTICS
@@ -1586,7 +1537,7 @@ return function(D)
             end
             refreshModules()
             Tab:GetPropertyChangedSignal("Visible"):Connect(function()
-                if Tab.Visible then refreshModules() end
+                if Tab.Visible then refreshModules() else closeList(true) end
             end)
 
             local function buildReport()

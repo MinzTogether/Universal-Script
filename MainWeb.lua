@@ -22,7 +22,7 @@ local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 --// ================= CLEANUP PREVIOUS INSTANCE =================
 -- The GUI lives in CoreGui / gethui, or in PlayerGui when the executor cannot write to CoreGui (see ROOT) -> clean up all places
-do (function()
+do
     local roots = { CoreGui }
     if typeof(gethui) == "function" then
         local okH, hui = pcall(gethui)
@@ -38,7 +38,7 @@ do (function()
             end)
         end
     end
-end)() end
+end
 
 --// ================= THEME =================
 local Theme = {
@@ -98,7 +98,7 @@ ScreenGui.DisplayOrder = 10
 -- GuiRoot is where the GUI really lives: modules mount their own GUI (cover, ESP...) into ctx.GuiRoot,
 -- while ctx.CoreGui stays the real CoreGui service (used to find RobloxGui...).
 local GuiRoot = CoreGui
-do (function()
+do
     local mounted = false
     if typeof(gethui) == "function" then
         local okH, hui = pcall(gethui)
@@ -122,7 +122,7 @@ do (function()
         ScreenGui.Parent = GuiRoot
         warn("[Elysera] Cannot write to CoreGui, using PlayerGui")
     end
-end)() end
+end
 
 --// ================= UTILITY =================
 local Connections = {}
@@ -176,7 +176,7 @@ end
 -- when the theme changes mid-tween (otherwise the tween would pull the property back to the old theme's color when it ends).
 local liveColorTweens = setmetatable({}, { __mode = "k" }) -- [tween] = { inst, props }
 local tween
-do (function()
+do
     -- A TweenInfo never changes after creation, so one object is shared per (style, direction, duration) set.
     -- Hover/press effects create a tween on EVERY event; this cache avoids allocating a new TweenInfo each time.
     local infoCache, infoCount = {}, 0 -- [style][direction][duration] = TweenInfo
@@ -212,7 +212,7 @@ do (function()
         t:Play()
         return t
     end
-end)() end
+end
 -- Cancel running color tweens and set the target values directly; translate(Color3) returns a new Color3 or nil (keep as is)
 local function settleColorTweens(translate)
     for t, rec in pairs(liveColorTweens) do
@@ -244,8 +244,10 @@ local function makeDraggable(handle, target, onEnd, onClick, threshold)
         dragging, moved = true, false
         dragStart, startPos = input.Position, target.Position
 
-        input.Changed:Connect(function()
+        local endConn
+        endConn = input.Changed:Connect(function()
             if input.UserInputState ~= Enum.UserInputState.End then return end
+            endConn:Disconnect()
             if dragging then
                 if moved then
                     if onEnd then onEnd() end
@@ -293,7 +295,7 @@ local canFS = typeof(writefile) == "function"
 -- Every .json file of the script and its modules lives in this folder (nothing is scattered in the workspace root).
 -- Modules receive the dataPath function through ctx. If the executor has no folder support, dataPath returns the plain file name as before.
 local dataPath
-do (function()
+do
     local DATA_FOLDER = "Elysera"
     -- Old .json files in the workspace root: move them into the new folder once so saved data is not lost
     local LEGACY_FILES = {
@@ -336,7 +338,7 @@ do (function()
             end)
         end
     end
-end)() end
+end
 
 local function num(v, default)
     return (type(v) == "number" and v == v and math.abs(v) < 1e6) and v or default
@@ -376,7 +378,7 @@ end
 
 -- Remember active toggles across server hops (Auto Execute) or when Auto Load Last Session is enabled
 local bootToggles, restoreSession, sessionToggles = {}, false, {}
-do (function()
+do
     local env = (typeof(getgenv) == "function" and getgenv()) or _G
     local isTeleportBoot = (env.__ElyseraBoot == game.JobId and game.JobId ~= "")
     if type(Saved.toggles) == "table" then
@@ -386,7 +388,7 @@ do (function()
     end
     restoreSession = (isTeleportBoot and Saved.autoExecute == true) or (Saved.autoLoadSession == true)
     Saved.toggles = restoreSession and table.clone(bootToggles) or {}
-end)() end
+end
 
 local curW = math.clamp(num(Saved.w, UI_W), MIN_UI_W, math.max(MIN_UI_W, viewport0.X))
 local curH = math.clamp(num(Saved.h, UI_H), MIN_UI_H, math.max(MIN_UI_H, viewport0.Y))
@@ -449,7 +451,7 @@ corner(ToggleButton, 14)
 stroke(ToggleButton)
 local ToggleUIScale = new("UIScale", { Scale = Saved.uiScale }, ToggleButton)
 
-do (function()
+do
     local ICON_PX = 32
     local unit = ICON_PX / 48
     local V = Vector2.new
@@ -518,15 +520,14 @@ do (function()
     drawPath({ V(29, 24), V(44, 24), V(44, 44), V(29, 44) }, 4, 6, S, true)
     drawPath({ V(15, 28), V(19, 24), V(15, 20) }, 0, 6, S, true)
     drawPath({ V(19, 24), V(4, 24), V(4, 4), V(19, 4) }, 4, 6, S, true)
-end)() end
+end
 
 --// ================= MAIN WINDOW =================
-local MainUI = new("CanvasGroup", {
+local MainUI = new("Frame", {
     Name = "MG_Main",
     AnchorPoint = ANCHOR_CENTER,
     Position = uiPosition,
     Size = UDim2.fromOffset(curW, curH),
-    GroupTransparency = 1,
     BackgroundColor3 = Theme.Background,
     BorderSizePixel = 0,
     ClipsDescendants = true,
@@ -582,7 +583,7 @@ label(TopBar, {
 
 --// ---- Topbar icons ----
 local drawIcon, CloseBtn, MaximizeBtn, MaximizeIcon, MinimizeBtn, ResizeBtn, ResizeIcon, ResetBtn
-do (function()
+do
 local TOPBAR_BTN_SIZE   = 26
 local TOPBAR_BTN_GAP    = 6
 local TOPBAR_BTN_MARGIN = 8
@@ -736,7 +737,7 @@ MaximizeBtn, MaximizeIcon = createTopbarButton("maximize", 2)
 MinimizeBtn               = createTopbarButton("minimize", 3)
 ResizeBtn, ResizeIcon     = createTopbarButton("resize", 4)
 ResetBtn                  = createTopbarButton("reset", 5)
-end)() end
+end
 
 --// ---- Body ----
 local Body = new("Frame", {
@@ -810,7 +811,7 @@ local HighlightTab = new("Frame", {
 corner(HighlightTab, 8)
 
 local setReduceMotion
-do (function()
+do
     local HighlightStroke = stroke(HighlightTab, Theme.AccentPurple, 2)
     local Gradient = new("UIGradient", {
         Transparency = NumberSequence.new({
@@ -885,7 +886,7 @@ do (function()
             LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
         if ok and content then Avatar.Image = content end
     end)
-end)() end
+end
 
 --// ================= DRAG SUPPORT =================
 local isMaximized = false
@@ -906,7 +907,7 @@ local FADE_IN_TIME    = BUBBLE_IN_TIME * 2
 local BUBBLE_OUT_TIME = BUBBLE_IN_TIME * 0.7
 local FADE_OUT_TIME   = BUBBLE_OUT_TIME / 3
 local setOverlay, CloseDialog, ResetDialog, DeleteDialog
-do (function()
+do
 local OVERLAY_TRANSPARENCY = 0.45 -- 0 = solid black, 1 = fully transparent
 
 local InteractionBlocker = new("Frame", {
@@ -942,22 +943,20 @@ end
 -- yesToken is the NAME of the Yes button's color token ("Danger", "AccentPink"...), not a Color3:
 -- the color is looked up from Theme every time it is needed (hover/leave), so it stays correct after a theme change.
 local function createDialog(name, title, message, yesToken, yesText, noText)
-    local Box = new("CanvasGroup", {
+    local Box = new("Frame", {
         Name = name,
         Visible = false,
         AnchorPoint = ANCHOR_CENTER,
         Position = CENTER,
         Size = UDim2.new(),
-        BackgroundColor3 = Theme.Panel,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        GroupTransparency = 1,
+        ClipsDescendants = true,
         ZIndex = 51,
     }, ScreenGui)
     corner(Box, 12)
 
     -- soft gradient background: PanelAlt (top) -> Panel (bottom)
-    -- (placed on its own Frame, because a UIGradient on a CanvasGroup would also tint the text and buttons inside)
-    Box.BackgroundTransparency = 1
     local Bg = new("Frame", {
         Name = "Bg",
         Size = UDim2.fromScale(1, 1),
@@ -1069,10 +1068,8 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
         hideToken = hideToken + 1
         setOverlay(true)
         Box.Visible = true
-        Box.GroupTransparency = 1
         Box.Size = UDim2.new()
         tween(Box, BUBBLE_IN_TIME, { Size = DIALOG_SIZE }, EASE_QUAD, DIR_OUT)
-        tween(Box, FADE_IN_TIME, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
     end
 
     local function hide()
@@ -1080,7 +1077,6 @@ local function createDialog(name, title, message, yesToken, yesText, noText)
         local token = hideToken
         setOverlay(false)
         local sizeTween = tween(Box, BUBBLE_OUT_TIME, { Size = UDim2.new() }, EASE_QUAD, DIR_IN)
-        tween(Box, FADE_OUT_TIME, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
         sizeTween.Completed:Connect(function(state)
             if state ~= Enum.PlaybackState.Completed or token ~= hideToken then return end
             Box.Visible = false
@@ -1095,7 +1091,7 @@ CloseDialog = createDialog("ConfirmBox", "Close script", "You want to close this
 ResetDialog = createDialog("NotBox2", "Reset UI", "Do you want to reset UI?", "AccentPink")
 -- NotBoxDe (Script tab): confirms deleting a function; its message is reassigned every time it opens
 DeleteDialog = createDialog("NotBoxDe", "Delete function", "Do you want to delete this function?", "Danger", "Yes, Delete", "Cancel")
-end)() end
+end
 
 --// ================= OPEN / CLOSE ANIMATION =================
 local isOpen = false
@@ -1103,20 +1099,23 @@ local fadeTween
 local ScriptDialog -- NotBoxA (Script tab), created in the SCRIPT TAB section
 local ThemeAPI     -- Theme API returned by the Settings.lua module (Settings tab); closeUI uses it to close the dropdown list
 
+local function repaintContent() end
+
 local function fadeMainUI(time, target, dir)
     if fadeTween then fadeTween:Cancel() end
-    fadeTween = tween(MainUI, time, { GroupTransparency = target }, EASE_QUAD, dir)
+    local s = Saved.uiScale
+    local scaleTarget = (target == 0 and s) or (target >= 1 and s * 0.94) or (s * 0.98)
+    if target == 0 and not Saved.reduceMotion then
+        MainUIScale.Scale = s * 0.94
+    end
+    fadeTween = tween(MainUIScale, time, { Scale = scaleTarget }, EASE_QUAD, dir)
     return fadeTween
 end
-
--- Forces the visible tab to repaint. Assigned in the TAB SYSTEM section; declared here so openUI and the UI kit can call it.
-local repaintContent = function() end
 
 local function openUI()
     isOpen = true
     MainUI.Visible = true
     fadeMainUI(POPUP_TIME, 0, DIR_OUT)
-    repaintContent() -- the tab was last drawn while the UI was hidden: make sure it is painted when the UI appears
 end
 
 local function closeUI()
@@ -1236,7 +1235,7 @@ end)
 
 --// ================= RESIZE MODE =================
 local resizeMode = false
-do (function()
+do
 local RESIZE_HANDLE_SIZE = 18
 local resizeDragCorner
 local resizeFixedX, resizeFixedY = 0, 0
@@ -1288,8 +1287,11 @@ for cornerName, anchor in pairs(CORNER_ANCHORS) do
         resizeFixedY = pos.Y + size.Y * (1 - anchor.Y)
         resizeDragCorner = cornerName
 
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End and resizeDragCorner == cornerName then
+        local endConn
+        endConn = input.Changed:Connect(function()
+            if input.UserInputState ~= Enum.UserInputState.End then return end
+            endConn:Disconnect()
+            if resizeDragCorner == cornerName then
                 resizeDragCorner = nil
                 commitUIState()
             end
@@ -1338,7 +1340,7 @@ end
 ResizeBtn.MouseButton1Click:Connect(function()
     setResizeMode(not resizeMode)
 end)
-end)() end
+end
 
 --// ================= TAB SYSTEM =================
 local CONTENT_EDGE = 2
@@ -1346,20 +1348,14 @@ local TabData = {}
 local activeTab
 local DEFAULT_TAB = "Status & Server"
 local selectTab, CreateTab
-do (function()
+do
 local TAB_HEIGHT          = 34
 local TAB_GAP             = 6
 local TAB_TEXT_PAD        = 14
 local TAB_TEXT_PAD_ACTIVE = 18
 local TAB_BAR_HEIGHT      = 20
 
-local CONTENT_FADE_OUT = 0.12
-local CONTENT_FADE_IN  = 0.22
-local CONTENT_SLIDE    = 10
-
 local tabCount = 0
-local switchToken = 0
-local ContentTweens = {}
 
 local TabPill = new("Frame", {
     Name = "TabPill",
@@ -1373,7 +1369,6 @@ local TabPill = new("Frame", {
 corner(TabPill, 6)
 
 -- Highlight style of the tab list: purple -> pink background fading from left to right + an accent bar on the left
--- (different from Player Info: a bright purple border that runs around)
 new("UIGradient", {
     Color = ColorSequence.new(Theme.AccentPurple, Theme.AccentPink),
     Transparency = NumberSequence.new({
@@ -1396,76 +1391,44 @@ local PillBarGlow = stroke(PillBar, Theme.AccentPink, 3)
 PillBarGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 PillBarGlow.Transparency = 0.75
 
-local function cancelContentTween(content)
-    local t = ContentTweens[content]
-    if t then
-        t:Cancel()
-        ContentTweens[content] = nil
+local function styleTabButton(t, selected, instant)
+    local textColor = selected and Theme.Sakura or Theme.SubText
+    local padLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD)
+    if instant then
+        t.btn.BackgroundTransparency = 1
+        t.btn.TextColor3 = textColor
+        t.pad.PaddingLeft = padLeft
+    else
+        tween(t.btn, 0.2, { BackgroundTransparency = 1, TextColor3 = textColor })
+        tween(t.pad, 0.25, { PaddingLeft = padLeft }, EASE_QUINT, DIR_OUT)
     end
 end
-
--- Some devices drop the cached render of a CanvasGroup when another overlay (a dropdown list, a collapsible section)
--- appears or disappears, and every function in the panel vanishes until the next touch. Changing GroupTransparency by an
--- invisible amount for a moment makes the engine redraw the group, exactly like that touch does.
-do (function()
-    local repaintToken = 0
-    repaintContent = function()
-        task.defer(function()
-            local data = activeTab and TabData[activeTab]
-            local content = data and data.content
-            if not content or not content.Parent or not content.Visible then return end
-            if content.GroupTransparency ~= 0 then return end -- a fade is running: it already repaints the group
-            repaintToken = repaintToken + 1
-            local token = repaintToken
-            content.GroupTransparency = 0.004
-            task.wait(0.06)
-            if token == repaintToken and content.GroupTransparency == 0.004 then
-                content.GroupTransparency = 0
-            end
-        end)
-    end
-end)() end
 
 -- instant = true: no animation (used for the default tab on first load, so the UI opens with that tab fully shown)
 function selectTab(name, instant)
     local data = TabData[name]
     if not data or activeTab == name then return end
-    local previous = activeTab
+    local prev = activeTab and TabData[activeTab]
     activeTab = name
-    switchToken = switchToken + 1
-    local token = switchToken
 
     if instant then
         for tabName, t in pairs(TabData) do
             local selected = tabName == name
-            cancelContentTween(t.content)
-            t.btn.BackgroundTransparency = 1
-            t.btn.TextColor3 = selected and Theme.Sakura or Theme.SubText
-            t.pad.PaddingLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD)
+            styleTabButton(t, selected, true)
             t.content.Visible = selected
-            if selected then
-                t.content.GroupTransparency = 0
-                t.contentPad.PaddingTop = UDim.new(0, CONTENT_EDGE)
-            end
         end
-        TabPill.Position = UDim2.fromOffset(0, data.index * (TAB_HEIGHT + TAB_GAP))
-        TabPill.Visible = true
-        return
+    else
+        if prev then
+            styleTabButton(prev, false, false)
+            prev.content.Visible = false
+        end
+        styleTabButton(data, true, false)
+        data.content.Visible = true
     end
+    FunctionScroll.CanvasPosition = Vector2.zero
 
-    for tabName, t in pairs(TabData) do
-        local selected = tabName == name
-        tween(t.btn, 0.2, {
-            BackgroundTransparency = 1,
-            TextColor3 = selected and Theme.Sakura or Theme.SubText,
-        })
-        tween(t.pad, 0.25, {
-            PaddingLeft = UDim.new(0, selected and TAB_TEXT_PAD_ACTIVE or TAB_TEXT_PAD),
-        }, EASE_QUINT, DIR_OUT)
-    end
-
-    local target = UDim2.fromOffset(0, TabData[name].index * (TAB_HEIGHT + TAB_GAP))
-    if TabPill.Visible then
+    local target = UDim2.fromOffset(0, data.index * (TAB_HEIGHT + TAB_GAP))
+    if not instant and TabPill.Visible then
         tween(TabPill, 0.25, { Position = target }, EASE_QUINT, DIR_OUT)
         tween(PillBar, 0.1, { Size = UDim2.fromOffset(3, 8) }).Completed:Once(function()
             tween(PillBar, 0.25, { Size = UDim2.fromOffset(3, TAB_BAR_HEIGHT) }, EASE_BACK, DIR_OUT)
@@ -1473,44 +1436,6 @@ function selectTab(name, instant)
     else
         TabPill.Position = target
         TabPill.Visible = true
-    end
-
-    for tabName, t in pairs(TabData) do
-        if tabName ~= name and tabName ~= previous then
-            cancelContentTween(t.content)
-            t.content.Visible = false
-        end
-    end
-
-    local newContent, pad = TabData[name].content, TabData[name].contentPad
-
-    local function fadeIn()
-        if token ~= switchToken then return end
-        cancelContentTween(newContent)
-
-        if not newContent.Visible then
-            newContent.GroupTransparency = 1
-            pad.PaddingTop = UDim.new(0, CONTENT_EDGE + CONTENT_SLIDE)
-            newContent.Visible = true
-        end
-
-        ContentTweens[newContent] = tween(newContent, CONTENT_FADE_IN, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
-        tween(pad, CONTENT_FADE_IN, { PaddingTop = UDim.new(0, CONTENT_EDGE) }, EASE_QUINT, DIR_OUT)
-    end
-
-    local oldContent = previous and TabData[previous].content
-    if oldContent and oldContent.Visible then
-        cancelContentTween(oldContent)
-        local fade = tween(oldContent, CONTENT_FADE_OUT, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
-        ContentTweens[oldContent] = fade
-        fade.Completed:Connect(function(state)
-            if state ~= Enum.PlaybackState.Completed then return end
-            oldContent.Visible = false
-            ContentTweens[oldContent] = nil
-            fadeIn()
-        end)
-    else
-        fadeIn()
     end
 end
 
@@ -1555,13 +1480,13 @@ function CreateTab(name)
         selectTab(name)
     end)
 
-    local Content = new("CanvasGroup", {
+    -- Plain Frame (never CanvasGroup): prevents off-screen texture downscaling when AutomaticSize.Y grows tall
+    local Content = new("Frame", {
         Name = "TabContent_" .. name,
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        GroupTransparency = 1,
         Visible = false,
     }, FunctionScroll)
     local ContentPad = padding(Content, CONTENT_EDGE, CONTENT_EDGE, CONTENT_EDGE, CONTENT_EDGE)
@@ -1572,7 +1497,7 @@ function CreateTab(name)
     -- The default tab is selected explicitly once every tab exists (see DEFAULT_TAB), not by creation order
     return Content
 end
-end)() end
+end
 
 --// ================= THEME: REFRESH STATE COLORS =================
 -- Settings.lua (Theme part) calls this AFTER it has changed the Theme table and remapped the colors in the UI tree.
@@ -1866,7 +1791,7 @@ end
 -- Identical UI pieces that used to be duplicated in Local.lua / FPS.lua / Script.lua now live in one place;
 -- modules get them through ctx.UI. The "winbox" dropdown of each tab is kept separate because every tab's look currently differs.
 local UI = {}
-do (function()
+do
     -- Default TextLabel of the UI kit: Gotham font, Theme.Text color, left-aligned
     local function uiLabel(parent, props)
         props.BackgroundTransparency = 1
@@ -1943,17 +1868,18 @@ do (function()
         toastSeq = toastSeq + 1
         local token = TOAST_TOKENS[kind or "info"] or TOAST_TOKENS.info
         local color = Theme[token] or Theme.SubText
-        local Pill = new("CanvasGroup", {
+        local Pill = new("Frame", {
             LayoutOrder = toastSeq,
             Size = UDim2.new(1, 0, 0, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundColor3 = Theme.Panel,
-            GroupTransparency = 1,
+            BorderSizePixel = 0,
             ZIndex = 71,
         }, host)
         corner(Pill, 8)
         stroke(Pill, color, 1)
         padding(Pill, 12, 12, 6, 6)
+        local PillScale = new("UIScale", { Scale = 0.9 }, Pill)
 
         local actionW = opts.actionText and 64 or 0
         new("TextLabel", {
@@ -1975,7 +1901,7 @@ do (function()
             closed = true
             local i = table.find(toastQueue, toast)
             if i then table.remove(toastQueue, i) end
-            local t = tween(Pill, 0.2, { GroupTransparency = 1 }, EASE_QUAD, DIR_IN)
+            local t = tween(PillScale, 0.15, { Scale = 0.85 }, EASE_QUAD, DIR_IN)
             t.Completed:Connect(function()
                 if Pill.Parent then Pill:Destroy() end
             end)
@@ -2001,7 +1927,7 @@ do (function()
         end
 
         toastQueue[#toastQueue + 1] = toast
-        tween(Pill, 0.15, { GroupTransparency = 0 }, EASE_QUAD, DIR_OUT)
+        tween(PillScale, 0.15, { Scale = 1 }, EASE_BACK, DIR_OUT)
         task.delay(opts.duration or (kind == "error" and 5 or 2.5), toast.dismiss)
         return toast
     end
@@ -2155,7 +2081,6 @@ do (function()
             if uiLocked then return end
             open = not open
             render(true)
-            repaintContent() -- the tab just changed size: make sure its panel is repainted
         end)
 
         -- Attach a BindToggle handle so the title counts how many features are on
@@ -2186,7 +2111,7 @@ do (function()
         api.Body = Body
         return api
     end
-end)() end
+end
 
 --// ================= REMOTE MODULE LOADER =================
 -- The modules (Status_Server.lua, Local.lua, Script.lua, FPS.lua, Settings.lua) are downloaded from GitHub (raw)
@@ -2206,7 +2131,7 @@ end)() end
 --   sources[file] = "web" | "cache" | "error" (shown by Diagnostics in the Settings tab)
 local Loader = { sources = {}, version = VERSION }
 local mountModule
-do (function()
+do
     local MODULE_BASE    = "https://raw.githubusercontent.com/MinzTogether/Universal-Script/"
     local MODULE_REF     = "refs/heads/main"
     local MODULE_FILES   = { "Status_Server.lua", "Local.lua", "Script.lua", "FPS.lua", "Settings.lua" }
@@ -2449,7 +2374,7 @@ do (function()
         end)
         return false
     end
-end)() end
+end
 
 --// ================= AUTO EXECUTE (reload Elysera after a teleport) =================
 -- queue_on_teleport queues a piece of code that runs on the next server after a teleport (Server Hop, Rejoin, Spam Join...).
@@ -2457,7 +2382,7 @@ end)() end
 -- even when the code is already queued. Every time Elysera finishes loading on a new server it queues itself again (the settings file
 -- is needed to remember the switch). The mechanism lives in the core so it still works even when the Settings tab fails to load; Settings.lua only builds the switch.
 local AutoExec = {}
-do (function()
+do
     local queued = false -- queue only once per session (avoids duplicating the code when toggled on/off many times)
 
     local function queueFn()
@@ -2515,7 +2440,7 @@ end]]):format(dataPath(SAVE_FILE), Loader.bootCode)
         if on then AutoExec.queue() end
         return true
     end
-end)() end
+end
 
 --// ================= TABS =================
 local StatusServerTab = CreateTab("Status & Server")

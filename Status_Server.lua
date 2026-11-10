@@ -218,9 +218,13 @@ return function(ctx)
 
     local function refreshLiveRows()
         for _, row in ipairs(liveRows) do
-            local ok, txt = pcall(row.get)
-            if ok and type(txt) == "string" and row.Value.Text ~= txt then
-                row.Value.Text = txt
+            local parent = row.Value.Parent
+            local holder = parent and parent.Parent
+            if holder and holder.Visible ~= false then
+                local ok, txt = pcall(row.get)
+                if ok and type(txt) == "string" and row.Value.Text ~= txt then
+                    row.Value.Text = txt
+                end
             end
         end
     end
@@ -304,7 +308,7 @@ return function(ctx)
     CreateCopyRow(StatusServerTab, "PlaceID", function() return tostring(game.PlaceId) end, true)
 
     --// ---------- Server Hopper ----------
-    do (function()
+    do
         local Card = CreateCard(StatusServerTab, "ServerHopper", 12, 14, 12)
 
         label(Card, {
@@ -433,7 +437,7 @@ return function(ctx)
                 end
             end)
         end)
-    end)() end
+    end
 
     CreateCopyRow(StatusServerTab, "Copy Server JobId", function() return game.JobId end, false)
 
@@ -457,7 +461,7 @@ return function(ctx)
         return ok
     end
 
-    do (function()
+    do
         local Frame = CreateInfoRow(StatusServerTab, "Rejoin Server")
         local RejoinBtn = CreateStyledButton(Frame, "Rejoin", 70)
         RejoinBtn.Activated:Connect(guarded(function(done)
@@ -465,10 +469,10 @@ return function(ctx)
             flashButtonFeedback(RejoinBtn, "Rejoin", ok and "Rejoining..." or "Failed", not ok)
             done()
         end))
-    end)() end
+    end
 
     -- Auto Rejoin when kicked or disconnected
-    do (function()
+    do
         local KickSwitch = CreateToggleOption(StatusServerTab, "Auto Rejoin on Kick")
         local kickConns = {}
         local rejoining = false
@@ -515,10 +519,10 @@ return function(ctx)
             if KickSwitch:GetAttribute("Toggled") then startAutoRejoin() else stopAutoRejoin() end
         end)
         ScreenGui.Destroying:Connect(stopAutoRejoin)
-    end)() end
+    end
 
     --// ---------- Previous Server & Recent Servers (up to 10) ----------
-    do (function()
+    do
         local Frame, Left = CreateInfoRow(StatusServerTab, "Previous Server")
         local AgoLabel = label(Left, {
             LayoutOrder = 2,
@@ -585,10 +589,10 @@ return function(ctx)
                 end))
             end
         end
-    end)() end
+    end
 
     --// ---------- Server Hop & Server Browser ----------
-    do (function()
+    do
         local failedJobIds = {} -- servers that were tried and rejected; never picked again
 
         local function httpRequest(url)
@@ -852,5 +856,5 @@ return function(ctx)
                 done()
             end)
         end))
-    end)() end
+    end
 end
