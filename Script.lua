@@ -763,12 +763,9 @@ return function(ctx)
         Header.MouseButton1Click:Connect(toggle)
         CopyBtn.MouseButton1Click:Connect(copyAll)
         ClearBtn.MouseButton1Click:Connect(clear)
-        if onResize then Panel:GetPropertyChangedSignal("AbsoluteSize"):Connect(onResize) end
+        if onResize then Panel:GetPropertyChangedSignal("Size"):Connect(onResize) end
 
-        return {
-            Frame = Panel, append = append, clear = clear,
-            toggle = toggle, copyAll = copyAll,
-        }
+        return { Frame = Panel, append = append }
     end
 
     local function guessName(code)
@@ -1739,13 +1736,23 @@ return function(ctx)
             Text = "or add an example", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = Theme.AccentPink,
         }, EmptyCard)
 
+        local MainUI = ctx.MainUI
+        local MainUIScale = MainUI and MainUI:FindFirstChildOfClass("UIScale")
         fitListPanel = function()
-            local used = CONTENT_EDGE * 2 + PINNED_HEIGHT + TAB_LIST_GAP + 2
+            local scrollH
+            if MainUI and MainUI.Size.Y.Scale == 0 and MainUI.Size.Y.Offset > 0 then
+                scrollH = MainUI.Size.Y.Offset - 64
+            else
+                local scale = (MainUIScale and MainUIScale.Scale > 0) and MainUIScale.Scale or 1
+                scrollH = FunctionScroll.AbsoluteSize.Y / scale
+            end
+            local used = CONTENT_EDGE * 2 + PINNED_HEIGHT + TAB_LIST_GAP
             if SearchRow.Visible then used = used + SEARCH_H + TAB_LIST_GAP end
-            if OutputPanel then used = used + OutputPanel.Frame.AbsoluteSize.Y + TAB_LIST_GAP end
-            ListPanel.Size = UDim2.new(1, 0, 0, math.max(80, FunctionScroll.AbsoluteSize.Y - used))
+            if OutputPanel then used = used + OutputPanel.Frame.Size.Y.Offset + TAB_LIST_GAP end
+            ListPanel.Size = UDim2.new(1, 0, 0, math.max(80, math.floor(scrollH - used + 0.5)))
         end
         FunctionScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitListPanel)
+        if MainUI then MainUI:GetPropertyChangedSignal("Size"):Connect(fitListPanel) end
 
         local function orderedEntries()
             local arr = table.clone(ScriptList)
@@ -2076,6 +2083,7 @@ return function(ctx)
 
         ScriptTab:GetPropertyChangedSignal("Visible"):Connect(function()
             if not ScriptTab.Visible then closeContextMenu(); return end
+            fitListPanel()
             for _, rec in pairs(Rows) do rec.paintInfo() end
             applyListView()
         end)

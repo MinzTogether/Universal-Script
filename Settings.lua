@@ -1367,7 +1367,7 @@ return function(D)
             local function isFn(v) return typeof(v) == "function" end
 
             local caps = {
-                { title = "File access", affects = "Settings, scripts, cache", ok = D.canFS == true },
+                { title = "File access", affects = "Settings, scripts", ok = D.canFS == true },
                 { title = "HTTP request", affects = "Server Hop",
                   ok = (typeof(syn) == "table" and isFn(syn.request)) or isFn(http_request) or isFn(request)
                       or (typeof(http) == "table" and isFn(http.request))
@@ -1438,19 +1438,18 @@ return function(D)
                 value.TextColor3 = cap.ok and Theme.AccentPink or Theme.Danger
             end
 
-            local _, modValue = addRow("Modules", "web / cache / error")
+            local _, modValue = addRow("Modules", "web / error")
             local function refreshModules()
-                local web, cache, err = 0, 0, 0
+                local web, err = 0, 0
                 for _, file in ipairs(Loader.files or {}) do
                     local src = Loader.sources and Loader.sources[file]
-                    if src == "web" then web = web + 1 elseif src == "cache" then cache = cache + 1 elseif src == "error" then err = err + 1 end
+                    if src == "web" then web = web + 1 elseif src == "error" then err = err + 1 end
                 end
                 local parts = {}
                 if web > 0 then parts[#parts + 1] = web .. " web" end
-                if cache > 0 then parts[#parts + 1] = cache .. " cache" end
                 if err > 0 then parts[#parts + 1] = err .. " error" end
                 modValue.Text = (#parts > 0) and table.concat(parts, ", ") or "--"
-                modValue.TextColor3 = (err > 0 and Theme.Danger) or (cache > 0 and Theme.AccentPurple) or Theme.AccentPink
+                modValue.TextColor3 = (err > 0 and Theme.Danger) or Theme.AccentPink
             end
             refreshModules()
             Tab:GetPropertyChangedSignal("Visible"):Connect(function()

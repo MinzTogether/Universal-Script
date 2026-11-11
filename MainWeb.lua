@@ -2217,17 +2217,6 @@ do
     end
     Loader.httpGet = httpGet
 
-    local function readLocal(file)
-        if not canFS then return nil end
-        for _, path in ipairs({ dataPath(file), file }) do
-            local ok, src = pcall(function()
-                if isfile(path) then return readfile(path) end
-            end)
-            if ok and type(src) == "string" and src ~= "" then return src end
-        end
-        return nil
-    end
-
     local moduleJobs = {}
     local moduleDeadline = os.clock() + MODULE_TIMEOUT
     local function startDownload(file)
@@ -2240,7 +2229,7 @@ do
         return job
     end
     for _, file in ipairs(MODULE_FILES) do
-        if not readLocal(file) then startDownload(file) end
+        startDownload(file)
     end
 
     local function readModule(file, deadline)
@@ -2255,22 +2244,6 @@ do
             error("download failed " .. MODULE_URLS[file] .. " (" .. tostring(job.result) .. ")", 0)
         end
         return job.result
-    end
-
-    local function cacheName(file) return dataPath("cache_" .. file) end
-
-    local function readCache(file)
-        if not canFS then return nil end
-        local ok, src = pcall(function()
-            local path = cacheName(file)
-            if isfile(path) then return readfile(path) end
-        end)
-        if ok and type(src) == "string" and src ~= "" then return src end
-        return nil
-    end
-
-    local function writeCache(file, src)
-        if canFS then pcall(writefile, cacheName(file), src) end
     end
 
     local function compileModule(file, src)
@@ -2346,50 +2319,21 @@ do
         local problems = {}
         local function note(msg) problems[#problems + 1] = msg end
 
-        local function attempt(src, from)
+        local okFetch, src = pcall(readModule, file, deadline)
+        if okFetch then
             local init, why = compileModule(file, src)
-            if not init then note(from .. ": " .. why) return false end
-            local okBuild, berr = pcall(build, init)
-            if not okBuild then note(from .. ": error during initialization: " .. tostring(berr)) return false end
-            return true
-        end
-
-        local localSrc = readLocal(file)
-        if not isRetry and localSrc then
-            if attempt(localSrc, "local file") then
-                if readCache(file) ~= localSrc then writeCache(file, localSrc) end
-                Loader.sources[file] = "web"
-                return true
+            if not init then
+                note(why)
+            else
+                local okBuild, berr = pcall(build, init)
+                if okBuild then
+                    Loader.sources[file] = "web"
+                    return true
+                end
+                note("error during initialization: " .. tostring(berr))
             end
-            clearTab(tab)
-        end
-
-        local fresh
-        local okFetch, got = pcall(readModule, file, deadline)
-        if okFetch then fresh = got else note(tostring(got)) end
-
-        if fresh and fresh ~= localSrc and attempt(fresh, "fresh download") then
-            if readCache(file) ~= fresh then writeCache(file, fresh) end
-            Loader.sources[file] = "web"
-            return true
-        end
-
-        if isRetry and localSrc and localSrc ~= fresh then
-            clearTab(tab)
-            if attempt(localSrc, "local file") then
-                Loader.sources[file] = "web"
-                return true
-            end
-        end
-
-        local cached = readCache(file)
-        if cached and cached ~= fresh and cached ~= localSrc then
-            clearTab(tab)
-            if attempt(cached, "cached copy") then
-                warn(("[Elysera] %s: using the saved copy of the most recent good run (%s)"):format(file, problems[1] or "?"))
-                Loader.sources[file] = "cache"
-                return true
-            end
+        else
+            note(tostring(src))
         end
 
         clearTab(tab)
