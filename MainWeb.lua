@@ -1182,8 +1182,9 @@ end)
 local resizeMode = false
 do
     local RESIZE_HANDLE_SIZE = 18
-    local resizeDragCorner
-    local resizeFixedX, resizeFixedY = 0, 0
+    local resizeDragCorner, resizeInput
+    local dragStart, startPos
+    local startW, startH, dirX, dirY = 0, 0, 0, 0
 
     local CORNER_ANCHORS = {
         TL = Vector2.new(0, 0),
@@ -1194,7 +1195,8 @@ do
     local ResizeHandles = {}
 
     local function updateResizeHandlePositions()
-        local pos, size = MainUI.AbsolutePosition, MainUI.AbsoluteSize
+        local origin = ScreenGui.AbsolutePosition
+        local pos, size = MainUI.AbsolutePosition - origin, MainUI.AbsoluteSize
         for cornerName, handle in pairs(ResizeHandles) do
             local a = CORNER_ANCHORS[cornerName]
             handle.Position = UDim2.fromOffset(pos.X + size.X * a.X, pos.Y + size.Y * a.Y)
@@ -1225,18 +1227,25 @@ do
         }, Handle)
 
         Grip.InputBegan:Connect(function(input)
-            if not resizeMode or not isPress(input) then return end
-            local pos, size = MainUI.AbsolutePosition, MainUI.AbsoluteSize
-            resizeFixedX = pos.X + size.X * (1 - anchor.X)
-            resizeFixedY = pos.Y + size.Y * (1 - anchor.Y)
+            if not resizeMode or resizeDragCorner or not isPress(input) then return end
+            if isMaximized then
+                isMaximized = false
+                drawIcon(MaximizeIcon, "maximize", Theme.Text, Theme.PanelAlt)
+            end
             resizeDragCorner = cornerName
+            resizeInput = input
+            dragStart = input.Position
+            startW, startH = MainUI.Size.X.Offset, MainUI.Size.Y.Offset
+            startPos = MainUI.Position
+            dirX = anchor.X == 1 and 1 or -1
+            dirY = anchor.Y == 1 and 1 or -1
 
             local endConn
             endConn = input.Changed:Connect(function()
                 if input.UserInputState ~= Enum.UserInputState.End then return end
                 endConn:Disconnect()
                 if resizeDragCorner == cornerName then
-                    resizeDragCorner = nil
+                    resizeDragCorner, resizeInput = nil, nil
                     commitUIState()
                 end
             end)
@@ -1251,17 +1260,16 @@ do
 
     track(UserInputService.InputChanged:Connect(function(input)
         if not resizeMode or not resizeDragCorner or not isMove(input) then return end
-        local mouseX, mouseY = input.Position.X, input.Position.Y
-        local newW = math.max(MIN_UI_W, math.abs(mouseX - resizeFixedX))
-        local newH = math.max(MIN_UI_H, math.abs(mouseY - resizeFixedY))
-        local movingX = resizeFixedX + (mouseX >= resizeFixedX and 1 or -1) * newW
-        local movingY = resizeFixedY + (mouseY >= resizeFixedY and 1 or -1) * newH
-        local viewport = getViewport()
+        if input.UserInputType == Enum.UserInputType.Touch and input ~= resizeInput then return end
+        local scale = (MainUIScale and MainUIScale.Scale > 0) and MainUIScale.Scale or 1
+        local delta = input.Position - dragStart
+        local newW = math.max(MIN_UI_W, math.floor(startW + (delta.X * dirX) / scale + 0.5))
+        local newH = math.max(MIN_UI_H, math.floor(startH + (delta.Y * dirY) / scale + 0.5))
 
         MainUI.Size = UDim2.fromOffset(newW, newH)
         MainUI.Position = UDim2.new(
-            0.5, (resizeFixedX + movingX) / 2 - viewport.X * 0.5,
-            0.5, (resizeFixedY + movingY) / 2 - viewport.Y * 0.5
+            startPos.X.Scale, startPos.X.Offset + dirX * (newW - startW) * scale * 0.5,
+            startPos.Y.Scale, startPos.Y.Offset + dirY * (newH - startH) * scale * 0.5
         )
         updateResizeHandlePositions()
     end))
@@ -1269,7 +1277,7 @@ do
     local function setResizeMode(enabled)
         resizeMode = enabled
         uiLocked = enabled
-        resizeDragCorner = nil
+        resizeDragCorner, resizeInput = nil, nil
         drawIcon(ResizeIcon, "resize", enabled and Theme.AccentPink or Theme.Text, Theme.PanelAlt)
         tween(MainUIStroke, 0.2, {
             Color = enabled and Theme.AccentPink or Theme.Border,
