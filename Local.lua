@@ -7,17 +7,6 @@
 --// ##########################################################################################
 
 --// ================= LOCAL TAB (module) =================
--- Loaded by the main script (MainWeb.lua / MainLocal.lua) and called with a ctx table of shared UI helpers
--- (ctx.UI = shared UI kit: border stroke, chevron, collapsible section).
---
--- File structure:
---   Core     : shared foundation (input parsing, toggle binding, character lifecycle, fly input, teleport history)
---              + shared UI pieces (toggle row, status badge, presets, mode dropdown, button, input; sections come from ctx.UI)
---   Features : Movement (Speed, Jump Boost, Gravity, Infinite Jump, Noclip, Fly)
---              Teleport (Click Teleport, Position XYZ / Copy, Waypoints with Rename + Export/Import, Players) + Quick actions
---              Camera (Field of View, Max Zoom, Min Zoom, Freecam), Visual (ESP, Hide Players, Full Bright, Time of Day)
---              Safety (Anti AFK, Anti Void), Reset All
--- Grouped into 2 tables to stay under Luau's limit of 200 locals per chunk.
 
 return function(ctx)
     local LocalTab         = ctx.Tab
@@ -30,9 +19,8 @@ return function(ctx)
     local UserInputService = ctx.UserInputService
     local Workspace        = ctx.Workspace
     local CoreGui          = ctx.CoreGui
-    local GuiRoot          = ctx.GuiRoot or CoreGui   -- where the UI is mounted (CoreGui, or PlayerGui as a fallback)
-    local UI               = assert(ctx.UI, "Local.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
-    local showToast        = ctx.Toast or UI.Toast or function() end
+    local GuiRoot          = ctx.GuiRoot or CoreGui
+    local UI               = assert(ctx.UI, "Local.lua needs ctx.UI")
     local Saved            = ctx.Saved or {}
     local saveSettings     = ctx.saveSettings or function() end
     local Lighting         = game:GetService("Lighting")
@@ -40,34 +28,31 @@ return function(ctx)
     local TweenService     = game:GetService("TweenService")
 
     local new, corner, stroke, padding, list = ctx.new, ctx.corner, ctx.stroke, ctx.padding, ctx.list
-
-    local CreateCard         = ctx.CreateCard
-    local CreateToggleOption = ctx.CreateToggleOption   -- returns Switch, setState
-    local flashStrokeError   = ctx.flashStrokeError
-    local bindBoxFocus       = ctx.bindBoxFocus
-    local isLocked           = ctx.isLocked or function() return false end
-    local coreTween          = ctx.tween
+    local CreateCard, CreateToggleOption = ctx.CreateCard, ctx.CreateToggleOption
+    local flashStrokeError, bindBoxFocus = ctx.flashStrokeError, ctx.bindBoxFocus
+    local isLocked  = ctx.isLocked or function() return false end
+    local coreTween = ctx.tween
 
     if type(Saved.localCfg) ~= "table" then Saved.localCfg = {} end
 
     local Core, Features = {}, {}
 
-    -- In-world ESP colors only (all UI colors come from Theme)
     local WHITE = Color3.fromRGB(255, 255, 255)
     local GREEN = Color3.fromRGB(60, 255, 90)
     local RED   = Color3.fromRGB(255, 60, 60)
 
-    -- Token names, resolved on every lookup so the badge colors follow theme changes
-    local BADGE_TOKENS = { active = "AccentPink", waiting = "AccentPurple", invalid = "Danger" }
-    local BADGE_COLORS = setmetatable({}, {
-        __index = function(_, state)
-            local token = BADGE_TOKENS[state]
-            return token and Theme[token]
-        end,
+    local BADGE_COLORS = UI.ThemedColors({
+        active  = "AccentPink",
+        waiting = "AccentPurple",
+        invalid = "Danger",
     })
 
-    -- Enlarged "·" separator (RichText); labels that use it must have RichText = true
-    Core.DOT = ' <font size="22"><b>·</b></font> '
+    Core.DOT          = ' <font size="22"><b>·</b></font> '
+    Core.Trim         = UI.Trim
+    Core.EscapeRich   = UI.EscapeRich
+    Core.BorderStroke = UI.BorderStroke
+    Core.CreateChevron = UI.CreateChevron
+    Core.CreateSectionGroup = UI.CreateSection
 
     --// =====================================================
     --//  FOUNDATION (Core)
@@ -83,13 +68,10 @@ return function(ctx)
         return c and c:FindFirstChild("HumanoidRootPart")
     end
 
-    --// ---------- Parse numeric input box ----------
     function Core.SanitizeNumber(s)
         s = s:gsub("[^%d%.]", "")
         local dot = s:find(".", 1, true)
-        if dot then
-            s = s:sub(1, dot) .. (s:sub(dot + 1):gsub("%.", ""))
-        end
+        if dot then s = s:sub(1, dot) .. (s:sub(dot + 1):gsub("%.", "")) end
         return s:sub(1, 7)
     end
 
@@ -100,13 +82,9 @@ return function(ctx)
     function Core.ParseNumericInput(rawText, opts)
         opts = opts or {}
         local clean = Core.SanitizeNumber(rawText or "")
-        if clean == "" then
-            return { status = "empty", effective = opts.default }
-        end
+        if clean == "" then return { status = "empty", effective = opts.default } end
         local n = tonumber(clean)
-        if clean == "." or not n or n ~= n then
-            return { status = "invalid", effective = opts.default }
-        end
+        if clean == "." or not n or n ~= n then return { status = "invalid", effective = opts.default } end
         local eff = math.clamp(n, 0, opts.max or math.huge)
         return {
             status = (eff ~= n) and "clamped" or "ok",
@@ -116,7 +94,6 @@ return function(ctx)
         }
     end
 
-    --// ---------- BindToggle: shared contract for every feature ----------
     local features = {}
 
     function Core.BindToggle(Switch, Set, cfg)
@@ -156,10 +133,7 @@ return function(ctx)
 
         function handle.isOn() return active end
         function handle.onChanged(fn) listeners[#listeners + 1] = fn end
-        function handle.stop()
-            Set(false)
-            doStop()
-        end
+        function handle.stop() Set(false); doStop() end
 
         features[#features + 1] = { handle = handle, onReset = cfg.onReset }
         return handle
@@ -182,17 +156,14 @@ return function(ctx)
     end
 
     Core.hooks = {}
-    function Core.OnDestroy(fn)
-        Core.hooks[#Core.hooks + 1] = fn
-    end
+    function Core.OnDestroy(fn) Core.hooks[#Core.hooks + 1] = fn end
 
-    --// ---------- TrackCharacter: tracks the character lifecycle ----------
     function Core.TrackCharacter(player, onChar, opts)
         local onDied = opts and opts.onDied
         local token, cleanup, diedConn = 0, nil, nil
 
         local function runCleanup()
-            if diedConn then diedConn:Disconnect() diedConn = nil end
+            if diedConn then diedConn:Disconnect(); diedConn = nil end
             local fn = cleanup
             cleanup = nil
             if fn then pcall(fn) end
@@ -206,10 +177,7 @@ return function(ctx)
             local root = char:WaitForChild("HumanoidRootPart", 10)
             if my ~= token or not hum or not root or not char.Parent then return end
             local ok, fn = pcall(onChar, char, hum, root)
-            if not ok then
-                warn("[Local] TrackCharacter:", fn)
-                return
-            end
+            if not ok then warn("[Local] TrackCharacter:", fn); return end
             cleanup = (type(fn) == "function") and fn or nil
             if onDied then
                 diedConn = hum.Died:Connect(function()
@@ -235,9 +203,7 @@ return function(ctx)
         }
     end
 
-    --// ---------- Flight controls: read input (fly in the camera direction) ----------
     local controlModule, controlLoading = nil, false
-
     function Core.LoadControls()
         if controlModule or controlLoading then return end
         controlLoading = true
@@ -249,10 +215,7 @@ return function(ctx)
                     local cm = pm and pm:FindFirstChild("ControlModule")
                     return cm and require(cm)
                 end)
-                if ok and m then
-                    controlModule = m
-                    break
-                end
+                if ok and m then controlModule = m; break end
                 task.wait(1)
             end
             controlLoading = false
@@ -362,10 +325,7 @@ return function(ctx)
                 Text.Text = flashText
                 return
             end
-            if state == "off" then
-                Line.Visible = false
-                return
-            end
+            if state == "off" then Line.Visible = false; return end
             Line.Visible = true
             Dot.BackgroundColor3 = BADGE_COLORS[state] or Theme.SubText
             Text.Text = curText or ""
@@ -383,10 +343,7 @@ return function(ctx)
             flashText, flashColor = text, BADGE_COLORS[s or "waiting"] or Theme.SubText
             render()
             task.delay(seconds or 3, function()
-                if my == flashToken then
-                    flashText = nil
-                    render()
-                end
+                if my == flashToken then flashText = nil; render() end
             end)
         end
 
@@ -432,8 +389,7 @@ return function(ctx)
             if rowW == lastRowW then return end
             lastRowW = rowW
             local stacked = rowW > 0 and rowW < 300
-            local lw = labelW
-            if rowW > 0 then lw = math.min(labelW, math.max(40, rowW * 0.45)) end
+            local lw = (rowW > 0) and math.min(labelW, math.max(40, rowW * 0.45)) or labelW
 
             Label.Position = UDim2.new(0, 14, 0, stacked and 4 or 0)
             Label.Size = stacked and UDim2.new(0, lw, 0, 32) or UDim2.new(0, lw, 1, 0)
@@ -516,16 +472,16 @@ return function(ctx)
             end)
         end
 
-        local api = {}
-        function api.markActive(effective)
-            for _, c in ipairs(chips) do
-                local v = valueOf(c.preset)
-                local on = not c.preset.noHighlight and effective ~= nil and v ~= nil and math.abs(v - effective) < 0.005
-                c.btn.TextColor3 = on and Theme.Sakura or Theme.Text
-                c.stroke.Color = on and Theme.AccentPink or Theme.Border
-            end
-        end
-        return api
+        return {
+            markActive = function(effective)
+                for _, c in ipairs(chips) do
+                    local v = valueOf(c.preset)
+                    local on = not c.preset.noHighlight and effective ~= nil and v ~= nil and math.abs(v - effective) < 0.005
+                    c.btn.TextColor3 = on and Theme.Sakura or Theme.Text
+                    c.stroke.Color = on and Theme.AccentPink or Theme.Border
+                end
+            end,
+        }
     end
 
     local DD = { layer = nil, panel = nil, close = nil }
@@ -542,10 +498,10 @@ return function(ctx)
             MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
                 if not MainUI.Visible then Core.CloseDropdown() end
             end)
-            MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() Core.CloseDropdown() end)
+            MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(Core.CloseDropdown)
         end
         if FunctionScroll then
-            FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function() Core.CloseDropdown() end)
+            FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(Core.CloseDropdown)
         end
         LocalTab:GetPropertyChangedSignal("Visible"):Connect(function()
             if not LocalTab.Visible then Core.CloseDropdown() end
@@ -571,7 +527,7 @@ return function(ctx)
             AutoButtonColor = false,
             ZIndex = 100,
         }, layer)
-        blocker.Activated:Connect(function() Core.CloseDropdown() end)
+        blocker.Activated:Connect(Core.CloseDropdown)
 
         local panel = new("Frame", {
             Name = "Panel",
@@ -707,8 +663,6 @@ return function(ctx)
         setIndex(index, true)
     end
 
-    Core.BorderStroke = UI.BorderStroke
-
     local tweenInfos = {}
     function Core.Tween(inst, time, props)
         if coreTween then return coreTween(inst, time, props) end
@@ -728,21 +682,13 @@ return function(ctx)
         return new("TextLabel", props, parent)
     end
 
-    function Core.Trim(s)
-        return (s:gsub("^%s+", ""):gsub("%s+$", ""))
-    end
-
     function Core.ClipText(s, maxChars)
         local ok, cut = pcall(utf8.offset, s, maxChars + 1)
         if ok and cut then return s:sub(1, cut - 1) end
         return s
     end
 
-    function Core.EscapeRich(s)
-        return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
-    end
-
-    --// ---------- Teleport: shared by Click TP, Position XYZ, Waypoints and Players ----------
+    --// ---------- Teleport history ----------
     Core.History = { cf = nil, listeners = {} }
 
     function Core.TeleportTo(cf)
@@ -825,26 +771,16 @@ return function(ctx)
             end
         end
 
-        Btn.MouseEnter:Connect(function()
-            hovered = true
-            paint()
-        end)
-        Btn.MouseLeave:Connect(function()
-            hovered = false
-            paint()
-            Core.Tween(Scale, 0.1, { Scale = 1 })
-        end)
+        Btn.MouseEnter:Connect(function() hovered = true; paint() end)
+        Btn.MouseLeave:Connect(function() hovered = false; paint(); Core.Tween(Scale, 0.1, { Scale = 1 }) end)
         Btn.MouseButton1Down:Connect(function()
             if enabled then Core.Tween(Scale, 0.08, { Scale = 0.95 }) end
         end)
-        Btn.MouseButton1Up:Connect(function()
-            Core.Tween(Scale, 0.12, { Scale = 1 })
-        end)
+        Btn.MouseButton1Up:Connect(function() Core.Tween(Scale, 0.12, { Scale = 1 }) end)
 
         function api.onClick(fn)
             Btn.Activated:Connect(function()
-                if isLocked() or not enabled then return end
-                fn()
+                if not isLocked() and enabled then fn() end
             end)
         end
 
@@ -884,9 +820,6 @@ return function(ctx)
 
         return api
     end
-
-    Core.CreateChevron = UI.CreateChevron
-    Core.CreateSectionGroup = UI.CreateSection
 
     function Core.CreateInput(parent, placeholder, opts)
         opts = opts or {}
@@ -951,9 +884,7 @@ return function(ctx)
     --//  FEATURES
     --// =====================================================
 
-    --// ---------------- Boost: one value on one instance (Speed, Jump, Gravity, FOV, Max Zoom, Min Zoom, Time of Day) ----------------
     Core.Boost = { reapply = 30, window = 1, step = 0.2 }
-
     Core.Watchdog = { checks = {}, conn = nil, acc = 0 }
 
     function Core.Watchdog.add(check)
@@ -981,7 +912,7 @@ return function(ctx)
     Core.OnDestroy(function()
         local W = Core.Watchdog
         table.clear(W.checks)
-        if W.conn then W.conn:Disconnect() W.conn = nil end
+        if W.conn then W.conn:Disconnect(); W.conn = nil end
     end)
 
     function Features.CreateTargetBoost(parent, cfg)
@@ -990,8 +921,7 @@ return function(ctx)
         local snaps = setmetatable({}, { __mode = "k" })
         local current, watchConn, presetApi
         local sigs = {}
-        local active = false
-        local applying = false
+        local active, applying = false, false
         local parsed = { status = "empty" }
         local budget = { n = 0, t = 0 }
         local onExternal
@@ -1048,9 +978,7 @@ return function(ctx)
 
         local function takeBudget()
             local now, B = os.clock(), Core.Boost
-            if now - budget.t >= B.window then
-                budget.t, budget.n = now, 0
-            end
+            if now - budget.t >= B.window then budget.t, budget.n = now, 0 end
             if budget.n >= B.reapply then return false end
             budget.n = budget.n + 1
             return true
@@ -1083,10 +1011,7 @@ return function(ctx)
 
         local function attach()
             local t = cfg.getTarget()
-            if t and t == current and #sigs > 0 then
-                applyTo(t)
-                return
-            end
+            if t and t == current and #sigs > 0 then applyTo(t); return end
             unbind()
             if not t then
                 badge.set("waiting", "Waiting for " .. (cfg.waitFor or "target"))
@@ -1105,11 +1030,7 @@ return function(ctx)
         local function check()
             if not active then return end
             local t = cfg.getTarget()
-            if t ~= current then
-                attach()
-            elseif t then
-                onExternal(t)
-            end
+            if t ~= current then attach() elseif t then onExternal(t) end
         end
 
         local function start()
@@ -1128,7 +1049,7 @@ return function(ctx)
         local function stop()
             active = false
             Core.Watchdog.remove(check)
-            if watchConn then watchConn:Disconnect() watchConn = nil end
+            if watchConn then watchConn:Disconnect(); watchConn = nil end
             unbind()
             badge.set("off")
         end
@@ -1211,6 +1132,17 @@ return function(ctx)
         return cfg
     end
 
+    local function propBoostCfg(prop, cfg)
+        cfg.props = cfg.props or { prop }
+        cfg.snapshot = cfg.snapshot or function(t) return t[prop] end
+        cfg.apply = cfg.apply or function(t, v) if math.abs(t[prop] - v) > 1e-3 then t[prop] = v end end
+        cfg.restore = cfg.restore or function(t, v) t[prop] = v end
+        cfg.getValue = cfg.getValue or function(t) return t[prop] end
+        cfg.isApplied = cfg.isApplied or function(t, v) return math.abs(t[prop] - v) < 1e-3 end
+        cfg.fromSnapshot = cfg.fromSnapshot or function(st) return st end
+        return cfg
+    end
+
     local function originalPreset()
         return { label = "Original", noHighlight = true, value = function(o) return o end }
     end
@@ -1218,23 +1150,15 @@ return function(ctx)
     local function boostPresets(maxValue)
         return {
             originalPreset(),
-            { label = '<font size="20">×</font>2',  value = function(o) return o and o * 2 end },
-            { label = '<font size="20">×</font>4',  value = function(o) return o and o * 4 end },
+            { label = '<font size="20">×</font>2', value = function(o) return o and o * 2 end },
+            { label = '<font size="20">×</font>4', value = function(o) return o and o * 4 end },
             { label = "Max", value = maxValue },
         }
     end
 
-    local SPEED_CFG = humanoidCfg({
-        title = "Speed", max = 1000,
-        props = { "WalkSpeed" },
-        snapshot = function(hum) return hum.WalkSpeed end,
-        apply = function(hum, v) if hum.WalkSpeed ~= v then hum.WalkSpeed = v end end,
-        restore = function(hum, ws) hum.WalkSpeed = ws end,
-        getValue = function(hum) return hum.WalkSpeed end,
-        isApplied = function(hum, v) return math.abs(hum.WalkSpeed - v) < 1e-3 end,
-        fromSnapshot = function(st) return st end,
-        presets = boostPresets(1000),
-    })
+    local SPEED_CFG = humanoidCfg(propBoostCfg("WalkSpeed", {
+        title = "Speed", max = 1000, presets = boostPresets(1000),
+    }))
 
     local JUMP_CFG = humanoidCfg({
         title = "Jump Boost", max = 1000,
@@ -1265,11 +1189,67 @@ return function(ctx)
         presets = boostPresets(1000),
     })
 
+    local FOV_CFG = propBoostCfg("FieldOfView", {
+        title = "Field of View", max = 120, min = 1, waitFor = "camera",
+        getTarget = function() return Workspace.CurrentCamera end,
+        watch = function(cb) return Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(cb) end,
+        presets = {
+            originalPreset(),
+            { label = "90",  value = 90 },
+            { label = "105", value = 105 },
+            { label = "120", value = 120 },
+        },
+    })
+
+    local ZOOM_CFG = propBoostCfg("CameraMaxZoomDistance", {
+        title = "Max Zoom", max = 1000, waitFor = "player",
+        getTarget = function() return LocalPlayer end,
+        presets = boostPresets(1000),
+    })
+
+    local MIN_ZOOM_CFG = propBoostCfg("CameraMinZoomDistance", {
+        title = "Min Zoom", max = 1000, min = 0.5, waitFor = "player",
+        getTarget = function() return LocalPlayer end,
+        presets = {
+            originalPreset(),
+            { label = "0.5", value = 0.5 },
+            { label = "5",   value = 5 },
+            { label = "15",  value = 15 },
+        },
+    })
+
+    local TIME_CFG = propBoostCfg("ClockTime", {
+        title = "Time of Day", max = 24, min = 0, waitFor = "lighting",
+        getTarget = function() return Lighting end,
+        apply = function(l, v)
+            local ct = v % 24
+            if math.abs(l.ClockTime - ct) > 1e-3 then l.ClockTime = ct end
+        end,
+        isApplied = function(l, v) return math.abs(l.ClockTime - (v % 24)) < 1e-2 end,
+        presets = {
+            originalPreset(),
+            { label = "Dawn",  value = 6 },
+            { label = "Noon",  value = 12 },
+            { label = "Dusk",  value = 18 },
+            { label = "Night", value = 0 },
+        },
+    })
+
+    local GRAVITY_CFG = propBoostCfg("Gravity", {
+        title = "Gravity", max = 500, waitFor = "workspace",
+        getTarget = function() return Workspace end,
+        presets = {
+            originalPreset(),
+            { label = '<font size="20">×</font>0.5',  value = function(o) return o and o * 0.5 end },
+            { label = '<font size="20">×</font>0.25', value = function(o) return o and o * 0.25 end },
+            { label = "Zero", value = 0 },
+        },
+    })
+
     --// ---------------- Infinite Jump ----------------
     function Features.CreateInfiniteJump(parent)
         local Switch, Set = CreateToggleOption(parent, "Infinite Jump", 50)
         local conn
-
         return Core.BindToggle(Switch, Set, {
             start = function()
                 conn = UserInputService.JumpRequest:Connect(function()
@@ -1280,7 +1260,7 @@ return function(ctx)
                 end)
             end,
             stop = function()
-                if conn then conn:Disconnect() conn = nil end
+                if conn then conn:Disconnect(); conn = nil end
             end,
         })
     end
@@ -1328,7 +1308,7 @@ return function(ctx)
         end
 
         local function stop()
-            if tracker then tracker.destroy() tracker = nil end
+            if tracker then tracker.destroy(); tracker = nil end
             badge.set("off")
         end
 
@@ -1368,9 +1348,7 @@ return function(ctx)
             reparse()
             badge.set("waiting", "Waiting for character")
 
-            jumpConn = UserInputService.JumpRequest:Connect(function()
-                upUntil = os.clock() + 0.25
-            end)
+            jumpConn = UserInputService.JumpRequest:Connect(function() upUntil = os.clock() + 0.25 end)
             brakeConn = UserInputService.InputBegan:Connect(function(i, gp)
                 if not gp and i.KeyCode == Enum.KeyCode.X then vel = Vector3.zero end
             end)
@@ -1378,7 +1356,6 @@ return function(ctx)
 
             tracker = Core.TrackCharacter(LocalPlayer, function(_, hum, root)
                 local snap = { platformStand = hum.PlatformStand, autoRotate = hum.AutoRotate }
-
                 local att = new("Attachment", { Name = "ElyseraFlyAtt" }, root)
                 local lv = new("LinearVelocity", {
                     Name = "ElyseraFlyLV",
@@ -1404,7 +1381,6 @@ return function(ctx)
 
                 local conn = RunService.RenderStepped:Connect(function(dt)
                     if hum.Health <= 0 or not root.Parent then return end
-
                     if hum.SeatPart then
                         if not seated then
                             seated = true
@@ -1454,9 +1430,9 @@ return function(ctx)
 
         local function stop()
             active, seated = false, false
-            if jumpConn then jumpConn:Disconnect() jumpConn = nil end
-            if brakeConn then brakeConn:Disconnect() brakeConn = nil end
-            if tracker then tracker.destroy() tracker = nil end
+            if jumpConn then jumpConn:Disconnect(); jumpConn = nil end
+            if brakeConn then brakeConn:Disconnect(); brakeConn = nil end
+            if tracker then tracker.destroy(); tracker = nil end
             vel = Vector3.zero
             badge.set("off")
         end
@@ -1545,9 +1521,7 @@ return function(ctx)
                 root.Anchored = true
             end
 
-            conns[1] = UserInputService.JumpRequest:Connect(function()
-                upUntil = os.clock() + 0.25
-            end)
+            conns[1] = UserInputService.JumpRequest:Connect(function() upUntil = os.clock() + 0.25 end)
             conns[2] = UserInputService.InputBegan:Connect(function(i, gp)
                 if not gp and i.UserInputType == Enum.UserInputType.MouseButton2 then
                     pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition end)
@@ -1576,7 +1550,6 @@ return function(ctx)
                     c.CameraType = Enum.CameraType.Scriptable
                 end
                 local rot = CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)
-                c.CFrame = CFrame.new(camPos) * rot
                 local dir = Core.ReadFlyDirection(upUntil)
                 local speed = parsed.effective or DEFAULT
                 camPos = camPos + (dir * speed * dt)
@@ -1659,7 +1632,7 @@ return function(ctx)
 
         local function giveBack(p)
             local c = conns[p]
-            if c then c:Disconnect() conns[p] = nil end
+            if c then c:Disconnect(); conns[p] = nil end
             local b = base[p]
             base[p], last[p] = nil, nil
             if b ~= nil and Lighting[p] ~= b then Lighting[p] = b end
@@ -1747,21 +1720,21 @@ return function(ctx)
             items[#items + 1] = { set = set, dim = Dim }
         end
 
-        bind("Esp Team Player", function(on) opts.teamMode = on end)
-        bind("Hide Name",       function(on) opts.hide.name = on end)
-        bind("Hide Distance",   function(on) opts.hide.dist = on end)
-        bind("Hide HP",         function(on) opts.hide.hp = on end)
-        bind("Hide Team",       function(on) opts.hide.team = on end)
+        bind("Esp Team Player",   function(on) opts.teamMode = on end)
+        bind("Hide Name",         function(on) opts.hide.name = on end)
+        bind("Hide Distance",     function(on) opts.hide.dist = on end)
+        bind("Hide HP",           function(on) opts.hide.hp = on end)
+        bind("Hide Team",         function(on) opts.hide.team = on end)
         bind("Only when visible", function(on) opts.occluded = on end)
 
-        local ui = {}
-        function ui.setEnabled(enabled)
-            for _, it in ipairs(items) do it.dim.Visible = not enabled end
-        end
-        function ui.reset()
-            for _, it in ipairs(items) do it.set(false) end
-        end
-        return opts, ui
+        return opts, {
+            setEnabled = function(enabled)
+                for _, it in ipairs(items) do it.dim.Visible = not enabled end
+            end,
+            reset = function()
+                for _, it in ipairs(items) do it.set(false) end
+            end,
+        }
     end
 
     function Features.CreateEspController(opts)
@@ -1896,7 +1869,7 @@ return function(ctx)
                 e.outline:Destroy()
                 e.outline = nil
             end
-            if e.bb then e.bb:Destroy() e.bb = nil end
+            if e.bb then e.bb:Destroy(); e.bb = nil end
         end
 
         local function countEntries()
@@ -1934,7 +1907,7 @@ return function(ctx)
         local function track(p)
             if p == LocalPlayer or trackers[p] then return end
             trackers[p] = Core.TrackCharacter(p, function(char, hum, root)
-                local e = { char = char, hum = hum, root = root, dist = nil, hp = nil, maxHp = nil }
+                local e = { char = char, hum = hum, root = root }
                 buildVisuals(p, e)
                 entries[p] = e
                 setOutlineMode(p, e, hlCount < HIGHLIGHT_BUDGET)
@@ -1968,10 +1941,9 @@ return function(ctx)
         end
 
         local function syncLoop()
-            local needed = folder ~= nil
-                and ((not opts.hide.dist) or countEntries() > HIGHLIGHT_BUDGET)
+            local needed = folder ~= nil and ((not opts.hide.dist) or countEntries() > HIGHLIGHT_BUDGET)
             if not needed then
-                if stopLoop then stopLoop() stopLoop = nil end
+                if stopLoop then stopLoop(); stopLoop = nil end
             elseif not stopLoop then
                 local alive = true
                 stopLoop = function() alive = false end
@@ -1993,7 +1965,6 @@ return function(ctx)
         end
 
         local C = {}
-
         function C.start()
             if folder then return end
             folder = new("Folder", { Name = "ElyseraESP" }, GuiRoot)
@@ -2013,14 +1984,14 @@ return function(ctx)
 
         function C.stop()
             stopping = true
-            if stopLoop then stopLoop() stopLoop = nil end
+            if stopLoop then stopLoop(); stopLoop = nil end
             for _, c in ipairs(conns) do c:Disconnect() end
             table.clear(conns)
             for p, t in pairs(trackers) do
                 t.destroy()
                 trackers[p] = nil
             end
-            if folder then folder:Destroy() folder = nil end
+            if folder then folder:Destroy(); folder = nil end
             hlCount, stopping = 0, false
         end
 
@@ -2036,7 +2007,6 @@ return function(ctx)
 
     function Features.CreateEsp(parent)
         local Card = CreateCard(parent, "EspPlayer", 10, 10, 10)
-
         local Switch, Set = CreateToggleOption(Card, "Esp Player", 40)
         Switch.Parent.LayoutOrder = 1
         Switch.Parent.BackgroundColor3 = Theme.PanelAlt
@@ -2061,99 +2031,6 @@ return function(ctx)
         })
     end
 
-    --// ---------------- Camera / Gravity / Time of Day (same engine: Features.CreateTargetBoost) ----------------
-    local FOV_CFG = {
-        title = "Field of View", max = 120, min = 1, waitFor = "camera",
-        props = { "FieldOfView" },
-        getTarget = function() return Workspace.CurrentCamera end,
-        watch = function(cb)
-            return Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(cb)
-        end,
-        snapshot = function(cam) return cam.FieldOfView end,
-        apply = function(cam, v) if math.abs(cam.FieldOfView - v) > 1e-3 then cam.FieldOfView = v end end,
-        restore = function(cam, fov) cam.FieldOfView = fov end,
-        getValue = function(cam) return cam.FieldOfView end,
-        isApplied = function(cam, v) return math.abs(cam.FieldOfView - v) < 1e-3 end,
-        fromSnapshot = function(st) return st end,
-        presets = {
-            originalPreset(),
-            { label = "90",  value = 90 },
-            { label = "105", value = 105 },
-            { label = "120", value = 120 },
-        },
-    }
-
-    local ZOOM_CFG = {
-        title = "Max Zoom", max = 1000, waitFor = "player",
-        props = { "CameraMaxZoomDistance" },
-        getTarget = function() return LocalPlayer end,
-        snapshot = function(p) return p.CameraMaxZoomDistance end,
-        apply = function(p, v) if p.CameraMaxZoomDistance ~= v then p.CameraMaxZoomDistance = v end end,
-        restore = function(p, z) p.CameraMaxZoomDistance = z end,
-        getValue = function(p) return p.CameraMaxZoomDistance end,
-        isApplied = function(p, v) return math.abs(p.CameraMaxZoomDistance - v) < 1e-3 end,
-        fromSnapshot = function(st) return st end,
-        presets = boostPresets(1000),
-    }
-
-    local MIN_ZOOM_CFG = {
-        title = "Min Zoom", max = 1000, min = 0.5, waitFor = "player",
-        props = { "CameraMinZoomDistance" },
-        getTarget = function() return LocalPlayer end,
-        snapshot = function(p) return p.CameraMinZoomDistance end,
-        apply = function(p, v) if p.CameraMinZoomDistance ~= v then p.CameraMinZoomDistance = v end end,
-        restore = function(p, z) p.CameraMinZoomDistance = z end,
-        getValue = function(p) return p.CameraMinZoomDistance end,
-        isApplied = function(p, v) return math.abs(p.CameraMinZoomDistance - v) < 1e-3 end,
-        fromSnapshot = function(st) return st end,
-        presets = {
-            originalPreset(),
-            { label = "0.5", value = 0.5 },
-            { label = "5",   value = 5 },
-            { label = "15",  value = 15 },
-        },
-    }
-
-    local TIME_CFG = {
-        title = "Time of Day", max = 24, min = 0, waitFor = "lighting",
-        props = { "ClockTime" },
-        getTarget = function() return Lighting end,
-        snapshot = function(l) return l.ClockTime end,
-        apply = function(l, v)
-            local ct = v % 24
-            if math.abs(l.ClockTime - ct) > 1e-3 then l.ClockTime = ct end
-        end,
-        restore = function(l, ct) l.ClockTime = ct end,
-        getValue = function(l) return l.ClockTime end,
-        isApplied = function(l, v) return math.abs(l.ClockTime - (v % 24)) < 1e-2 end,
-        fromSnapshot = function(st) return st end,
-        presets = {
-            originalPreset(),
-            { label = "Dawn",  value = 6 },
-            { label = "Noon",  value = 12 },
-            { label = "Dusk",  value = 18 },
-            { label = "Night", value = 0 },
-        },
-    }
-
-    local GRAVITY_CFG = {
-        title = "Gravity", max = 500, waitFor = "workspace",
-        props = { "Gravity" },
-        getTarget = function() return Workspace end,
-        snapshot = function(w) return w.Gravity end,
-        apply = function(w, v) if math.abs(w.Gravity - v) > 1e-3 then w.Gravity = v end end,
-        restore = function(w, g) w.Gravity = g end,
-        getValue = function(w) return w.Gravity end,
-        isApplied = function(w, v) return math.abs(w.Gravity - v) < 1e-3 end,
-        fromSnapshot = function(st) return st end,
-        presets = {
-            originalPreset(),
-            { label = '<font size="20">×</font>0.5',  value = function(o) return o and o * 0.5 end },
-            { label = '<font size="20">×</font>0.25', value = function(o) return o and o * 0.25 end },
-            { label = "Zero", value = 0 },
-        },
-    }
-
     --// ---------------- Anti AFK ----------------
     function Features.CreateAntiAfk(parent)
         local row = Core.CreateToggleRow(parent, "Anti AFK")
@@ -2161,13 +2038,8 @@ return function(ctx)
         local conn, resets = nil, 0
 
         local function start()
-            local VirtualUser = game:GetService("VirtualUser")
             resets = 0
-            conn = LocalPlayer.Idled:Connect(function()
-                pcall(function()
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton2(Vector2.zero)
-                end)
+            conn = UI.BindAntiAfk(function()
                 resets = resets + 1
                 badge.set("active", "Idle timer reset" .. Core.DOT .. resets .. (resets == 1 and " time" or " times"))
             end)
@@ -2175,7 +2047,7 @@ return function(ctx)
         end
 
         local function stop()
-            if conn then conn:Disconnect() conn = nil end
+            if conn then conn:Disconnect(); conn = nil end
             badge.set("off")
         end
 
@@ -2229,7 +2101,7 @@ return function(ctx)
         end
 
         local function stop()
-            if tracker then tracker.destroy() tracker = nil end
+            if tracker then tracker.destroy(); tracker = nil end
             badge.set("off")
         end
 
@@ -2275,9 +2147,7 @@ return function(ctx)
 
         local function start()
             conns[1] = UserInputService.InputBegan:Connect(function(input, processed)
-                if processed or input.UserInputType ~= Enum.UserInputType.MouseButton1 or not ctrlDown() then
-                    return
-                end
+                if processed or input.UserInputType ~= Enum.UserInputType.MouseButton1 or not ctrlDown() then return end
                 local cam = Workspace.CurrentCamera
                 if not cam then return end
                 local m = UserInputService:GetMouseLocation()
@@ -2310,44 +2180,18 @@ return function(ctx)
         local trackers, conns, hidden = {}, {}, 0
 
         local function status()
-            if hidden == 0 then
-                badge.set("active", "Active")
-            else
-                badge.set("active", "Hiding " .. hidden .. (hidden == 1 and " player" or " players"))
-            end
+            badge.set("active", hidden == 0 and "Active"
+                or ("Hiding " .. hidden .. (hidden == 1 and " player" or " players")))
         end
 
         local function track(p)
             if p == LocalPlayer or trackers[p] then return end
-            trackers[p] = Core.TrackCharacter(p, function(char, hum)
-                local parts, decals = {}, {}
-                local nameMode = hum.DisplayDistanceType
-
-                local function hide(inst)
-                    if inst:IsA("BasePart") then
-                        if parts[inst] == nil then parts[inst] = inst.LocalTransparencyModifier end
-                        inst.LocalTransparencyModifier = 1
-                    elseif inst:IsA("Decal") then
-                        if decals[inst] == nil then decals[inst] = inst.Transparency end
-                        inst.Transparency = 1
-                    end
-                end
-
-                hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-                for _, d in ipairs(char:GetDescendants()) do hide(d) end
-                local added = char.DescendantAdded:Connect(hide)
-
+            trackers[p] = Core.TrackCharacter(p, function(char)
+                local restore = UI.HideCharacter(char)
                 hidden = hidden + 1
                 status()
                 return function()
-                    added:Disconnect()
-                    for inst, orig in pairs(parts) do
-                        if inst.Parent then inst.LocalTransparencyModifier = orig end
-                    end
-                    for inst, t in pairs(decals) do
-                        if inst.Parent then inst.Transparency = t end
-                    end
-                    if hum.Parent then hum.DisplayDistanceType = nameMode end
+                    restore()
                     hidden = math.max(0, hidden - 1)
                     status()
                 end
@@ -2360,10 +2204,7 @@ return function(ctx)
             conns[1] = Players.PlayerAdded:Connect(track)
             conns[2] = Players.PlayerRemoving:Connect(function(p)
                 local t = trackers[p]
-                if t then
-                    t.destroy()
-                    trackers[p] = nil
-                end
+                if t then t.destroy(); trackers[p] = nil end
             end)
             status()
         end
@@ -2422,10 +2263,7 @@ return function(ctx)
 
         unstuck.onClick(function()
             local root, hum = Core.GetRoot(), Core.GetHumanoid()
-            if not (root and hum) then
-                unstuck.flash("No character", 1.2, true)
-                return
-            end
+            if not (root and hum) then unstuck.flash("No character", 1.2, true); return end
             hum.Sit = false
             root.CFrame = root.CFrame + Vector3.new(0, 8, 0)
             root.AssemblyLinearVelocity = Vector3.zero
@@ -2442,10 +2280,7 @@ return function(ctx)
             end
             armedUntil = 0
             local char, hum = LocalPlayer.Character, Core.GetHumanoid()
-            if not char then
-                respawn.flash("No character", 1.2, true)
-                return
-            end
+            if not char then respawn.flash("No character", 1.2, true); return end
             if hum then hum.Health = 0 end
             pcall(function() char:BreakJoints() end)
         end)
@@ -2501,10 +2336,7 @@ return function(ctx)
 
         CopyBtn.onClick(function()
             local txt = currentXyzText()
-            if not txt then
-                CopyBtn.flash("No char", 1.2, true)
-                return
-            end
+            if not txt then CopyBtn.flash("No char", 1.2, true); return end
             local ok = UI.CopyText(txt)
             CopyBtn.flash(ok and "Copied!" or "Failed", 1.2, not ok)
         end)
@@ -2513,9 +2345,7 @@ return function(ctx)
             local nums = {}
             for tok in tostring(s or ""):gmatch("[%+%-]?%d+%.?%d*") do
                 local n = tonumber(tok)
-                if n and n == n and math.abs(n) < 1e7 then
-                    nums[#nums + 1] = n
-                end
+                if n and n == n and math.abs(n) < 1e7 then nums[#nums + 1] = n end
             end
             if #nums >= 3 then return nums[1], nums[2], nums[3] end
             return nil
@@ -2529,10 +2359,7 @@ return function(ctx)
                 return
             end
             local root = Core.GetRoot()
-            if not root then
-                TpBtn.flash("No char", 1.2, true)
-                return
-            end
+            if not root then TpBtn.flash("No char", 1.2, true); return end
             local facing = root.CFrame - root.CFrame.Position
             if Core.TeleportTo(CFrame.new(x, y, z) * facing) then
                 TpBtn.flash("Done", 1)
@@ -2560,22 +2387,12 @@ return function(ctx)
 
     --// ---------------- Waypoints (with Rename + Export/Import) ----------------
     function Features.CreateWaypoints(parent)
-        local dataPath = ctx.dataPath or function(name) return name end
-        local FILE, MAX = dataPath("Elysera_Waypoints.json"), 15
-        local HttpService = game:GetService("HttpService")
-        local canFS = typeof(readfile) == "function" and typeof(writefile) == "function" and typeof(isfile) == "function"
+        local FILE, MAX = "Elysera_Waypoints.json", 15
+        local HttpService = ctx.HttpService or game:GetService("HttpService")
+        local canFS = ctx.canFS == true
         local placeKey = tostring(game.PlaceId)
 
-        local store = {}
-        if canFS then
-            pcall(function()
-                if isfile(FILE) then
-                    local data = HttpService:JSONDecode(readfile(FILE))
-                    if type(data) == "table" then store = data end
-                end
-            end)
-        end
-
+        local store = UI.ReadJson(FILE) or {}
         local points = {}
         if type(store[placeKey]) == "table" then
             for _, p in ipairs(store[placeKey]) do
@@ -2597,7 +2414,7 @@ return function(ctx)
             saveQueued = true
             task.delay(0.4, function()
                 saveQueued = false
-                pcall(function() writefile(FILE, HttpService:JSONEncode(store)) end)
+                UI.WriteJson(FILE, store)
             end)
         end
 
@@ -2636,7 +2453,6 @@ return function(ctx)
             radius = 6,
         })
 
-        -- Export / Import bar for waypoints
         local ToolRow = new("Frame", {
             LayoutOrder = 3,
             Size = UDim2.new(1, 0, 0, 28),
@@ -2695,7 +2511,6 @@ return function(ctx)
             corner(Row, 6)
             stroke(Row)
 
-            -- Editable waypoint name (tap or click to rename inline)
             local NameBox = new("TextBox", {
                 Position = UDim2.fromOffset(10, 4),
                 Size = UDim2.new(1, -104, 0, 20),
@@ -2711,10 +2526,7 @@ return function(ctx)
             }, Row)
             NameBox.FocusLost:Connect(function()
                 local nextName = Core.ClipText(Core.Trim(NameBox.Text), 24)
-                if nextName == "" then
-                    NameBox.Text = p.n
-                    return
-                end
+                if nextName == "" then NameBox.Text = p.n; return end
                 if nextName ~= p.n then
                     p.n = nextName
                     NameBox.Text = nextName
@@ -2773,14 +2585,8 @@ return function(ctx)
 
         local function saveHere()
             local root = Core.GetRoot()
-            if not root then
-                note.flash("No character", true)
-                return
-            end
-            if #points >= MAX then
-                note.flash("Limit reached (" .. MAX .. ")", true)
-                return
-            end
+            if not root then note.flash("No character", true); return end
+            if #points >= MAX then note.flash("Limit reached (" .. MAX .. ")", true); return end
             local name = Core.ClipText(Core.Trim(Box.Text), 24)
             if name == "" then
                 local taken = {}
@@ -2805,19 +2611,13 @@ return function(ctx)
         end
 
         ExportBtn.onClick(function()
-            if #points == 0 then
-                note.flash("Nothing to export", true)
-                return
-            end
+            if #points == 0 then note.flash("Nothing to export", true); return end
             local ok, json = pcall(HttpService.JSONEncode, HttpService, {
                 format = "Elysera-Waypoints",
                 placeId = game.PlaceId,
                 points = points,
             })
-            if not ok then
-                note.flash("Export failed", true)
-                return
-            end
+            if not ok then note.flash("Export failed", true); return end
             local copied = UI.CopyText(json)
             if not copied then Box.Text = json end
             ExportBtn.flash(copied and "Copied!" or "In box", 1.2)
@@ -2826,10 +2626,7 @@ return function(ctx)
 
         ImportBtn.onClick(function()
             local raw = Core.Trim(Box.Text)
-            if raw == "" and typeof(getclipboard) == "function" then
-                local okC, clip = pcall(getclipboard)
-                if okC and type(clip) == "string" then raw = Core.Trim(clip) end
-            end
+            if raw == "" then raw = Core.Trim(UI.ReadClipboard() or "") end
             local okDec, data = pcall(HttpService.JSONDecode, HttpService, raw)
             local listIn = (okDec and type(data) == "table") and (data.points or data) or nil
             if type(listIn) ~= "table" then
@@ -2849,10 +2646,7 @@ return function(ctx)
                     added = added + 1
                 end
             end
-            if added == 0 then
-                note.flash("No waypoints imported", true)
-                return
-            end
+            if added == 0 then note.flash("No waypoints imported", true); return end
             Box.Text = ""
             save()
             rebuild()
@@ -2985,7 +2779,7 @@ return function(ctx)
             Hud.Visible = viewing ~= nil
         end
 
-        ScreenGui:GetAttributeChangedSignal("Theme"):Connect(function() renderTitle() end)
+        ScreenGui:GetAttributeChangedSignal("Theme"):Connect(renderTitle)
 
         local function stopView(keepCamera)
             if not viewing then return end
@@ -3032,9 +2826,7 @@ return function(ctx)
             point()
 
             viewConns[1] = p.CharacterAdded:Connect(point)
-            viewConns[2] = LocalPlayer.CharacterAdded:Connect(function()
-                stopView(true)
-            end)
+            viewConns[2] = LocalPlayer.CharacterAdded:Connect(function() stopView(true) end)
             viewConns[3] = Players.PlayerRemoving:Connect(function(who)
                 if who == p then stopView() end
             end)
@@ -3094,8 +2886,7 @@ return function(ctx)
 
             local r = { frame = Row, name = nameL, user = userL, view = view, tp = tp, player = nil }
             tp.onClick(function()
-                if not r.player then return end
-                if not teleportToPlayer(r.player) then tp.flash("!", 1, true) end
+                if r.player and not teleportToPlayer(r.player) then tp.flash("!", 1, true) end
             end)
             view.onClick(function()
                 local p = r.player
@@ -3186,35 +2977,6 @@ return function(ctx)
         return handle
     end
 
-    --// ---------------- Reset All ----------------
-    function Features.CreateResetAll(parent, order)
-        local btn = new("TextButton", {
-            LayoutOrder = order,
-            Size = UDim2.new(1, 0, 0, 40),
-            Text = "Reset All",
-            BackgroundColor3 = Theme.PanelAlt,
-            BorderSizePixel = 0,
-            Font = Enum.Font.GothamBold,
-            TextSize = 14,
-            TextColor3 = Theme.Text,
-        }, parent)
-        corner(btn, 8)
-        stroke(btn)
-
-        local token = 0
-        btn.Activated:Connect(function()
-            if isLocked() then return end
-            local n = Core.ResetAll()
-            token = token + 1
-            local my = token
-            btn.Text = (n > 0) and ("Reset " .. n .. (n == 1 and " feature" or " features")) or "Nothing to reset"
-            task.delay(1.5, function()
-                if my == token and btn.Parent then btn.Text = "Reset All" end
-            end)
-        end)
-        return btn
-    end
-
     --// =====================================================
     --//  BUILD UI
     --// =====================================================
@@ -3261,9 +3023,8 @@ return function(ctx)
     Safety.trackSwitch(Features.CreateAntiAfk(Safety.Body))
     Safety.trackSwitch(Features.CreateAntiVoid(Safety.Body))
 
-    Features.CreateResetAll(LocalTab, 7)
+    UI.CreateResetButton(LocalTab, 7, Core.ResetAll)
 
-    -- GUI destroyed: reuse the Reset All path to clean everything up, then release global connections
     ScreenGui.Destroying:Connect(function()
         Core.ResetAll()
         for _, fn in ipairs(Core.hooks) do pcall(fn) end

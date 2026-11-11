@@ -7,86 +7,54 @@
 --// ##########################################################################################
 
 --// ================= STATUS & SERVER TAB (module) =================
--- This file is loaded by the main script (MainLocal.lua / MainWeb.lua) and called with a ctx table
--- containing the shared UI functions/variables.
---
--- Server tools:
---   * Join JobId   : the input box accepts a bare JobId or a link with gameInstanceId (roblox://..., https://www.roblox.com/games/...)
---   * Copy Join Link, Rejoin Server, Auto Rejoin on Kick
---   * Previous Server & Recent Servers (up to 10 servers stored in Elysera_Servers.json)
---   * Server Hop / Less People / Best Ping + Server Browser with Join button (reusing collectServers)
 
 return function(ctx)
     local StatusServerTab     = ctx.Tab
-
     local Theme               = ctx.Theme
     local ScreenGui           = ctx.ScreenGui
     local CoreGui             = ctx.CoreGui
     local LocalPlayer         = ctx.LocalPlayer
     local TeleportService     = ctx.TeleportService
     local HttpService         = ctx.HttpService
-    local UI                  = assert(ctx.UI, "Status_Server.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
+    local UI                  = assert(ctx.UI, "Status_Server.lua needs ctx.UI")
     local showToast           = ctx.Toast or UI.Toast or function() end
-    local Players             = game:GetService("Players")
+    local Players             = ctx.Players or game:GetService("Players")
     local Stats               = game:GetService("Stats")
     local GuiService          = game:GetService("GuiService")
 
-    local new                 = ctx.new
-    local corner              = ctx.corner
-    local stroke              = ctx.stroke
-    local padding             = ctx.padding
-    local list                = ctx.list
-    local label               = ctx.label
-
-    local CreateInfoRow       = ctx.CreateInfoRow
-    local CreateCard          = ctx.CreateCard
-    local CreateStyledButton  = ctx.CreateStyledButton
-    local CreateToggleOption  = ctx.CreateToggleOption
-    local flashButtonFeedback = ctx.flashButtonFeedback
-    local flashStrokeError    = ctx.flashStrokeError
-    local bindBoxFocus        = ctx.bindBoxFocus
-    local guarded             = ctx.guarded
-    local isLocked            = ctx.isLocked -- replaces the main file's uiLocked variable
-    local canFS               = ctx.canFS == true
-    local dataPath            = ctx.dataPath or function(name) return name end
+    local new, corner, stroke, padding, list, label = ctx.new, ctx.corner, ctx.stroke, ctx.padding, ctx.list, ctx.label
+    local CreateInfoRow, CreateCard = ctx.CreateInfoRow, ctx.CreateCard
+    local CreateStyledButton, CreateToggleOption = ctx.CreateStyledButton, ctx.CreateToggleOption
+    local flashButtonFeedback, flashStrokeError = ctx.flashButtonFeedback, ctx.flashStrokeError
+    local bindBoxFocus, guarded, isLocked = ctx.bindBoxFocus, ctx.guarded, ctx.isLocked
 
     --// ---------- Config ----------
-    local SPAM_JOIN_DELAY  = 1.5  -- seconds between two Spam Join attempts (grows automatically after repeated errors)
-    local PENDING_TIMEOUT  = 10   -- after this many seconds the previous teleport counts as finished/expired
-    local HOP_WAIT_RESULT  = 6    -- wait at most this many seconds to see whether the teleport gets rejected
-    local HOP_MAX_ATTEMPTS = 3    -- maximum number of servers to try per Hop
-    local PAGE_DELAY       = 0.3  -- pause between API pages to avoid HTTP 429
+    local SPAM_JOIN_DELAY  = 1.5
+    local PENDING_TIMEOUT  = 10
+    local HOP_WAIT_RESULT  = 6
+    local HOP_MAX_ATTEMPTS = 3
+    local PAGE_DELAY       = 0.3
 
-    local ScriptStartTime = os.time() -- os.clock() is CPU time, not real time
+    local ScriptStartTime  = os.time()
+    local copyToClipboard  = UI.CopyText
+    local formatAgo        = UI.FormatAgo
 
-    --// ---------- Utilities ----------
     local function formatTime(seconds)
         if type(seconds) ~= "number" then return "--" end
         seconds = math.max(0, math.floor(seconds))
         return string.format("%dh%dm%ds", math.floor(seconds / 3600), math.floor((seconds % 3600) / 60), seconds % 60)
     end
 
-    -- Shared clipboard helper from the core UI kit (tries every executor's clipboard function); true when copied
-    local copyToClipboard = UI.CopyText
-
-    -- A Roblox JobId is always a GUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     local function isValidJobId(jobId)
-        return type(jobId) == "string"
-            and jobId:match("^%x+%-%x+%-%x+%-%x+%-%x+$") ~= nil
+        return type(jobId) == "string" and jobId:match("^%x+%-%x+%-%x+%-%x+%-%x+$") ~= nil
     end
 
-    -- The Join box accepts a bare JobId or a link with gameInstanceId:
-    --   roblox://experiences/start?placeId=123&gameInstanceId=<JobId>
-    --   https://www.roblox.com/games/start?placeId=123&gameInstanceId=<JobId>
-    --   https://www.roblox.com/games/123/Game-Name?gameInstanceId=<JobId>   (including the encoded forms %3D, %26...)
-    -- Returns jobId, placeId (nil when the link does not state it), or nil, nil, reason ("Invalid" | "Private")
     local function parseJoinInput(raw)
         if type(raw) ~= "string" then return nil, nil, "Invalid" end
         local text = raw:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
         text = text:gsub("[%s\"']", ""):lower()
         if text == "" then return nil, nil, "Invalid" end
         if isValidJobId(text) then return text, nil end
-        -- private server links use a code, so there is no JobId to teleport to directly
         if text:find("privateserverlinkcode=", 1, true) then return nil, nil, "Private" end
 
         local jobId = text:match("gameinstanceid=([%x%-]+)")
@@ -96,9 +64,6 @@ return function(ctx)
     end
 
     --// ---------- Shared teleport state ----------
-    -- teleportPending = true right after a teleport was requested and the result is not known yet.
-    -- If it succeeds, the client leaves the server (the script stops); if it fails,
-    -- TeleportInitFailed reports back and we unlock again.
     local teleportPending = false
     local pendingToken    = 0
     local failStreak      = 0
@@ -123,7 +88,6 @@ return function(ctx)
         failedConn:Disconnect()
     end)
 
-    -- Returns ok, reason (short, fits a 70px button). placeId = nil: use the current place
     local function joinServer(jobId, placeId)
         if not isValidJobId(jobId) then return false, "Invalid" end
         if jobId == game.JobId then return false, "Same" end
@@ -134,45 +98,31 @@ return function(ctx)
         return true
     end
 
-    --// ---------- Server history (for "Previous Server" & "Recent Servers") ----------
-    -- Every time Elysera runs on a server, record (place, JobId, time) in the file so it is remembered after the teleport.
+    --// ---------- Server history ----------
     local HISTORY_FILE, HISTORY_MAX = "Elysera_Servers.json", 10
-    local history = {} -- newest first: { place = number, id = string, t = os.time() }
+    local history = {}
 
-    local function loadHistory()
-        if not canFS then return end
-        local ok, data = pcall(function()
-            local path = dataPath(HISTORY_FILE)
-            if isfile(path) then return HttpService:JSONDecode(readfile(path)) end
-        end)
-        if not (ok and type(data) == "table" and type(data.history) == "table") then return end
-        for _, e in ipairs(data.history) do
-            if type(e) == "table" and type(e.place) == "number" and isValidJobId(e.id) and type(e.t) == "number" then
-                history[#history + 1] = { place = e.place, id = e.id, t = e.t }
-                if #history >= HISTORY_MAX then break end
+    do
+        local data = UI.ReadJson(HISTORY_FILE)
+        if data and type(data.history) == "table" then
+            for _, e in ipairs(data.history) do
+                if type(e) == "table" and type(e.place) == "number" and isValidJobId(e.id) and type(e.t) == "number" then
+                    history[#history + 1] = { place = e.place, id = e.id, t = e.t }
+                    if #history >= HISTORY_MAX then break end
+                end
             end
         end
-    end
-
-    local function saveHistory()
-        if not canFS then return end
-        pcall(function()
-            writefile(dataPath(HISTORY_FILE), HttpService:JSONEncode({ v = 1, history = history }))
-        end)
-    end
-
-    local function recordCurrentServer()
         local id = game.JobId
-        if not isValidJobId(id) then return end
-        for i = #history, 1, -1 do
-            if history[i].id == id then table.remove(history, i) end -- one record per server, moved to the top
+        if isValidJobId(id) then
+            for i = #history, 1, -1 do
+                if history[i].id == id then table.remove(history, i) end
+            end
+            table.insert(history, 1, { place = game.PlaceId, id = id, t = os.time() })
+            while #history > HISTORY_MAX do table.remove(history) end
+            UI.WriteJson(HISTORY_FILE, { v = 1, history = history })
         end
-        table.insert(history, 1, { place = game.PlaceId, id = id, t = os.time() })
-        while #history > HISTORY_MAX do table.remove(history) end
-        saveHistory()
     end
 
-    -- The most recent server of this game that is not the current server
     local function previousServer()
         for _, e in ipairs(history) do
             if e.place == game.PlaceId and e.id ~= game.JobId then return e end
@@ -180,24 +130,11 @@ return function(ctx)
         return nil
     end
 
-    local function formatAgo(t)
-        local d = math.max(0, os.time() - t)
-        if d < 60 then return "<1m ago" end
-        if d < 3600 then return math.floor(d / 60) .. "m ago" end
-        if d < 86400 then return math.floor(d / 3600) .. "h ago" end
-        return math.floor(d / 86400) .. "d ago"
-    end
-
-    loadHistory()
-    recordCurrentServer()
-
-    --// ---------- Continuously updating info rows ----------
+    --// ---------- Live & copy rows ----------
     local liveRows = {}
 
     local function CreateLiveRow(parent, title, getText)
         local Frame = CreateInfoRow(parent, title)
-
-        -- Value takes 110px on the right; shrink Left (default -90) so the title does not overlap Value
         local Left = Frame:FindFirstChild("Left")
         if Left then Left.Size = UDim2.new(1, -118, 1, 0) end
 
@@ -212,7 +149,7 @@ return function(ctx)
             TextColor3 = Theme.AccentPink,
         })
 
-        table.insert(liveRows, { Value = Value, get = getText })
+        liveRows[#liveRows + 1] = { Value = Value, get = getText }
         return Frame
     end
 
@@ -231,7 +168,6 @@ return function(ctx)
 
     local function CreateCopyRow(parent, title, getText, showValue)
         local Frame, Left = CreateInfoRow(parent, title)
-
         if showValue then
             label(Left, {
                 LayoutOrder = 2,
@@ -254,23 +190,14 @@ return function(ctx)
         return Frame
     end
 
-    CreateLiveRow(StatusServerTab, "Timer", function()
-        return formatTime(os.time() - ScriptStartTime)
-    end)
-
-    -- time() = seconds since the client entered this server (resets when teleporting to another server)
-    CreateLiveRow(StatusServerTab, "Time Played", function()
-        return formatTime(time())
-    end)
-
+    CreateLiveRow(StatusServerTab, "Timer", function() return formatTime(os.time() - ScriptStartTime) end)
+    CreateLiveRow(StatusServerTab, "Time Played", function() return formatTime(time()) end)
     CreateLiveRow(StatusServerTab, "Players", function()
         return string.format("%d/%d", #Players:GetPlayers(), Players.MaxPlayers)
     end)
 
     local pingItem
-    pcall(function()
-        pingItem = Stats.Network.ServerStatsItem["Data Ping"]
-    end)
+    pcall(function() pingItem = Stats.Network.ServerStatsItem["Data Ping"] end)
     CreateLiveRow(StatusServerTab, "Ping", function()
         if not pingItem then return "--" end
         return string.format("%d ms", math.floor(pingItem:GetValue() + 0.5))
@@ -278,28 +205,23 @@ return function(ctx)
 
     local isOpen = ctx.isOpen or function() return true end
     local MainUI = ctx.MainUI
-    local function tabShowing()
-        return isOpen() and StatusServerTab.Visible
-    end
     local function windowVisible()
         return StatusServerTab.Visible and (not MainUI or MainUI.Visible)
     end
 
     local liveRun = 0
-    local function startLiveLoop()
-        liveRun = liveRun + 1
-        local myRun = liveRun -- an old loop (if still alive) exits by itself on its next check
-        task.spawn(function()
-            while ScreenGui.Parent and myRun == liveRun and windowVisible() do
-                if isOpen() then refreshLiveRows() end
-                task.wait(0.5)
-            end
-        end)
-    end
-
     local function onVisibilityChanged()
-        if tabShowing() then refreshLiveRows() end
-        if windowVisible() then startLiveLoop() end
+        if isOpen() and StatusServerTab.Visible then refreshLiveRows() end
+        if windowVisible() then
+            liveRun = liveRun + 1
+            local myRun = liveRun
+            task.spawn(function()
+                while ScreenGui.Parent and myRun == liveRun and windowVisible() do
+                    if isOpen() then refreshLiveRows() end
+                    task.wait(0.5)
+                end
+            end)
+        end
     end
     StatusServerTab:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged)
     if MainUI then MainUI:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged) end
@@ -310,7 +232,6 @@ return function(ctx)
     --// ---------- Server Hopper ----------
     do
         local Card = CreateCard(StatusServerTab, "ServerHopper", 12, 14, 12)
-
         label(Card, {
             LayoutOrder = 1,
             Size = UDim2.new(1, 0, 0, 20),
@@ -353,18 +274,16 @@ return function(ctx)
         end
 
         bindBoxFocus(Box, BoxStroke, refreshPlaceholder, function()
-            Box.Text = (Box.Text:gsub("^%s+", ""):gsub("%s+$", ""))
+            Box.Text = UI.Trim(Box.Text)
             refreshPlaceholder()
         end)
         Box:GetPropertyChangedSignal("Text"):Connect(refreshPlaceholder)
 
-        -- Returns jobId, placeId, reason (see parseJoinInput); empty box -> nil, nil, "Empty"
         local function getTarget()
-            if (Box.Text:gsub("%s", "")) == "" then return nil, nil, "Empty" end
+            if UI.Trim(Box.Text) == "" then return nil, nil, "Empty" end
             return parseJoinInput(Box.Text)
         end
 
-        -- Join JobId
         local JoinFrame = CreateInfoRow(Card, "Join JobId", 40)
         JoinFrame.LayoutOrder = 3
         JoinFrame.BackgroundColor3 = Theme.PanelAlt
@@ -382,9 +301,7 @@ return function(ctx)
 
             local ok, reason = joinServer(jobId, placeId)
             if not ok then
-                if reason == "Invalid" or reason == "Same" then
-                    flashStrokeError(BoxStroke)
-                end
+                if reason == "Invalid" or reason == "Same" then flashStrokeError(BoxStroke) end
                 flashButtonFeedback(JoinBtn, "Join", reason or "Failed", true, 0.8)
                 return
             end
@@ -394,26 +311,19 @@ return function(ctx)
             task.delay(1.2, function() joinBusy = false end)
         end)
 
-        -- Spam Join
         local Switch, setSpamState = CreateToggleOption(Card, "Spam Join", 40, { noSession = true })
         Switch.Parent.LayoutOrder = 4
         Switch.Parent.BackgroundColor3 = Theme.PanelAlt
 
         local runId = 0
-
-        local function stopSpam()
-            setSpamState(false)
-        end
-
         Switch:GetAttributeChangedSignal("Toggled"):Connect(function()
             runId = runId + 1
             if not Switch:GetAttribute("Toggled") then return end
 
-            -- JobId empty / wrong / same as the current server: report the error and switch off, do not run a pointless loop
             local firstId = getTarget()
             if not firstId or firstId == game.JobId then
                 flashStrokeError(BoxStroke)
-                stopSpam()
+                setSpamState(false)
                 return
             end
 
@@ -424,15 +334,10 @@ return function(ctx)
                     local jobId, placeId = getTarget()
                     if not jobId or jobId == game.JobId then
                         flashStrokeError(BoxStroke)
-                        stopSpam()
+                        setSpamState(false)
                         break
                     end
-
-                    if not isLocked() then
-                        joinServer(jobId, placeId) -- skips itself if the previous teleport has no result yet
-                    end
-
-                    -- on consecutive errors, back off gradually so Roblox does not rate-limit us
+                    if not isLocked() then joinServer(jobId, placeId) end
                     task.wait(SPAM_JOIN_DELAY + math.min(failStreak, 5) * 0.5)
                 end
             end)
@@ -440,39 +345,28 @@ return function(ctx)
     end
 
     CreateCopyRow(StatusServerTab, "Copy Server JobId", function() return game.JobId end, false)
-
-    -- Link that opens this server directly (paste it into someone else's Join box, or open it in a browser with Roblox installed)
     CreateCopyRow(StatusServerTab, "Copy Join Link", function()
         if game.JobId == "" then return "" end
         return ("roblox://experiences/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
     end, false)
 
     --// ---------- Rejoin & Auto Rejoin on Kick ----------
-    local function doRejoin()
-        if teleportPending then return false end
-        local ok = pcall(function()
-            if game.JobId == "" then
-                TeleportService:Teleport(game.PlaceId, LocalPlayer)
-            else
-                TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
-            end
-        end)
-        if ok then markPending() end
-        return ok
-    end
-
     do
         local Frame = CreateInfoRow(StatusServerTab, "Rejoin Server")
         local RejoinBtn = CreateStyledButton(Frame, "Rejoin", 70)
         RejoinBtn.Activated:Connect(guarded(function(done)
-            local ok = doRejoin()
+            local ok = not teleportPending and pcall(function()
+                if game.JobId == "" then
+                    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                else
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+                end
+            end)
+            if ok then markPending() end
             flashButtonFeedback(RejoinBtn, "Rejoin", ok and "Rejoining..." or "Failed", not ok)
             done()
         end))
-    end
 
-    -- Auto Rejoin when kicked or disconnected
-    do
         local KickSwitch = CreateToggleOption(StatusServerTab, "Auto Rejoin on Kick")
         local kickConns = {}
         local rejoining = false
@@ -521,24 +415,23 @@ return function(ctx)
         ScreenGui.Destroying:Connect(stopAutoRejoin)
     end
 
-    --// ---------- Previous Server & Recent Servers (up to 10) ----------
+    --// ---------- Previous Server & Recent Servers ----------
     do
         local Frame, Left = CreateInfoRow(StatusServerTab, "Previous Server")
+        local function describePrev()
+            local prev = previousServer()
+            return prev and formatAgo(prev.t) or "--"
+        end
         local AgoLabel = label(Left, {
             LayoutOrder = 2,
             Size = UDim2.new(0, 0, 1, 0),
             AutomaticSize = Enum.AutomaticSize.X,
-            Text = "",
+            Text = describePrev(),
             TextSize = 15,
             TextXAlignment = Enum.TextXAlignment.Left,
             TextColor3 = Theme.AccentPink,
         })
-        local function describe()
-            local prev = previousServer()
-            return prev and formatAgo(prev.t) or "--"
-        end
-        AgoLabel.Text = describe()
-        table.insert(liveRows, { Value = AgoLabel, get = describe }) -- "x ago" is updated by the same live loop
+        liveRows[#liveRows + 1] = { Value = AgoLabel, get = describePrev }
 
         local Btn = CreateStyledButton(Frame, "Join", 70)
         Btn.Activated:Connect(guarded(function(done)
@@ -553,15 +446,13 @@ return function(ctx)
             done()
         end))
 
-        -- Recent Servers section (renders the saved history list up to 10 entries)
         local RecentSec = UI.CreateSection(StatusServerTab, "Recent Servers", 0, {
             subtitle = ("Last %d visited servers in history"):format(#history),
             collapsed = true,
         })
         for idx, entry in ipairs(history) do
             local isCurrent = (entry.id == game.JobId)
-            local shortId = entry.id:sub(1, 8) .. "..."
-            local Row, RLeft = CreateInfoRow(RecentSec.Body, ("#%d · %s"):format(idx, shortId), 42)
+            local Row, RLeft = CreateInfoRow(RecentSec.Body, ("#%d · %s..."):format(idx, entry.id:sub(1, 8)), 42)
             local SubL = label(RLeft, {
                 LayoutOrder = 2,
                 Size = UDim2.new(0, 0, 1, 0),
@@ -573,7 +464,7 @@ return function(ctx)
                 TextColor3 = isCurrent and Theme.Sakura or Theme.SubText,
             })
             if not isCurrent then
-                table.insert(liveRows, { Value = SubL, get = function() return formatAgo(entry.t) end })
+                liveRows[#liveRows + 1] = { Value = SubL, get = function() return formatAgo(entry.t) end }
                 local JBtn = CreateStyledButton(Row, "Join", 64)
                 JBtn.Activated:Connect(guarded(function(done)
                     local ok, reason = joinServer(entry.id, entry.place)
@@ -593,23 +484,8 @@ return function(ctx)
 
     --// ---------- Server Hop & Server Browser ----------
     do
-        local failedJobIds = {} -- servers that were tried and rejected; never picked again
-
-        local function httpRequest(url)
-            local fn = (syn and syn.request) or http_request or request
-                or (http and http.request) or (fluxus and fluxus.request)
-            if not fn then return nil, "No HTTP" end
-
-            local ok, res = pcall(fn, { Url = url, Method = "GET" })
-            if not ok or type(res) ~= "table" then return nil, "Failed" end
-
-            local code = res.StatusCode
-            if code == 429 then return nil, "Limited" end
-            if type(code) == "number" and (code < 200 or code >= 300) then return nil, "Failed" end
-
-            if type(res.Body) == "string" then return res.Body end
-            return nil, "Failed"
-        end
+        local failedJobIds = {}
+        local httpRequest = UI.HttpRequest
 
         local function isUsable(srv)
             return type(srv) == "table"
@@ -621,21 +497,15 @@ return function(ctx)
                 and srv.playing < srv.maxPlayers
         end
 
-        -- sortOrder: 1 = fewest players first (Asc), 2 = most players first (Desc)
-        -- Stop early once there are enough candidates (`enough`) to save requests.
         local function collectServers(sortOrder, maxPages, enough, accept)
             local listOut, cursor, lastErr = {}, "", nil
-
             for page = 1, maxPages do
                 local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=%d&limit=100")
                     :format(game.PlaceId, sortOrder)
                 if cursor ~= "" then url = url .. ("&cursor=" .. HttpService:UrlEncode(cursor)) end
 
                 local body, err = httpRequest(url)
-                if not body then
-                    lastErr = err
-                    break
-                end
+                if not body then lastErr = err; break end
 
                 local ok, data = pcall(HttpService.JSONDecode, HttpService, body)
                 if not ok or type(data) ~= "table" or type(data.data) ~= "table" then
@@ -645,21 +515,18 @@ return function(ctx)
 
                 for _, srv in ipairs(data.data) do
                     if isUsable(srv) and accept(srv) then
-                        table.insert(listOut, srv)
+                        listOut[#listOut + 1] = srv
                     end
                 end
-
                 if #listOut >= enough then break end
 
                 cursor = data.nextPageCursor
                 if type(cursor) ~= "string" or cursor == "" then break end
                 if page < maxPages then task.wait(PAGE_DELAY) end
             end
-
             return listOut, lastErr
         end
 
-        -- shuffle the first n elements of the list
         local function shuffle(arr, n)
             for i = math.min(n, #arr), 2, -1 do
                 local j = math.random(1, i)
@@ -667,7 +534,6 @@ return function(ctx)
             end
         end
 
-        -- mode: "random" | "least" (fewest players) | "ping" (lowest ping)
         local function pickServers(mode)
             if mode == "ping" then
                 local listOut, err = collectServers(2, 5, 200, function(srv)
@@ -679,18 +545,13 @@ return function(ctx)
                     return (type(a.fps) == "number" and a.fps or 0) > (type(b.fps) == "number" and b.fps or 0)
                 end)
                 return listOut, err
-            end
-
-            if mode == "least" then
-                local listOut, err = collectServers(1, 2, 20, function(srv)
-                    return srv.playing >= 1
-                end)
+            elseif mode == "least" then
+                local listOut, err = collectServers(1, 2, 20, function(srv) return srv.playing >= 1 end)
                 table.sort(listOut, function(a, b) return a.playing < b.playing end)
                 shuffle(listOut, 5)
                 return listOut, err
             end
 
-            -- Random hop: avoid nearly full servers (they easily fail with GameFull)
             local listOut, err = collectServers(2, 5, 30, function(srv)
                 return srv.playing <= math.max(0, srv.maxPlayers - 2)
             end)
@@ -698,32 +559,26 @@ return function(ctx)
             return listOut, err
         end
 
-        -- Returns true while teleporting, or false + a short reason
         local function hopServer(mode)
-            failedJobIds = {} -- every Hop press starts fresh: do not let the list of failed servers grow forever
+            failedJobIds = {}
             local candidates, err = pickServers(mode)
             if #candidates == 0 then return false, err or "No server" end
 
-            local tried = 0
-            for _, srv in ipairs(candidates) do
-                if tried >= HOP_MAX_ATTEMPTS then break end
-                tried = tried + 1
-
+            for tried = 1, math.min(#candidates, HOP_MAX_ATTEMPTS) do
+                local srv = candidates[tried]
                 local ok, reason = joinServer(srv.id)
                 if not ok then
                     if reason == "Busy" then return false, "Busy" end
                     failedJobIds[srv.id] = true
                 else
-                    -- wait to see whether Roblox rejects it (server full / closed...)
                     for _ = 1, math.ceil(HOP_WAIT_RESULT / 0.2) do
                         if not teleportPending then break end
                         task.wait(0.2)
                     end
-                    if teleportPending then return true end -- still teleporting: counts as success
-                    failedJobIds[srv.id] = true             -- rejected: try the next server
+                    if teleportPending then return true end
+                    failedJobIds[srv.id] = true
                 end
             end
-
             return false, "Failed"
         end
 
@@ -748,7 +603,6 @@ return function(ctx)
         bindHopButton("Server Hop With Less People", "least")
         bindHopButton("Server Hop With Best Ping", "ping")
 
-        --// ---------- Server Browser (reuses collectServers) ----------
         local BrowserSec = UI.CreateSection(StatusServerTab, "Server Browser", 0, {
             subtitle = "Browse public servers and join directly",
             collapsed = true,
@@ -800,13 +654,11 @@ return function(ctx)
                 return tostring(a.id) < tostring(b.id)
             end)
 
-            local count = math.min(#cachedServers, 15)
-            for i = 1, count do
+            for i = 1, math.min(#cachedServers, 15) do
                 local srv = cachedServers[i]
                 local pingTxt = type(srv.ping) == "number" and (math.floor(srv.ping + 0.5) .. "ms") or "--"
                 local fpsTxt = type(srv.fps) == "number" and (math.floor(srv.fps + 0.5) .. "fps") or "--"
-                local title = string.format("%d/%d players", srv.playing, srv.maxPlayers)
-                local Row, Left = CreateInfoRow(ListFrame, title, 40)
+                local Row, Left = CreateInfoRow(ListFrame, string.format("%d/%d players", srv.playing, srv.maxPlayers), 40)
                 Row.LayoutOrder = i
                 label(Left, {
                     LayoutOrder = 2,
@@ -840,9 +692,7 @@ return function(ctx)
             task.spawn(function()
                 failedJobIds = {}
                 local order = (SORTS[sortIdx] == "Least") and 1 or 2
-                local servers, err = collectServers(order, 2, 30, function(srv)
-                    return srv.playing >= 1
-                end)
+                local servers, err = collectServers(order, 2, 30, function(srv) return srv.playing >= 1 end)
                 cachedServers = servers
                 if #servers > 0 then
                     StatusHint.Text = #servers .. " found"

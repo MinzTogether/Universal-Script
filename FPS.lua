@@ -7,18 +7,12 @@
 --// ##########################################################################################
 
 --// ================= FPS TAB (module) =================
--- Loaded by MainWeb.lua / MainLocal.lua with a ctx table (see "CTX" there).
--- Layout: Performance monitor (FPS, avg, 1% low, frame time, ping, memory, graph)
---         Optimize  : FPS Profile · FPS Cap · Auto Boost · Hide Distant Players
---         Screen    : White Screen · Black Screen · AFK Mode · Idle Saver
---         Interface : FPS Overlay (with Avg / 1% Low / RAM) · Mute Audio · Remove Notification · Hide Chat & Player List
---         Reset All
 
 return function(ctx)
     local FPSTab, Theme, ScreenGui = ctx.Tab, ctx.Theme, ctx.ScreenGui
     local LocalPlayer, CoreGui, MainUI = ctx.LocalPlayer, ctx.CoreGui, ctx.MainUI
-    local GuiRoot = ctx.GuiRoot or CoreGui   -- where the UI is mounted (CoreGui, or PlayerGui as a fallback)
-    local UI = assert(ctx.UI, "FPS.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
+    local GuiRoot = ctx.GuiRoot or CoreGui
+    local UI = assert(ctx.UI, "FPS.lua needs ctx.UI")
     local Saved, saveSettings = ctx.Saved, ctx.saveSettings
     local ANCHOR_CENTER = ctx.ANCHOR_CENTER
     local EASE_QUAD, DIR_IN, DIR_OUT = ctx.EASE_QUAD, ctx.DIR_IN, ctx.DIR_OUT
@@ -27,15 +21,14 @@ return function(ctx)
     local FunctionScroll, CreateToggleOption = ctx.FunctionScroll, ctx.CreateToggleOption
     local isLocked, setLocked = ctx.isLocked, ctx.setLocked
 
-    local Players          = game:GetService("Players")
-    local RunService       = game:GetService("RunService")
+    local Players          = ctx.Players or game:GetService("Players")
+    local RunService       = ctx.RunService or game:GetService("RunService")
+    local UserInputService = ctx.UserInputService or game:GetService("UserInputService")
     local Lighting         = game:GetService("Lighting")
     local StarterGui       = game:GetService("StarterGui")
     local SoundService     = game:GetService("SoundService")
     local TextService      = game:GetService("TextService")
     local Stats            = game:GetService("Stats")
-    local UserInputService = game:GetService("UserInputService")
-    local HttpService      = game:GetService("HttpService")
 
     local function setProp(inst, prop, value)
         return pcall(function() inst[prop] = value end)
@@ -44,10 +37,7 @@ return function(ctx)
     --// ================= LIFECYCLE =================
     local destroyed = false
     local teardown = {}
-
-    local function onDestroy(fn)
-        teardown[#teardown + 1] = fn
-    end
+    local function onDestroy(fn) teardown[#teardown + 1] = fn end
 
     ScreenGui.Destroying:Connect(function()
         destroyed = true
@@ -57,18 +47,9 @@ return function(ctx)
     --// ================= SAVED CHOICES =================
     local Prefs = {}
     do
-        local dataPath = ctx.dataPath or function(name) return name end
-        local FILE = dataPath("Elysera_Fps.json")
-        local canFS = typeof(readfile) == "function" and typeof(writefile) == "function"
-            and typeof(isfile) == "function"
-        local data, queued = {}, false
-
-        if canFS then
-            local ok, decoded = pcall(function()
-                if isfile(FILE) then return HttpService:JSONDecode(readfile(FILE)) end
-            end)
-            if ok and type(decoded) == "table" then data = decoded end
-        end
+        local FILE = "Elysera_Fps.json"
+        local data = UI.ReadJson(FILE) or {}
+        local queued = false
 
         function Prefs.get(key) return data[key] end
 
@@ -81,11 +62,11 @@ return function(ctx)
 
         function Prefs.set(key, value)
             data[key] = value
-            if not canFS or queued then return end
+            if queued then return end
             queued = true
             task.delay(0.3, function()
                 queued = false
-                pcall(writefile, FILE, HttpService:JSONEncode(data))
+                UI.WriteJson(FILE, data)
             end)
         end
     end
@@ -119,34 +100,15 @@ return function(ctx)
 
         function FpsCap.supported() return canSet end
         function FpsCap.getUser() return userCap end
-
-        function FpsCap.setUser(fps)
-            userCap = fps
-            apply()
-        end
-
-        function FpsCap.setCover(on)
-            coverCap = (on and (original or userCap)) and COVER_CAP or nil
-            apply()
-        end
-
-        function FpsCap.setAfk(on)
-            afkCap = on and COVER_CAP or nil
-            apply()
-        end
-
-        function FpsCap.restore()
-            userCap, coverCap, afkCap = nil, nil, nil
-            apply()
-        end
+        function FpsCap.setUser(fps) userCap = fps; apply() end
+        function FpsCap.setCover(on) coverCap = (on and (original or userCap)) and COVER_CAP or nil; apply() end
+        function FpsCap.setAfk(on) afkCap = on and COVER_CAP or nil; apply() end
+        function FpsCap.restore() userCap, coverCap, afkCap = nil, nil, nil; apply() end
     end
 
-    --// ================= SHARED UI =================
-    local borderStroke  = UI.BorderStroke
+    --// ================= MODE SELECTOR (toggle + dropdown) =================
     local createChevron = UI.CreateChevron
     local createSection = UI.CreateSection
-
-    --// ================= MODE SELECTOR (toggle + dropdown) =================
     local createModeRow
     do
         local POP_GAP, ITEM_H, POP_PAD = 4, 30, 4
@@ -204,15 +166,12 @@ return function(ctx)
             Popup.owner = nil
             if owner then owner.onClosed() end
             tween(PopList, 0.1, { Size = UDim2.fromOffset(PopList.AbsoluteSize.X, 0) }, EASE_QUAD, DIR_IN).Completed:Connect(function()
-                if Popup.token == token then
-                    PopList.Visible = false
-                end
+                if Popup.token == token then PopList.Visible = false end
             end)
         end
 
         local function openPopup(api)
             if Popup.open or isLocked() then return end
-
             for _, c in ipairs(PopItems:GetChildren()) do
                 if c:IsA("TextButton") then c:Destroy() end
             end
@@ -236,12 +195,8 @@ return function(ctx)
                 }, PopItems)
                 corner(Item, 6)
                 if not selected then
-                    Item.MouseEnter:Connect(function()
-                        tween(Item, 0.12, { BackgroundTransparency = 0.5 })
-                    end)
-                    Item.MouseLeave:Connect(function()
-                        tween(Item, 0.12, { BackgroundTransparency = 1 })
-                    end)
+                    Item.MouseEnter:Connect(function() tween(Item, 0.12, { BackgroundTransparency = 0.5 }) end)
+                    Item.MouseLeave:Connect(function() tween(Item, 0.12, { BackgroundTransparency = 1 }) end)
                 end
                 Item.Activated:Connect(function()
                     closePopup()
@@ -257,9 +212,7 @@ return function(ctx)
             local ap, asz = api.Frame.AbsolutePosition, api.Frame.AbsoluteSize
             local x = (ap.X + asz.X) - mp.X
             local y = (ap.Y + asz.Y) - mp.Y + POP_GAP
-            if y + h > ms.Y - 6 then
-                y = (ap.Y - mp.Y) - POP_GAP - h
-            end
+            if y + h > ms.Y - 6 then y = (ap.Y - mp.Y) - POP_GAP - h end
             y = math.max(y, 4)
 
             Popup.open, Popup.owner = true, api
@@ -313,20 +266,17 @@ return function(ctx)
             corner(Box, 6)
             stroke(Box)
 
-            local Hint
-            if hints then
-                Hint = label(Frame, {
-                    Name = "Hint",
-                    Position = UDim2.fromOffset(14, ROW_TOP - 4),
-                    Size = UDim2.new(1, -(boxWidth(current) + 36), 0, BOX_H),
-                    Font = Enum.Font.Gotham,
-                    Text = hints[current] or hints.default or "",
-                    TextSize = 11,
-                    TextColor3 = Theme.SubText,
-                    TextXAlignment = Enum.TextXAlignment.Left,
-                    TextTruncate = Enum.TextTruncate.AtEnd,
-                })
-            end
+            local Hint = hints and label(Frame, {
+                Name = "Hint",
+                Position = UDim2.fromOffset(14, ROW_TOP - 4),
+                Size = UDim2.new(1, -(boxWidth(current) + 36), 0, BOX_H),
+                Font = Enum.Font.Gotham,
+                Text = hints[current] or hints.default or "",
+                TextSize = 11,
+                TextColor3 = Theme.SubText,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+            })
 
             local ModeText = label(Box, {
                 Size = UDim2.fromScale(1, 1),
@@ -375,8 +325,7 @@ return function(ctx)
             function api.onClosed() tween(Chev, 0.15, { Rotation = 0 }) end
 
             ArrowBtn.Activated:Connect(function()
-                if isLocked() then return end
-                openPopup(api)
+                if not isLocked() then openPopup(api) end
             end)
             return api
         end
@@ -452,21 +401,13 @@ return function(ctx)
         if BlackSwitch:GetAttribute("Toggled") then setWhite(false) end
         refreshScreen()
     end)
-
-    -- AFK Mode preset: Black Screen + 15 FPS cap + Anti AFK
     AfkSwitch:GetAttributeChangedSignal("Toggled"):Connect(function()
         local on = AfkSwitch:GetAttribute("Toggled") == true
         if afkIdledConn then afkIdledConn:Disconnect(); afkIdledConn = nil end
         if on then
             setWhite(false)
             FpsCap.setAfk(true)
-            local VirtualUser = game:GetService("VirtualUser")
-            afkIdledConn = LocalPlayer.Idled:Connect(function()
-                pcall(function()
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton2(Vector2.zero)
-                end)
-            end)
+            afkIdledConn = UI.BindAntiAfk()
         else
             FpsCap.setAfk(false)
         end
@@ -559,9 +500,7 @@ return function(ctx)
 
         local function muteInst(inst)
             if inst:IsA("Sound") or inst:IsA("SoundGroup") then
-                if savedVolumes[inst] == nil then
-                    savedVolumes[inst] = inst.Volume
-                end
+                if savedVolumes[inst] == nil then savedVolumes[inst] = inst.Volume end
                 setProp(inst, "Volume", 0)
             end
         end
@@ -586,9 +525,7 @@ return function(ctx)
             for _, c in ipairs(conns) do c:Disconnect() end
             table.clear(conns)
             if savedMaster ~= nil then
-                pcall(function()
-                    UserSettings():GetService("UserGameSettings").MasterVolume = savedMaster
-                end)
+                pcall(function() UserSettings():GetService("UserGameSettings").MasterVolume = savedMaster end)
                 savedMaster = nil
             end
             for inst, vol in pairs(savedVolumes) do
@@ -605,50 +542,24 @@ return function(ctx)
     local CULL_MODES = { "Beyond 50m", "Beyond 100m", "Beyond 200m", "Beyond 350m" }
     do
         local active, runId, maxDist = false, 0, 100
-        local hiddenChars = setmetatable({}, { __mode = "k" }) -- char -> { parts, decals, hum, nameMode }
+        local hiddenChars = setmetatable({}, { __mode = "k" }) -- [char] = restoreFn
 
         local function restoreChar(char)
-            local rec = hiddenChars[char]
-            if not rec then return end
-            hiddenChars[char] = nil
-            if rec.conn then rec.conn:Disconnect() end
-            for p, v in pairs(rec.parts) do
-                if p.Parent then setProp(p, "LocalTransparencyModifier", v) end
-            end
-            for d, v in pairs(rec.decals) do
-                if d.Parent then setProp(d, "Transparency", v) end
-            end
-            if rec.hum and rec.hum.Parent then
-                setProp(rec.hum, "DisplayDistanceType", rec.nameMode)
+            local restore = hiddenChars[char]
+            if restore then
+                hiddenChars[char] = nil
+                restore()
             end
         end
 
         local function hideChar(char)
-            if hiddenChars[char] then return end
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            local rec = { parts = {}, decals = {}, hum = hum, nameMode = hum and hum.DisplayDistanceType }
-            hiddenChars[char] = rec
-            if hum then setProp(hum, "DisplayDistanceType", Enum.HumanoidDisplayDistanceType.None) end
-            local function hideInst(d)
-                if d:IsA("BasePart") then
-                    if rec.parts[d] == nil then rec.parts[d] = d.LocalTransparencyModifier end
-                    setProp(d, "LocalTransparencyModifier", 1)
-                elseif d:IsA("Decal") then
-                    if rec.decals[d] == nil then rec.decals[d] = d.Transparency end
-                    setProp(d, "Transparency", 1)
-                end
+            if not hiddenChars[char] then
+                hiddenChars[char] = UI.HideCharacter(char)
             end
-            for _, d in ipairs(char:GetDescendants()) do hideInst(d) end
-            rec.conn = char.DescendantAdded:Connect(hideInst)
         end
 
-        function CullPlayers.parseDist(text)
-            return tonumber(string.match(text, "(%d+)")) or 100
-        end
-
-        function CullPlayers.setDist(d)
-            maxDist = d
-        end
+        function CullPlayers.parseDist(text) return tonumber(string.match(text, "(%d+)")) or 100 end
+        function CullPlayers.setDist(d) maxDist = d end
 
         function CullPlayers.stop()
             active = false
@@ -733,14 +644,9 @@ return function(ctx)
             local hit = nameCache[name]
             if hit == nil then
                 hit = false
-                local spaced = (name:gsub("(%l)(%u)", "%1 %2"))
-                spaced = (spaced:gsub("(%u)(%u%l)", "%1 %2"))
-                spaced = (spaced:gsub("[^%w]+", " "))
+                local spaced = name:gsub("(%l)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2"):gsub("[^%w]+", " ")
                 for word in string.gmatch(string.lower(spaced), "%S+") do
-                    if NOTIF_WORDS[word] then
-                        hit = true
-                        break
-                    end
+                    if NOTIF_WORDS[word] then hit = true; break end
                 end
                 nameCache[name] = hit
             end
@@ -771,10 +677,7 @@ return function(ctx)
                 end
                 return old(self, name, ...)
             end))
-            if ok and res then
-                old = res
-                state.hooked = true
-            end
+            if ok and res then old, state.hooked = res, true end
         end
 
         local hidden = setmetatable({}, { __mode = "k" })
@@ -794,8 +697,7 @@ return function(ctx)
         local function scanGui(inst)
             if not active or not isNotifName(inst.Name) then return end
             local prop = (inst:IsA("ScreenGui") and "Enabled") or (inst:IsA("GuiObject") and "Visible")
-            if not prop then return end
-            if inst:FindFirstChildWhichIsA("TextBox", true) then return end
+            if not prop or inst:FindFirstChildWhichIsA("TextBox", true) then return end
             hideGui(inst, prop)
         end
 
@@ -815,9 +717,7 @@ return function(ctx)
                 if frame then hideGui(frame, "Visible") end
             end)
 
-            conns[#conns + 1] = pg.DescendantAdded:Connect(function(d)
-                task.defer(scanGui, d)
-            end)
+            conns[#conns + 1] = pg.DescendantAdded:Connect(function(d) task.defer(scanGui, d) end)
             task.spawn(function()
                 local items = pg:GetDescendants()
                 for i = 1, #items do
@@ -849,422 +749,373 @@ return function(ctx)
     local Ctl = { mode = "Balanced", enabled = false }
     local reconcile
     do
-    local Opt = {
-        snapshot = setmetatable({}, { __mode = "k" }),
-        conns = {},
-        routes = {},
-        partHandlers = {},
-        runId = 0,
-        restoring = false,
-        watching = false,
-        needRescan = false,
-    }
-
-    local hiddenOk
-    local function hiddenAvailable()
-        if hiddenOk == nil then
-            hiddenOk = false
-            if typeof(gethiddenproperty) == "function" and typeof(sethiddenproperty) == "function" then
-                local ok, v = pcall(gethiddenproperty, Lighting, "Technology")
-                hiddenOk = ok and v ~= nil
-            end
-        end
-        return hiddenOk
-    end
-
-    local function probe(inst, prop, value, hidden)
-        local cur
-        if hidden then cur = gethiddenproperty(inst, prop) else cur = inst[prop] end
-        if cur == value then return false end
-        local now
-        if hidden then
-            sethiddenproperty(inst, prop, value)
-            now = gethiddenproperty(inst, prop)
-        else
-            inst[prop] = value
-            now = inst[prop]
-        end
-        return true, cur, now
-    end
-
-    local function capture(inst, prop, value, hidden)
-        if Opt.restoring then
-            Opt.needRescan = true
-            return
-        end
-        local ok, changed, prev, now = pcall(probe, inst, prop, value, hidden)
-        if not ok or not changed then return end
-        local rec = Opt.snapshot[inst]
-        if not rec then
-            rec = {}
-            Opt.snapshot[inst] = rec
-        end
-        local e = rec[prop]
-        if e then
-            e[2] = now
-        else
-            rec[prop] = { prev, now, hidden }
-        end
-    end
-
-    local function revert(inst, prop, e)
-        local cur
-        if e[3] then cur = gethiddenproperty(inst, prop) else cur = inst[prop] end
-        if cur ~= e[2] then return end
-        if e[3] then sethiddenproperty(inst, prop, e[1]) else inst[prop] = e[1] end
-    end
-
-    --// ---- Routing: scan / watch / queue ----
-    local partCache = {}
-    local function isPart(inst)
-        local cn = inst.ClassName
-        local v = partCache[cn]
-        if v == nil then
-            v = inst:IsA("BasePart")
-            partCache[cn] = v
-        end
-        return v
-    end
-
-    local function register(key, handler)
-        if key == "BasePart" then
-            Opt.partHandlers[#Opt.partHandlers + 1] = handler
-            return
-        end
-        local hs = Opt.routes[key]
-        if not hs then
-            hs = {}
-            Opt.routes[key] = hs
-        end
-        hs[#hs + 1] = handler
-    end
-
-    local function addConn(conn)
-        Opt.conns[#Opt.conns + 1] = conn
-    end
-
-    local function hasHandlers()
-        return next(Opt.routes) ~= nil or #Opt.partHandlers > 0
-    end
-
-    local function wants(inst)
-        return Opt.routes[inst.ClassName] ~= nil or (#Opt.partHandlers > 0 and isPart(inst))
-    end
-
-    local function route(inst)
-        local hs = Opt.routes[inst.ClassName]
-        if hs then
-            for i = 1, #hs do hs[i](inst) end
-        end
-        if #Opt.partHandlers > 0 and isPart(inst) then
-            for i = 1, #Opt.partHandlers do Opt.partHandlers[i](inst) end
-        end
-    end
-
-    local SCAN_BUDGET = 0.002
-    local function scan(root, myRun)
-        local stack, top, visited = { root }, 1, 0
-        local char = LocalPlayer.Character
-        local t0 = os.clock()
-        while top > 0 do
-            local inst = stack[top]
-            stack[top] = nil
-            top = top - 1
-            if inst ~= char then
-                if wants(inst) then pcall(route, inst) end
-                local kids = inst:GetChildren()
-                for i = 1, #kids do
-                    top = top + 1
-                    stack[top] = kids[i]
-                end
-            end
-            visited = visited + 1
-            if visited % 64 == 0 and os.clock() - t0 >= (coverActive and 0.006 or SCAN_BUDGET) then
-                RunService.Heartbeat:Wait()
-                if myRun ~= Opt.runId then return end
-                char = LocalPlayer.Character
-                t0 = os.clock()
-            end
-        end
-    end
-
-    local queue, qHead, qTail, pump = {}, 1, 0, nil
-    local DRAIN_BUDGET, QUEUE_CAP, RESCAN_GAP = 0.0015, 10000, 5
-    local lastRescan = 0
-
-    local function stopPump()
-        if pump then
-            pump:Disconnect()
-            pump = nil
-        end
-    end
-
-    local function clearQueue()
-        table.clear(queue)
-        qHead, qTail = 1, 0
-        stopPump()
-    end
-
-    local function drain()
-        local t0 = os.clock()
-        while qHead <= qTail do
-            local inst = queue[qHead]
-            queue[qHead] = nil
-            qHead = qHead + 1
-            local char = LocalPlayer.Character
-            if inst.Parent and not (char and inst:IsDescendantOf(char)) then pcall(route, inst) end
-            if os.clock() - t0 >= DRAIN_BUDGET then return end
-        end
-        qHead, qTail = 1, 0
-        stopPump()
-        if Opt.needRescan and hasHandlers() and os.clock() - lastRescan >= RESCAN_GAP then
-            Opt.needRescan = false
-            lastRescan = os.clock()
-            task.spawn(scan, workspace, Opt.runId)
-        end
-    end
-
-    local function enqueue(inst)
-        if qTail - qHead + 1 >= QUEUE_CAP then
-            Opt.needRescan = true
-            return
-        end
-        qTail = qTail + 1
-        queue[qTail] = inst
-        if not pump then pump = RunService.Heartbeat:Connect(drain) end
-    end
-
-    local function watchWorkspace()
-        if Opt.watching then return end
-        Opt.watching = true
-        addConn(workspace.DescendantAdded:Connect(function(inst)
-            if Opt.restoring then
-                Opt.needRescan = true
-            elseif wants(inst) then
-                enqueue(inst)
-            end
-        end))
-    end
-
-    --// ---- Restore ----
-    local RESTORE_BUDGET = 0.004
-    function Opt.restore(sync)
-        Opt.restoring = true
-        Opt.runId = Opt.runId + 1
-        for _, c in ipairs(Opt.conns) do pcall(c.Disconnect, c) end
-        table.clear(Opt.conns)
-        table.clear(Opt.routes)
-        table.clear(Opt.partHandlers)
-        clearQueue()
-        Opt.watching, Opt.needRescan = false, false
-
-        local t0 = os.clock()
-        for inst, rec in pairs(Opt.snapshot) do
-            for prop, e in pairs(rec) do pcall(revert, inst, prop, e) end
-            Opt.snapshot[inst] = nil
-            if not sync and os.clock() - t0 >= RESTORE_BUDGET then
-                task.wait()
-                t0 = os.clock()
-            end
-        end
-        Opt.restoring = false
-    end
-
-    --// ---- Features ----
-    local Features = {}
-    local EFFECT_LEVEL = {
-        BlurEffect = 1, DepthOfFieldEffect = 1, SunRaysEffect = 1, BloomEffect = 1,
-        ColorCorrectionEffect = 3,
-    }
-    local LIGHT_CLASSES = { "PointLight", "SpotLight", "SurfaceLight" }
-    local COSMETIC_CLASSES = { "Smoke", "Fire", "Sparkles", "Trail", "Beam" }
-    local KEEP_MATERIAL = {
-        [Enum.Material.Glass] = true, [Enum.Material.ForceField] = true,
-        [Enum.Material.Neon] = true, [Enum.Material.Water] = true,
-    }
-
-    function Features.quality(spec)
-        local okR, rendering = pcall(function() return settings().Rendering end)
-        if not okR or not rendering then return end
-        local cur = rendering.QualityLevel.Value
-        local target
-        if cur == 0 then
-            if not (spec.force and spec.cap) then return end
-            target = spec.cap
-        else
-            target = math.clamp(cur - (spec.delta or 0), 1, cur)
-            if spec.cap then target = math.min(target, spec.cap) end
-        end
-        capture(rendering, "QualityLevel", Enum.QualityLevel:FromValue(target))
-    end
-
-    function Features.lighting(level)
-        capture(Lighting, "GlobalShadows", false)
-        if level >= 2 then
-            capture(Lighting, "ShadowSoftness", 0)
-            capture(Lighting, "EnvironmentDiffuseScale", 0)
-            capture(Lighting, "EnvironmentSpecularScale", 0)
-            local terrain = workspace:FindFirstChildOfClass("Terrain")
-            local clouds = terrain and terrain:FindFirstChildOfClass("Clouds")
-            if clouds then capture(clouds, "Enabled", false) end
-        end
-        if level >= 3 then
-            for _, child in ipairs(Lighting:GetChildren()) do
-                if child:IsA("Atmosphere") then
-                    capture(child, "Density", 0)
-                    capture(child, "Haze", 0)
-                    capture(child, "Glare", 0)
-                end
-            end
-            if hiddenAvailable() then
-                capture(Lighting, "Technology", Enum.Technology.Compatibility, true)
-            end
-        end
-    end
-
-    local function watchCamera(handle)
-        local camConn
-        local function attach(cam)
-            if camConn then
-                camConn:Disconnect()
-                camConn = nil
-            end
-            if not cam then return end
-            for _, c in ipairs(cam:GetChildren()) do handle(c) end
-            camConn = cam.ChildAdded:Connect(handle)
-        end
-        attach(workspace.CurrentCamera)
-        local changed = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-            attach(workspace.CurrentCamera)
-        end)
-        return {
-            Disconnect = function()
-                changed:Disconnect()
-                if camConn then
-                    camConn:Disconnect()
-                    camConn = nil
-                end
-            end,
+        local Opt = {
+            snapshot = setmetatable({}, { __mode = "k" }),
+            conns = {},
+            routes = {},
+            partHandlers = {},
+            runId = 0,
+            restoring = false,
+            watching = false,
+            needRescan = false,
         }
-    end
 
-    function Features.postFx(level)
-        local function handle(inst)
-            local need = EFFECT_LEVEL[inst.ClassName]
-            if need and level >= need then capture(inst, "Enabled", false) end
+        local hiddenOk
+        local function hiddenAvailable()
+            if hiddenOk == nil then
+                hiddenOk = false
+                if typeof(gethiddenproperty) == "function" and typeof(sethiddenproperty) == "function" then
+                    local ok, v = pcall(gethiddenproperty, Lighting, "Technology")
+                    hiddenOk = ok and v ~= nil
+                end
+            end
+            return hiddenOk
         end
-        for _, c in ipairs(Lighting:GetChildren()) do handle(c) end
-        addConn(Lighting.ChildAdded:Connect(handle))
-        addConn(watchCamera(handle))
 
-        for _, class in ipairs(LIGHT_CLASSES) do
-            register(class, function(l)
-                if level >= 2 then capture(l, "Enabled", false) else capture(l, "Shadows", false) end
+        local function probe(inst, prop, value, hidden)
+            local cur = hidden and gethiddenproperty(inst, prop) or inst[prop]
+            if cur == value then return false end
+            local now
+            if hidden then
+                sethiddenproperty(inst, prop, value)
+                now = gethiddenproperty(inst, prop)
+            else
+                inst[prop] = value
+                now = inst[prop]
+            end
+            return true, cur, now
+        end
+
+        local function capture(inst, prop, value, hidden)
+            if Opt.restoring then Opt.needRescan = true; return end
+            local ok, changed, prev, now = pcall(probe, inst, prop, value, hidden)
+            if not ok or not changed then return end
+            local rec = Opt.snapshot[inst]
+            if not rec then rec = {}; Opt.snapshot[inst] = rec end
+            local e = rec[prop]
+            if e then e[2] = now else rec[prop] = { prev, now, hidden } end
+        end
+
+        local function revert(inst, prop, e)
+            local cur = e[3] and gethiddenproperty(inst, prop) or inst[prop]
+            if cur ~= e[2] then return end
+            if e[3] then sethiddenproperty(inst, prop, e[1]) else inst[prop] = e[1] end
+        end
+
+        local partCache = {}
+        local function isPart(inst)
+            local cn = inst.ClassName
+            local v = partCache[cn]
+            if v == nil then v = inst:IsA("BasePart"); partCache[cn] = v end
+            return v
+        end
+
+        local function register(key, handler)
+            if key == "BasePart" then
+                Opt.partHandlers[#Opt.partHandlers + 1] = handler
+                return
+            end
+            local hs = Opt.routes[key]
+            if not hs then hs = {}; Opt.routes[key] = hs end
+            hs[#hs + 1] = handler
+        end
+
+        local function addConn(conn) Opt.conns[#Opt.conns + 1] = conn end
+        local function hasHandlers() return next(Opt.routes) ~= nil or #Opt.partHandlers > 0 end
+        local function wants(inst) return Opt.routes[inst.ClassName] ~= nil or (#Opt.partHandlers > 0 and isPart(inst)) end
+
+        local function route(inst)
+            local hs = Opt.routes[inst.ClassName]
+            if hs then for i = 1, #hs do hs[i](inst) end end
+            if #Opt.partHandlers > 0 and isPart(inst) then
+                for i = 1, #Opt.partHandlers do Opt.partHandlers[i](inst) end
+            end
+        end
+
+        local SCAN_BUDGET = 0.002
+        local function scan(root, myRun)
+            local stack, top, visited = { root }, 1, 0
+            local char = LocalPlayer.Character
+            local t0 = os.clock()
+            while top > 0 do
+                local inst = stack[top]
+                stack[top] = nil
+                top = top - 1
+                if inst ~= char then
+                    if wants(inst) then pcall(route, inst) end
+                    local kids = inst:GetChildren()
+                    for i = 1, #kids do
+                        top = top + 1
+                        stack[top] = kids[i]
+                    end
+                end
+                visited = visited + 1
+                if visited % 64 == 0 and os.clock() - t0 >= (coverActive and 0.006 or SCAN_BUDGET) then
+                    RunService.Heartbeat:Wait()
+                    if myRun ~= Opt.runId then return end
+                    char = LocalPlayer.Character
+                    t0 = os.clock()
+                end
+            end
+        end
+
+        local queue, qHead, qTail, pump = {}, 1, 0, nil
+        local DRAIN_BUDGET, QUEUE_CAP, RESCAN_GAP = 0.0015, 10000, 5
+        local lastRescan = 0
+
+        local function stopPump()
+            if pump then pump:Disconnect(); pump = nil end
+        end
+
+        local function clearQueue()
+            table.clear(queue)
+            qHead, qTail = 1, 0
+            stopPump()
+        end
+
+        local function drain()
+            local t0 = os.clock()
+            while qHead <= qTail do
+                local inst = queue[qHead]
+                queue[qHead] = nil
+                qHead = qHead + 1
+                local char = LocalPlayer.Character
+                if inst.Parent and not (char and inst:IsDescendantOf(char)) then pcall(route, inst) end
+                if os.clock() - t0 >= DRAIN_BUDGET then return end
+            end
+            qHead, qTail = 1, 0
+            stopPump()
+            if Opt.needRescan and hasHandlers() and os.clock() - lastRescan >= RESCAN_GAP then
+                Opt.needRescan = false
+                lastRescan = os.clock()
+                task.spawn(scan, workspace, Opt.runId)
+            end
+        end
+
+        local function enqueue(inst)
+            if qTail - qHead + 1 >= QUEUE_CAP then Opt.needRescan = true; return end
+            qTail = qTail + 1
+            queue[qTail] = inst
+            if not pump then pump = RunService.Heartbeat:Connect(drain) end
+        end
+
+        local function watchWorkspace()
+            if Opt.watching then return end
+            Opt.watching = true
+            addConn(workspace.DescendantAdded:Connect(function(inst)
+                if Opt.restoring then Opt.needRescan = true elseif wants(inst) then enqueue(inst) end
+            end))
+        end
+
+        local RESTORE_BUDGET = 0.004
+        function Opt.restore(sync)
+            Opt.restoring = true
+            Opt.runId = Opt.runId + 1
+            for _, c in ipairs(Opt.conns) do pcall(c.Disconnect, c) end
+            table.clear(Opt.conns)
+            table.clear(Opt.routes)
+            table.clear(Opt.partHandlers)
+            clearQueue()
+            Opt.watching, Opt.needRescan = false, false
+
+            local t0 = os.clock()
+            for inst, rec in pairs(Opt.snapshot) do
+                for prop, e in pairs(rec) do pcall(revert, inst, prop, e) end
+                Opt.snapshot[inst] = nil
+                if not sync and os.clock() - t0 >= RESTORE_BUDGET then
+                    task.wait()
+                    t0 = os.clock()
+                end
+            end
+            Opt.restoring = false
+        end
+
+        local Features = {}
+        local EFFECT_LEVEL = {
+            BlurEffect = 1, DepthOfFieldEffect = 1, SunRaysEffect = 1, BloomEffect = 1,
+            ColorCorrectionEffect = 3,
+        }
+        local LIGHT_CLASSES = { "PointLight", "SpotLight", "SurfaceLight" }
+        local COSMETIC_CLASSES = { "Smoke", "Fire", "Sparkles", "Trail", "Beam" }
+        local KEEP_MATERIAL = {
+            [Enum.Material.Glass] = true, [Enum.Material.ForceField] = true,
+            [Enum.Material.Neon] = true, [Enum.Material.Water] = true,
+        }
+
+        function Features.quality(spec)
+            local okR, rendering = pcall(function() return settings().Rendering end)
+            if not okR or not rendering then return end
+            local cur = rendering.QualityLevel.Value
+            local target
+            if cur == 0 then
+                if not (spec.force and spec.cap) then return end
+                target = spec.cap
+            else
+                target = math.clamp(cur - (spec.delta or 0), 1, cur)
+                if spec.cap then target = math.min(target, spec.cap) end
+            end
+            capture(rendering, "QualityLevel", Enum.QualityLevel:FromValue(target))
+        end
+
+        function Features.lighting(level)
+            capture(Lighting, "GlobalShadows", false)
+            if level >= 2 then
+                capture(Lighting, "ShadowSoftness", 0)
+                capture(Lighting, "EnvironmentDiffuseScale", 0)
+                capture(Lighting, "EnvironmentSpecularScale", 0)
+                local terrain = workspace:FindFirstChildOfClass("Terrain")
+                local clouds = terrain and terrain:FindFirstChildOfClass("Clouds")
+                if clouds then capture(clouds, "Enabled", false) end
+            end
+            if level >= 3 then
+                for _, child in ipairs(Lighting:GetChildren()) do
+                    if child:IsA("Atmosphere") then
+                        capture(child, "Density", 0)
+                        capture(child, "Haze", 0)
+                        capture(child, "Glare", 0)
+                    end
+                end
+                if hiddenAvailable() then
+                    capture(Lighting, "Technology", Enum.Technology.Compatibility, true)
+                end
+            end
+        end
+
+        local function watchCamera(handle)
+            local camConn
+            local function attach(cam)
+                if camConn then camConn:Disconnect(); camConn = nil end
+                if not cam then return end
+                for _, c in ipairs(cam:GetChildren()) do handle(c) end
+                camConn = cam.ChildAdded:Connect(handle)
+            end
+            attach(workspace.CurrentCamera)
+            local changed = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+                attach(workspace.CurrentCamera)
+            end)
+            return {
+                Disconnect = function()
+                    changed:Disconnect()
+                    if camConn then camConn:Disconnect(); camConn = nil end
+                end,
+            }
+        end
+
+        function Features.postFx(level)
+            local function handle(inst)
+                local need = EFFECT_LEVEL[inst.ClassName]
+                if need and level >= need then capture(inst, "Enabled", false) end
+            end
+            for _, c in ipairs(Lighting:GetChildren()) do handle(c) end
+            addConn(Lighting.ChildAdded:Connect(handle))
+            addConn(watchCamera(handle))
+
+            for _, class in ipairs(LIGHT_CLASSES) do
+                register(class, function(l)
+                    if level >= 2 then capture(l, "Enabled", false) else capture(l, "Shadows", false) end
+                end)
+            end
+            if level >= 2 then
+                register("Highlight", function(h) capture(h, "Enabled", false) end)
+            end
+        end
+
+        function Features.terrain(level)
+            local terrain = workspace:FindFirstChildOfClass("Terrain")
+            if not terrain then return end
+            capture(terrain, "WaterWaveSize", 0)
+            capture(terrain, "WaterWaveSpeed", 0)
+            if level >= 2 then
+                capture(terrain, "WaterReflectance", 0)
+                if hiddenAvailable() then capture(terrain, "Decoration", false, true) end
+            end
+        end
+
+        function Features.particles(spec)
+            local scale = spec.rate
+            register("ParticleEmitter", function(pe)
+                local rate = pe.Rate
+                if rate > 0 then capture(pe, "Rate", math.min(rate, math.max(1, rate * scale))) end
+            end)
+            if spec.cosmetic then
+                for _, class in ipairs(COSMETIC_CLASSES) do
+                    register(class, function(inst) capture(inst, "Enabled", false) end)
+                end
+            end
+        end
+
+        function Features.parts(tier)
+            register("BasePart", function(p)
+                if p.ClassName == "Terrain" then return end
+                if p.Reflectance > 0 then capture(p, "Reflectance", 0) end
+                if p.ClassName == "MeshPart" then
+                    capture(p, "RenderFidelity", Enum.RenderFidelity.Performance)
+                end
+                if tier >= 2 and not KEEP_MATERIAL[p.Material] then
+                    capture(p, "Material", Enum.Material.SmoothPlastic)
+                end
             end)
         end
-        if level >= 2 then
-            register("Highlight", function(h) capture(h, "Enabled", false) end)
-        end
-    end
 
-    function Features.terrain(level)
-        local terrain = workspace:FindFirstChildOfClass("Terrain")
-        if not terrain then return end
-        capture(terrain, "WaterWaveSize", 0)
-        capture(terrain, "WaterWaveSpeed", 0)
-        if level >= 2 then
-            capture(terrain, "WaterReflectance", 0)
-            if hiddenAvailable() then capture(terrain, "Decoration", false, true) end
-        end
-    end
+        local ORDER = { "quality", "lighting", "postFx", "terrain", "particles", "parts" }
+        local PROFILES = {
+            Balanced = {
+                quality = { delta = 4 }, lighting = 1, postFx = 1, terrain = 1, parts = 1,
+                particles = { rate = 0.5 },
+            },
+            Performance = {
+                quality = { cap = 3 }, lighting = 2, postFx = 2, terrain = 1, parts = 1,
+                particles = { rate = 0.2, cosmetic = true },
+            },
+            Extreme = {
+                quality = { cap = 1, force = true }, lighting = 3, postFx = 3, terrain = 2, parts = 2,
+                particles = { rate = 0.1, cosmetic = true },
+            },
+        }
 
-    function Features.particles(spec)
-        local scale = spec.rate
-        register("ParticleEmitter", function(pe)
-            local rate = pe.Rate
-            if rate > 0 then capture(pe, "Rate", math.min(rate, math.max(1, rate * scale))) end
-        end)
-        if spec.cosmetic then
-            for _, class in ipairs(COSMETIC_CLASSES) do
-                register(class, function(inst) capture(inst, "Enabled", false) end)
+        local function applyProfile(name)
+            local spec = PROFILES[name]
+            if not spec then return end
+            for _, key in ipairs(ORDER) do
+                local level = spec[key]
+                if level then pcall(Features[key], level) end
+            end
+            if hasHandlers() then
+                watchWorkspace()
+                task.spawn(scan, workspace, Opt.runId)
             end
         end
-    end
 
-    function Features.parts(tier)
-        register("BasePart", function(p)
-            if p.ClassName == "Terrain" then return end
-            if p.Reflectance > 0 then capture(p, "Reflectance", 0) end
-            if p.ClassName == "MeshPart" then
-                capture(p, "RenderFidelity", Enum.RenderFidelity.Performance)
-            end
-            if tier >= 2 and not KEEP_MATERIAL[p.Material] then
-                capture(p, "Material", Enum.Material.SmoothPlastic)
-            end
-        end)
-    end
-
-    --// ---- Profiles ----
-    local ORDER = { "quality", "lighting", "postFx", "terrain", "particles", "parts" }
-    local PROFILES = {
-        Balanced = {
-            quality = { delta = 4 }, lighting = 1, postFx = 1, terrain = 1, parts = 1,
-            particles = { rate = 0.5 },
-        },
-        Performance = {
-            quality = { cap = 3 }, lighting = 2, postFx = 2, terrain = 1, parts = 1,
-            particles = { rate = 0.2, cosmetic = true },
-        },
-        Extreme = {
-            quality = { cap = 1, force = true }, lighting = 3, postFx = 3, terrain = 2, parts = 2,
-            particles = { rate = 0.1, cosmetic = true },
-        },
-    }
-
-    local function applyProfile(name)
-        local spec = PROFILES[name]
-        if not spec then return end
-        for _, key in ipairs(ORDER) do
-            local level = spec[key]
-            if level then pcall(Features[key], level) end
-        end
-        if hasHandlers() then
-            watchWorkspace()
-            task.spawn(scan, workspace, Opt.runId)
-        end
-    end
-
-    local dirty, working, worker = false, false, nil
-
-    function reconcile()
-        dirty = true
-        if working then return end
-        working = true
-        worker = task.spawn(function()
-            while dirty and not destroyed do
-                dirty = false
-                local ok, err = pcall(function()
-                    Opt.restore(false)
-                    if Ctl.enabled then applyProfile(Ctl.mode) end
-                end)
-                if not ok then
-                    Opt.restoring = false
-                    warn("[FPS] profile update failed: " .. tostring(err))
+        local dirty, working, worker = false, false, nil
+        function reconcile()
+            dirty = true
+            if working then return end
+            working = true
+            worker = task.spawn(function()
+                while dirty and not destroyed do
+                    dirty = false
+                    local ok, err = pcall(function()
+                        Opt.restore(false)
+                        if Ctl.enabled then applyProfile(Ctl.mode) end
+                    end)
+                    if not ok then
+                        Opt.restoring = false
+                        warn("[FPS] profile update failed: " .. tostring(err))
+                    end
                 end
-            end
-            working = false
+                working = false
+            end)
+        end
+
+        onDestroy(function()
+            dirty = false
+            if worker then pcall(task.cancel, worker) end
+            Opt.restoring = false
+            Opt.restore(true)
         end)
     end
 
-    onDestroy(function()
-        dirty = false
-        if worker then pcall(task.cancel, worker) end
-        Opt.restoring = false
-        Opt.restore(true)
-    end)
-    end
-
-    --// ================= PERFORMANCE METER (with Avg & 1% Low) =================
+    --// ================= PERFORMANCE METER =================
     local function statusEntry(text, token)
         return setmetatable({ text = text }, {
             __index = function(_, key)
@@ -1283,13 +1134,11 @@ return function(ctx)
         local beat
         local wanted = {}
         local frames, elapsed, lastSlow = 0, 0, -1
-        local frameFpsWindow, winIdx = {}, 0 -- rolling ring buffer of individual frame FPS (up to 300 frames)
+        local frameFpsWindow, winIdx = {}, 0
         local MAX_WINDOW = 300
 
         local function readPing()
-            local ok, v = pcall(function()
-                return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-            end)
+            local ok, v = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
             if ok and type(v) == "number" and v > 0 then return v end
             local ok2, p = pcall(function() return LocalPlayer:GetNetworkPing() * 2000 end)
             if ok2 and type(p) == "number" and p > 0 then return p end
@@ -1303,26 +1152,20 @@ return function(ctx)
 
         local function computeWindowStats()
             local n = #frameFpsWindow
-            if n == 0 then
-                Meter.avg, Meter.low1 = Meter.fps, Meter.fps
-                return
-            end
+            if n == 0 then Meter.avg, Meter.low1 = Meter.fps, Meter.fps; return end
             local sum = 0
             local sorted = table.clone(frameFpsWindow)
-            for i = 1, n do sum = sum + (sorted[i]) end
+            for i = 1, n do sum = sum + sorted[i] end
             table.sort(sorted)
             local k = math.max(1, math.ceil(n * 0.01))
             local lowSum = 0
-            for i = 1, k do lowSum = lowSum + (sorted[i]) end
+            for i = 1, k do lowSum = lowSum + sorted[i] end
             Meter.avg = sum / n
             Meter.low1 = lowSum / k
         end
 
         local function onBeat(dt)
-            if dt > 1 or dt <= 0 then
-                frames, elapsed = 0, 0
-                return
-            end
+            if dt > 1 or dt <= 0 then frames, elapsed = 0, 0; return end
             frames = frames + 1
             elapsed = elapsed + dt
             winIdx = (winIdx % MAX_WINDOW) + 1
@@ -1364,7 +1207,7 @@ return function(ctx)
             return "low"
         end
 
-        onDestroy(function() Meter.want("card", false) Meter.want("overlay", false) end)
+        onDestroy(function() Meter.want("card", false); Meter.want("overlay", false) end)
     end
 
     local function hex(color) return color:ToHex() end
@@ -1569,7 +1412,7 @@ return function(ctx)
         refresh()
     end
 
-    --// ================= FPS OVERLAY (with Avg / 1% Low / RAM) =================
+    --// ================= FPS OVERLAY =================
     local Overlay = {}
     do
         local px, py = 0.5, 0.01
@@ -1627,12 +1470,8 @@ return function(ctx)
                 '<font color="#%s">%d</font> FPS <font color="#%s">·</font> Avg %d <font color="#%s">·</font> 1%% %d',
                 hex(status.color), rounded(m.fps), sub, rounded(m.avg), sub, rounded(m.low1)
             )
-            if m.ping then
-                text = text .. string.format(' <font color="#%s">·</font> %d ms', sub, rounded(m.ping))
-            end
-            if m.mem then
-                text = text .. string.format(' <font color="#%s">·</font> %s', sub, formatMemory(m.mem))
-            end
+            if m.ping then text = text .. string.format(' <font color="#%s">·</font> %d ms', sub, rounded(m.ping)) end
+            if m.mem then text = text .. string.format(' <font color="#%s">·</font> %s', sub, formatMemory(m.mem)) end
             Text.Text = text
         end
 
@@ -1651,10 +1490,9 @@ return function(ctx)
         end
 
         local dragMoveConn, dragEndConn
-
         local function stopDrag()
-            if dragMoveConn then dragMoveConn:Disconnect() dragMoveConn = nil end
-            if dragEndConn then dragEndConn:Disconnect() dragEndConn = nil end
+            if dragMoveConn then dragMoveConn:Disconnect(); dragMoveConn = nil end
+            if dragEndConn then dragEndConn:Disconnect(); dragEndConn = nil end
         end
 
         Pill.InputBegan:Connect(function(input)
@@ -1735,7 +1573,6 @@ return function(ctx)
     end)
     addToggle(Optimize, CapRow.Switch, CapRow.setState)
 
-    -- Auto Boost
     local AUTO_MODES = { "Below 20 FPS", "Below 30 FPS", "Below 40 FPS" }
     local AutoRow
     AutoRow = createModeRow(Optimize.Body, "Auto Boost", AUTO_MODES, Prefs.pick("auto", AUTO_MODES, "Below 30 FPS"),
@@ -1777,7 +1614,6 @@ return function(ctx)
         Profile.Switch:GetAttributeChangedSignal("Toggled"):Connect(sync)
     end
 
-    -- Hide Distant Players
     local CullRow
     CullRow = createModeRow(Optimize.Body, "Hide Distant Players", CULL_MODES,
         Prefs.pick("cull", CULL_MODES, "Beyond 100m"),
@@ -1843,31 +1679,7 @@ return function(ctx)
     addToggle(Interface, HideSwitch, setHide)
 
     --// ================= RESET ALL =================
-    local ResetBtn = new("TextButton", {
-        Name = "ResetAll",
-        LayoutOrder = 5,
-        Size = UDim2.new(1, 0, 0, 40),
-        Text = "Reset All",
-        BackgroundColor3 = Theme.PanelAlt,
-        BorderSizePixel = 0,
-        AutoButtonColor = false,
-        Font = Enum.Font.GothamBold,
-        TextSize = 14,
-        TextColor3 = Theme.Text,
-    }, FPSTab)
-    corner(ResetBtn, 8)
-    borderStroke(ResetBtn)
-    pressScale(ResetBtn, 0.98)
-    ResetBtn.MouseEnter:Connect(function()
-        tween(ResetBtn, 0.15, { BackgroundColor3 = Theme.Header })
-    end)
-    ResetBtn.MouseLeave:Connect(function()
-        tween(ResetBtn, 0.15, { BackgroundColor3 = Theme.PanelAlt })
-    end)
-
-    local resetToken = 0
-    ResetBtn.Activated:Connect(function()
-        if isLocked() then return end
+    UI.CreateResetButton(FPSTab, 5, function()
         local n = 0
         for _, t in ipairs(switches) do
             if t.Switch:GetAttribute("Toggled") == true then
@@ -1875,11 +1687,6 @@ return function(ctx)
                 t.set(false)
             end
         end
-        resetToken = resetToken + 1
-        local my = resetToken
-        ResetBtn.Text = (n > 0) and ("Reset " .. n .. (n == 1 and " feature" or " features")) or "Nothing to reset"
-        task.delay(1.5, function()
-            if my == resetToken and ResetBtn.Parent then ResetBtn.Text = "Reset All" end
-        end)
+        return n
     end)
 end

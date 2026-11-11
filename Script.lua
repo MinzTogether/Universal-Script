@@ -7,118 +7,78 @@
 --// ##########################################################################################
 
 --// ================= SCRIPT TAB (module) =================
--- This file is loaded by the main script (MainWeb.lua / MainLocal.lua) and called with a ctx table
--- containing the shared UI functions/variables. Returns ScriptDialog so the main file
--- can use it when closing the UI (closeUI).
---
--- Library : save / edit / duplicate / pin / export / import / undo delete, search (by name or content) and sort (Added, A-Z, Edited, Recent)
--- Editor  : line numbers and live Lua syntax highlighting
--- Running : Run / Stop (supports returning a cleanup function `return function() ... end`), Output panel, Run clipboard, test run
--- Startup : Auto-run per script (All games or This game only; global pause in the menu); imported scripts must be reviewed before they run
 
 return function(ctx)
-    local ScriptTab           = ctx.Tab
+    local ScriptTab        = ctx.Tab
+    local Theme            = ctx.Theme
+    local ScreenGui        = ctx.ScreenGui
+    local HttpService      = ctx.HttpService
+    local canFS            = ctx.canFS
 
-    local Theme               = ctx.Theme
-    local ScreenGui           = ctx.ScreenGui
-    local HttpService         = ctx.HttpService
-    local canFS               = ctx.canFS
+    local WHITE            = ctx.WHITE
+    local CENTER           = ctx.CENTER
+    local ANCHOR_CENTER    = ctx.ANCHOR_CENTER
+    local EASE_QUAD        = ctx.EASE_QUAD
+    local DIR_IN           = ctx.DIR_IN
+    local DIR_OUT          = ctx.DIR_OUT
+    local BUBBLE_IN_TIME   = ctx.BUBBLE_IN_TIME
+    local BUBBLE_OUT_TIME  = ctx.BUBBLE_OUT_TIME
+    local CONTENT_EDGE     = ctx.CONTENT_EDGE
 
-    local WHITE               = ctx.WHITE
-    local CENTER              = ctx.CENTER
-    local ANCHOR_CENTER       = ctx.ANCHOR_CENTER
-    local EASE_QUAD           = ctx.EASE_QUAD
-    local DIR_IN              = ctx.DIR_IN
-    local DIR_OUT             = ctx.DIR_OUT
-    local BUBBLE_IN_TIME      = ctx.BUBBLE_IN_TIME
-    local BUBBLE_OUT_TIME     = ctx.BUBBLE_OUT_TIME
-    local FADE_IN_TIME        = ctx.FADE_IN_TIME
-    local FADE_OUT_TIME       = ctx.FADE_OUT_TIME
-    local CONTENT_EDGE        = ctx.CONTENT_EDGE
-
-    local new                 = ctx.new
-    local corner              = ctx.corner
-    local stroke              = ctx.stroke
-    local padding             = ctx.padding
-    local list                = ctx.list
-    local label               = ctx.label
-    local tween               = ctx.tween
-    local pressScale          = ctx.pressScale
-    local drawIcon            = ctx.drawIcon
-    local setOverlay          = ctx.setOverlay
-
-    local FunctionScroll      = ctx.FunctionScroll
-    local DeleteDialog        = ctx.DeleteDialog
-
-    local CreateInfoRow       = ctx.CreateInfoRow
-    local flashStrokeError    = ctx.flashStrokeError
-    local bindBoxFocus        = ctx.bindBoxFocus
-    local isLocked            = ctx.isLocked -- replaces the main file's uiLocked variable
-    local UI                  = assert(ctx.UI, "Script.lua needs ctx.UI: update MainWeb.lua / MainLocal.lua to the new core")
-    local showToast           = assert(ctx.Toast or UI.Toast, "Script.lua needs ctx.Toast")
+    local new, corner, stroke, padding, list, label = ctx.new, ctx.corner, ctx.stroke, ctx.padding, ctx.list, ctx.label
+    local tween, pressScale, drawIcon, setOverlay = ctx.tween, ctx.pressScale, ctx.drawIcon, ctx.setOverlay
+    local FunctionScroll, DeleteDialog = ctx.FunctionScroll, ctx.DeleteDialog
+    local CreateInfoRow, flashStrokeError, bindBoxFocus = ctx.CreateInfoRow, ctx.flashStrokeError, ctx.bindBoxFocus
+    local isLocked         = ctx.isLocked
+    local UI               = assert(ctx.UI, "Script.lua needs ctx.UI")
+    local showToast        = assert(ctx.Toast or UI.Toast, "Script.lua needs ctx.Toast")
 
     --// ---- Constants ----
-    -- Every file lives in the Elysera folder: dataPath comes from the main script (plain file name if it is missing)
-    local dataPath            = ctx.dataPath or function(name) return name end
-    local SCRIPT_FILE         = dataPath("L-scr.json")
-    local BACKUP_FILE         = dataPath("L-scr.bak.json")
-    local SCHEMA_VERSION      = 2
-    local EXPORT_FORMAT       = "L-script-export"
+    local dataPath         = ctx.dataPath or function(name) return name end
+    local SCRIPT_FILE      = dataPath("L-scr.json")
+    local BACKUP_FILE      = dataPath("L-scr.bak.json")
+    local STATE_NAME       = "L-scr.state.json"
+    local SCHEMA_VERSION   = 2
+    local EXPORT_FORMAT    = "L-script-export"
 
-    local MAX_NAME_LEN        = 60
-    local MAX_SCRIPT_LEN      = 200000
-    local MAX_IMPORT_ITEMS    = 200
-    local MAX_IMPORT_BYTES    = 2000000
-    local UNDO_SECONDS        = 6 -- 0 = delete immediately, no Undo
+    local MAX_NAME_LEN     = 60
+    local MAX_SCRIPT_LEN   = 200000
+    local MAX_IMPORT_ITEMS = 200
+    local MAX_IMPORT_BYTES = 2000000
+    local UNDO_SECONDS     = 6
+    local STARTUP_DELAY    = 1.5
+    local REVIEW_SECONDS   = 5
 
-    local STATE_FILE          = dataPath("L-scr.state.json") -- run info + auto-run switch (small, rewritten often)
-    local STARTUP_DELAY       = 1.5                          -- seconds after load before auto-run starts
-    local REVIEW_SECONDS      = 5                            -- imported script: a second tap within this window runs it
-
-    local SEARCH_MIN_ITEMS    = 5
-    local SEARCH_H            = 30
-    local PINNED_HEIGHT       = 36
-    local TAB_LIST_GAP        = 10
+    local SEARCH_MIN_ITEMS = 5
+    local SEARCH_H         = 30
+    local PINNED_HEIGHT    = 36
+    local TAB_LIST_GAP     = 10
 
     --// ---- Module state ----
-    local ScriptList = {}                               -- array of v2 entries (plain data only, saved to file)
-    local Rows       = {}                               -- [entry.id] = { Row, entry, nameLower, codeLower, refresh }
-    local Running    = {}                               -- [entry.id] = { thread, cleanup, startedAt, onState, entry }
+    local ScriptList = {}
+    local Rows       = {}
+    local Running    = {}
     local View       = { query = "", sort = "added" }
 
-    -- forward declarations (assigned in the UI block below)
     local OutputPanel, StatusLabel, SearchRow, SearchBox, EmptyLabel, ScriptDialog
     local applyListView, CreateScriptRow, fitListPanel
+
+    local borderStroke       = UI.BorderStroke
+    local createAccentButton = UI.CreateAccentButton
+    local themedColors       = UI.ThemedColors
+    local escapeRich         = UI.EscapeRich
+    local readClipboard      = UI.ReadClipboard
 
     local function shorten(text, n)
         return #text > n and (text:sub(1, n) .. "...") or text
     end
 
-    -- Border stroke from the shared UI kit (MainWeb.lua)
-    local borderStroke = UI.BorderStroke
-
     local function firstLine(text)
         return (tostring(text):match("^[^\r\n]*"))
     end
 
-    -- "just now", "5m ago", "3h ago", "2d ago", then a date
     local function ago(ts)
-        local d = os.time() - ts
-        if d < 45 then return "just now" end
-        if d < 3600 then return ("%dm ago"):format(math.max(1, math.floor(d / 60))) end
-        if d < 86400 then return ("%dh ago"):format(math.floor(d / 3600)) end
-        if d < 7 * 86400 then return ("%dd ago"):format(math.floor(d / 86400)) end
-        return os.date("%b %d", ts)
-    end
-
-    -- Token names, resolved on every lookup so the colors follow theme changes
-    local function themedColors(tokens)
-        return setmetatable({}, {
-            __index = function(_, key)
-                local token = tokens[key]
-                return token and Theme[token]
-            end,
-        })
+        return UI.FormatAgo(ts, true)
     end
 
     --// ---- Icons / icon buttons ----
@@ -168,8 +128,7 @@ return function(ctx)
         end
 
         Btn.MouseEnter:Connect(function()
-            if isLocked() then return end
-            tween(Btn, 0.15, { BackgroundColor3 = Theme.Border })
+            if not isLocked() then tween(Btn, 0.15, { BackgroundColor3 = Theme.Border }) end
         end)
         Btn.MouseLeave:Connect(function()
             tween(Btn, 0.15, { BackgroundColor3 = Theme.Header })
@@ -177,47 +136,9 @@ return function(ctx)
         return Btn, Holder
     end
 
-    -- Primary button (purple -> pink). A UIGradient tints everything its own object draws, text included,
-    -- so the caption is a child label. props: anchor, position, order, name
-    local function createAccentButton(parent, text, width, height, props)
-        props = props or {}
-        local Btn = new("TextButton", {
-            Name = props.name or "AccentButton",
-            AnchorPoint = props.anchor,
-            Position = props.position,
-            LayoutOrder = props.order or 0,
-            Size = UDim2.fromOffset(width, height),
-            BackgroundColor3 = WHITE,
-            BorderSizePixel = 0,
-            AutoButtonColor = false,
-            Text = "",
-        }, parent)
-        corner(Btn, 6)
-        new("UIGradient", { Color = ColorSequence.new(Theme.AccentPurple, Theme.AccentPink) }, Btn)
-        local Caption = new("TextLabel", {
-            Name = "Caption",
-            Size = UDim2.fromScale(1, 1),
-            BackgroundTransparency = 1,
-            Text = text,
-            Font = Enum.Font.GothamBold,
-            TextSize = 13,
-            TextColor3 = Theme.ToggleKnobOn,
-        }, Btn)
-        Caption:SetAttribute("OnAccent", true) -- refreshStateColors keeps it readable on any theme
-        pressScale(Btn, 0.95)
-        Btn.MouseEnter:Connect(function()
-            if not isLocked() then tween(Btn, 0.15, { BackgroundTransparency = 0.15 }) end
-        end)
-        Btn.MouseLeave:Connect(function() tween(Btn, 0.15, { BackgroundTransparency = 0 }) end)
-        return Btn
-    end
-
-    --// ---- createEntry: the single source for creating v2 entries ----
+    --// ---- Entry creation & validation ----
     local function sanitizeName(rawName)
-        local s = tostring(rawName or "")
-        s = s:gsub("%c+", " ")
-        s = s:gsub("%s+", " ")
-        s = s:match("^%s*(.-)%s*$")
+        local s = UI.Trim(tostring(rawName or ""):gsub("%c+", " "):gsub("%s+", " "))
         local len = utf8.len(s)
         if not len then
             local out, count = {}, 0
@@ -260,7 +181,6 @@ return function(ctx)
 
     local function createEntry(name, code, base, opts)
         base, opts = base or {}, opts or {}
-
         name = sanitizeName(name)
         if name == "" then return nil, "empty_name" end
         if type(code) ~= "string" or code:match("^%s*$") then return nil, "empty_script" end
@@ -282,172 +202,158 @@ return function(ctx)
             createdAt = tonumber(base.createdAt) or now,
             updatedAt = tonumber(base.updatedAt) or now,
             favorite  = base.favorite == true,
-            auto      = (base.auto == true) or nil,                           -- run on startup (all games)
-            autoPlace = tonumber(base.autoPlace) or nil,                      -- run on startup (specific game PlaceId)
-            review    = (base.review == true or opts.review == true) or nil,  -- imported, not reviewed yet
+            auto      = (base.auto == true) or nil,
+            autoPlace = tonumber(base.autoPlace) or nil,
+            review    = (base.review == true or opts.review == true) or nil,
         }, (name ~= wanted) and "renamed" or nil
     end
 
     --// ---- Save / load library ----
     local saveLibrary, scheduleSave, readJson, loadLibrary, announceLoad
     do
-    local STATUS = {
-        saved  = { "Saved",        "SubText" },
-        error  = { "Save failed",  "Danger"  },
-        memory = { "Session only", "SubText" },
-    }
+        local STATUS = {
+            saved  = { "Saved",        "SubText" },
+            error  = { "Save failed",  "Danger"  },
+            memory = { "Session only", "SubText" },
+        }
 
-    local function setSaveStatus(state)
-        local s = STATUS[state]
-        if StatusLabel and s then
-            StatusLabel.Text, StatusLabel.TextColor3 = s[1], Theme[s[2]]
-        end
-    end
-
-    local lastSaved
-
-    function saveLibrary()
-        if not canFS then
-            setSaveStatus("memory")
-            return true, "memory_only"
+        local function setSaveStatus(state)
+            local s = STATUS[state]
+            if StatusLabel and s then
+                StatusLabel.Text, StatusLabel.TextColor3 = s[1], Theme[s[2]]
+            end
         end
 
-        local okEnc, json = pcall(HttpService.JSONEncode, HttpService,
-            { version = SCHEMA_VERSION, scripts = ScriptList })
-        if not okEnc then
-            setSaveStatus("error")
-            return false, "encode: " .. tostring(json)
-        end
+        local lastSaved
+        function saveLibrary()
+            if not canFS then setSaveStatus("memory"); return true, "memory_only" end
 
-        if json == lastSaved then
+            local okEnc, json = pcall(HttpService.JSONEncode, HttpService,
+                { version = SCHEMA_VERSION, scripts = ScriptList })
+            if not okEnc then setSaveStatus("error"); return false, "encode: " .. tostring(json) end
+            if json == lastSaved then setSaveStatus("saved"); return true end
+
+            if lastSaved then pcall(writefile, BACKUP_FILE, lastSaved) end
+
+            local okW, errW = pcall(writefile, SCRIPT_FILE, json)
+            if not okW then
+                lastSaved = nil
+                setSaveStatus("error")
+                return false, tostring(errW)
+            end
+
+            local okR, back = pcall(readfile, SCRIPT_FILE)
+            if not okR or back ~= json then
+                lastSaved = nil
+                setSaveStatus("error")
+                return false, "verify_failed"
+            end
+
+            lastSaved = json
             setSaveStatus("saved")
             return true
         end
 
-        if lastSaved then pcall(writefile, BACKUP_FILE, lastSaved) end
-
-        local okW, errW = pcall(writefile, SCRIPT_FILE, json)
-        if not okW then
-            lastSaved = nil
-            setSaveStatus("error")
-            return false, tostring(errW)
+        local saveQueued = false
+        function scheduleSave(delay)
+            if saveQueued then return end
+            saveQueued = true
+            task.delay(delay or 0.4, function()
+                saveQueued = false
+                local ok, err = saveLibrary()
+                if not ok then showToast("Auto-save failed: " .. tostring(err), "error") end
+            end)
         end
 
-        local okR, back = pcall(readfile, SCRIPT_FILE)
-        if not okR or back ~= json then
-            lastSaved = nil
-            setSaveStatus("error")
-            return false, "verify_failed"
+        function readJson(path)
+            local okF, exists = pcall(isfile, path)
+            if not okF or not exists then return nil, "missing" end
+            local okR, body = pcall(readfile, path)
+            if not okR then return nil, "unreadable" end
+            local okD, data = pcall(HttpService.JSONDecode, HttpService, body)
+            if not okD then return nil, "bad_json", body end
+            return data, nil, body
         end
 
-        lastSaved = json
-        setSaveStatus("saved")
-        return true
-    end
-
-    local saveQueued = false
-    function scheduleSave(delay)
-        if saveQueued then return end
-        saveQueued = true
-        task.delay(delay or 0.4, function()
-            saveQueued = false
-            local ok, err = saveLibrary()
-            if not ok then showToast("Auto-save failed: " .. tostring(err), "error") end
-        end)
-    end
-
-    function readJson(path)
-        local okF, exists = pcall(isfile, path)
-        if not okF or not exists then return nil, "missing" end
-        local okR, body = pcall(readfile, path)
-        if not okR then return nil, "unreadable" end
-        local okD, data = pcall(HttpService.JSONDecode, HttpService, body)
-        if not okD then return nil, "bad_json", body end
-        return data, nil, body
-    end
-
-    local function extractItems(data)
-        if type(data) ~= "table" then return nil end
-        if data.version and type(data.scripts) == "table" then
-            return data.scripts, tonumber(data.version) or 1
-        end
-        return data, 1 -- legacy format: array of { name, script }
-    end
-
-    function loadLibrary()
-        local report = { status = "ok", loaded = 0, skipped = 0 }
-        if not canFS then report.status = "memory_only"; return report end
-
-        local data, why, body = readJson(SCRIPT_FILE)
-        if why == "missing" then report.status = "empty"; return report end
-
-        if why then
-            if body then
-                report.corruptFile = dataPath(("L-scr.corrupt-%d.json"):format(os.time()))
-                pcall(writefile, report.corruptFile, body)
+        local function extractItems(data)
+            if type(data) ~= "table" then return nil end
+            if data.version and type(data.scripts) == "table" then
+                return data.scripts, tonumber(data.version) or 1
             end
-            data, why, body = readJson(BACKUP_FILE)
-            if why then report.status = "corrupt"; return report end
-            report.status = "recovered"
+            return data, 1
         end
 
-        local items, version = extractItems(data)
-        if not items then report.status = "corrupt"; return report end
+        function loadLibrary()
+            local report = { status = "ok", loaded = 0, skipped = 0 }
+            if not canFS then report.status = "memory_only"; return report end
 
-        if report.status == "ok" then lastSaved = body end
+            local data, why, body = readJson(SCRIPT_FILE)
+            if why == "missing" then report.status = "empty"; return report end
 
-        for _, item in ipairs(items) do
-            local entry = type(item) == "table"
-                and createEntry(item.name, item.script, item, { keepName = true })
-            if entry then
-                ScriptList[#ScriptList + 1] = entry
-                report.loaded = report.loaded + 1
-            else
-                report.skipped = report.skipped + 1
+            if why then
+                if body then
+                    report.corruptFile = dataPath(("L-scr.corrupt-%d.json"):format(os.time()))
+                    pcall(writefile, report.corruptFile, body)
+                end
+                data, why, body = readJson(BACKUP_FILE)
+                if why then report.status = "corrupt"; return report end
+                report.status = "recovered"
+            end
+
+            local items, version = extractItems(data)
+            if not items then report.status = "corrupt"; return report end
+            if report.status == "ok" then lastSaved = body end
+
+            for _, item in ipairs(items) do
+                local entry = type(item) == "table"
+                    and createEntry(item.name, item.script, item, { keepName = true })
+                if entry then
+                    ScriptList[#ScriptList + 1] = entry
+                    report.loaded = report.loaded + 1
+                else
+                    report.skipped = report.skipped + 1
+                end
+            end
+
+            local needSave = report.status == "recovered"
+            if version < SCHEMA_VERSION then
+                report.migrated = version
+                needSave = true
+                pcall(function() writefile(dataPath(("L-scr.v%d.bak.json"):format(version)), body) end)
+            end
+            if needSave then saveLibrary() end
+            return report
+        end
+
+        function announceLoad(report)
+            if report.status == "recovered" then
+                showToast("Library was damaged - restored from backup", "warn", { duration = 5 })
+            elseif report.status == "corrupt" then
+                local kept = report.corruptFile and (" Copy kept: " .. report.corruptFile) or ""
+                showToast("Library file is damaged." .. kept, "error", { duration = 6 })
+            elseif report.status == "memory_only" then
+                setSaveStatus("memory")
+            end
+            if report.status == "ok" or report.status == "empty" or report.status == "recovered" then
+                setSaveStatus("saved")
+            end
+            if report.skipped > 0 then
+                showToast(("%d invalid script(s) were skipped"):format(report.skipped), "warn")
             end
         end
-
-        local needSave = report.status == "recovered"
-        if version < SCHEMA_VERSION then
-            report.migrated = version
-            needSave = true
-            pcall(function() writefile(dataPath(("L-scr.v%d.bak.json"):format(version)), body) end)
-        end
-        if needSave then saveLibrary() end
-        return report
     end
 
-    function announceLoad(report)
-        if report.status == "recovered" then
-            showToast("Library was damaged - restored from backup", "warn", { duration = 5 })
-        elseif report.status == "corrupt" then
-            local kept = report.corruptFile and (" Copy kept: " .. report.corruptFile) or ""
-            showToast("Library file is damaged." .. kept, "error", { duration = 6 })
-        elseif report.status == "memory_only" then
-            setSaveStatus("memory")
-        end
-        if report.status == "ok" or report.status == "empty" or report.status == "recovered" then
-            setSaveStatus("saved")
-        end
-        if report.skipped > 0 then
-            showToast(("%d invalid script(s) were skipped"):format(report.skipped), "warn")
-        end
-    end
-
-    end
-    --// ---- Run info + auto-run switch: its own small file, so a run never rewrites the whole library ----
+    --// ---- Run state & stats ----
     local State = { autoRun = true, stats = {} }
 
     local function loadState()
-        if not canFS then return end
-        local data = readJson(STATE_FILE)
+        local data = UI.ReadJson(STATE_NAME)
         if type(data) ~= "table" then return end
         State.autoRun = data.autoRun ~= false
         if type(data.stats) ~= "table" then return end
         for id, s in pairs(data.stats) do
             if type(id) == "string" and type(s) == "table" then
-                local ok
-                if type(s.ok) == "boolean" then ok = s.ok end
+                local ok = (type(s.ok) == "boolean") and s.ok or nil
                 State.stats[id] = {
                     t  = tonumber(s.t),
                     n  = math.max(0, math.floor(tonumber(s.n) or 0)),
@@ -463,9 +369,7 @@ return function(ctx)
         stateQueued = true
         task.delay(1, function()
             stateQueued = false
-            pcall(function()
-                writefile(STATE_FILE, HttpService:JSONEncode({ autoRun = State.autoRun, stats = State.stats }))
-            end)
+            UI.WriteJson(STATE_NAME, { autoRun = State.autoRun, stats = State.stats })
         end)
     end
 
@@ -484,10 +388,7 @@ return function(ctx)
     local function touchRun(entry)
         if entry.temp then return end
         local s = State.stats[entry.id]
-        if not s then
-            s = { n = 0 }
-            State.stats[entry.id] = s
-        end
+        if not s then s = { n = 0 }; State.stats[entry.id] = s end
         s.t, s.n = os.time(), s.n + 1
         saveState()
     end
@@ -495,13 +396,10 @@ return function(ctx)
     local function finishRun(entry, ok)
         if entry.temp then return end
         local s = State.stats[entry.id]
-        if s then
-            s.ok = ok
-            saveState()
-        end
+        if s then s.ok = ok; saveState() end
     end
 
-    --// ---- compileScript: trial compile, does not run ----
+    --// ---- Compile & execution ----
     local compileCache = setmetatable({}, { __mode = "k" })
 
     local function compileScript(source, chunkName)
@@ -516,9 +414,7 @@ return function(ctx)
         if not fn then
             local text = tostring(err)
             local line, msg = text:match(":(%d+):%s*(.*)$")
-            return false, nil, {
-                kind = "compile", line = tonumber(line), message = msg or text,
-            }
+            return false, nil, { kind = "compile", line = tonumber(line), message = msg or text }
         end
         return true, fn
     end
@@ -550,7 +446,6 @@ return function(ctx)
         return false, describe(info)
     end
 
-    --// ---- runScript / stopScript (supports `return function() ... end` cleanup) ----
     local function logOut(level, name, text)
         if OutputPanel then OutputPanel.append(level, name, text) end
     end
@@ -578,27 +473,22 @@ return function(ctx)
         end)
 
         state.thread = task.spawn(function()
-            local okRun, res = xpcall(fn, function(e)
-                return debug.traceback(tostring(e), 2)
-            end)
+            local okRun, res = xpcall(fn, function(e) return debug.traceback(tostring(e), 2) end)
             if Running[entry.id] ~= state then
                 if okRun and type(res) == "function" then pcall(res) end
                 return
             end
             if okRun and type(res) == "function" then
-                -- Script returned a cleanup function: keep state in Running so Stop can invoke it
                 state.cleanup = res
                 state.thread = nil
-                logOut("ok", entry.name,
-                    ("Active with cleanup hook (%.2fs)"):format(os.clock() - state.startedAt))
+                logOut("ok", entry.name, ("Active with cleanup hook (%.2fs)"):format(os.clock() - state.startedAt))
                 finishRun(entry, true)
                 onState("running_long")
                 return
             end
             Running[entry.id] = nil
             if okRun then
-                logOut("ok", entry.name,
-                    ("Finished in %.2fs"):format(os.clock() - state.startedAt))
+                logOut("ok", entry.name, ("Finished in %.2fs"):format(os.clock() - state.startedAt))
                 finishRun(entry, true)
                 onState("ok")
             else
@@ -638,7 +528,6 @@ return function(ctx)
 
     ScreenGui.Destroying:Connect(stopAll)
 
-    -- One-off runs of code that is not in the library (test run from the dialog, clipboard)
     local canClipboard = typeof(getclipboard) == "function"
     local canRun = typeof(loadstring) == "function"
 
@@ -653,13 +542,6 @@ return function(ctx)
                 showToast(shorten(tostring(detail or "Script failed"), 120), "error")
             end
         end)
-    end
-
-    local function readClipboard()
-        if not canClipboard then return nil end
-        local ok, text = pcall(getclipboard)
-        if ok and type(text) == "string" and not text:match("^%s*$") then return text end
-        return nil
     end
 
     local function runClipboard()
@@ -682,22 +564,14 @@ return function(ctx)
 
     local function exportLibrary(entry)
         local items = entry and { entry } or ScriptList
-        if #items == 0 then
-            showToast("Nothing to export", "warn")
-            return false
-        end
+        if #items == 0 then showToast("Nothing to export", "warn"); return false end
 
-        local payload = {
-            format = EXPORT_FORMAT, version = 1, exportedAt = os.time(), scripts = {},
-        }
+        local payload = { format = EXPORT_FORMAT, version = 1, exportedAt = os.time(), scripts = {} }
         for _, e in ipairs(items) do
             payload.scripts[#payload.scripts + 1] = { name = e.name, script = e.script }
         end
         local okEnc, json = pcall(HttpService.JSONEncode, HttpService, payload)
-        if not okEnc then
-            showToast("Export failed", "error")
-            return false
-        end
+        if not okEnc then showToast("Export failed", "error"); return false end
 
         local fileName
         if canFS then
@@ -705,21 +579,16 @@ return function(ctx)
                 entry and safeFileName(entry.name) or "all", os.date("%Y%m%d-%H%M%S"))
             fileName = dataPath(base .. ".json")
             local n = 2
-            if typeof(isfile) == "function" then
-                while true do
-                    local okI, taken = pcall(isfile, fileName)
-                    if not okI or not taken then break end
-                    fileName = dataPath(("%s-%d.json"):format(base, n))
-                    n = n + 1
-                end
+            while isfile(fileName) do
+                fileName = dataPath(("%s-%d.json"):format(base, n))
+                n = n + 1
             end
             if not pcall(writefile, fileName, json) then fileName = nil end
         end
         local copied = UI.CopyText(json)
 
         if fileName then
-            local tail = copied and " (copied)" or ""
-            showToast("Exported to " .. fileName .. tail, "success", { duration = 4 })
+            showToast("Exported to " .. fileName .. (copied and " (copied)" or ""), "success", { duration = 4 })
         elseif copied then
             showToast("Export copied to clipboard", "success")
         else
@@ -730,7 +599,7 @@ return function(ctx)
     end
 
     local function importLibrary(text)
-        text = tostring(text or ""):match("^%s*(.-)%s*$")
+        text = UI.Trim(text)
         if text == "" then return nil, "Nothing to import" end
 
         if canFS and #text < 200 and not text:find("[{%[\r\n]") then
@@ -738,10 +607,7 @@ return function(ctx)
                 local okF, exists = pcall(isfile, path)
                 if okF and exists then
                     local okR, body = pcall(readfile, path)
-                    if okR then
-                        text = body
-                        break
-                    end
+                    if okR then text = body; break end
                 end
             end
         end
@@ -776,7 +642,7 @@ return function(ctx)
         return { added = #added, skipped = skipped }
     end
 
-    --// ---- Output panel: run / error history, collapsible ----
+    --// ---- Output panel ----
     local function createOutputPanel(onResize)
         local HEADER_H, BODY_H, MAX_LINES = 28, 110, 50
         local LEVEL_COLORS = themedColors({ ok = "Sakura", error = "Danger", info = "SubText" })
@@ -830,9 +696,7 @@ return function(ctx)
             CanvasSize = UDim2.new(),
             AutomaticCanvasSize = Enum.AutomaticSize.Y,
         }, Panel)
-        new("UIListLayout", {
-            Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder,
-        }, Body)
+        list(Body, 2)
         padding(Body, 8, 8, 4, 4)
 
         local function refreshHeader()
@@ -907,7 +771,6 @@ return function(ctx)
         }
     end
 
-    -- A name for pasted code: its first comment line, else the file name of the first link in it
     local function guessName(code)
         local c = code:match("^%s*%-%-+[%s/#!]*([^\r\n]+)")
         if c and not c:match("^%[=*%[") then
@@ -925,91 +788,87 @@ return function(ctx)
         return nil
     end
 
-    --// ---- Lua Syntax Highlighter (single-pass RichText lexer) ----
+    --// ---- Lua Syntax Highlighter ----
     local highlightLua
     do
-    local KEYWORDS = {
-        ["and"] = true, ["break"] = true, ["continue"] = true, ["do"] = true, ["else"] = true,
-        ["elseif"] = true, ["end"] = true, ["false"] = true, ["for"] = true, ["function"] = true,
-        ["if"] = true, ["in"] = true, ["local"] = true, ["nil"] = true, ["not"] = true,
-        ["or"] = true, ["repeat"] = true, ["return"] = true, ["then"] = true, ["true"] = true,
-        ["until"] = true, ["while"] = true,
-    }
-    local BUILTINS = {
-        ["game"] = true, ["workspace"] = true, ["script"] = true, ["task"] = true, ["math"] = true,
-        ["string"] = true, ["table"] = true, ["pcall"] = true, ["xpcall"] = true, ["pairs"] = true,
-        ["ipairs"] = true, ["tonumber"] = true, ["tostring"] = true, ["print"] = true, ["warn"] = true,
-        ["error"] = true, ["Instance"] = true, ["Vector2"] = true, ["Vector3"] = true, ["CFrame"] = true,
-        ["Color3"] = true, ["UDim2"] = true, ["Enum"] = true, ["loadstring"] = true, ["typeof"] = true,
-    }
+        local KEYWORDS = {
+            ["and"] = true, ["break"] = true, ["continue"] = true, ["do"] = true, ["else"] = true,
+            ["elseif"] = true, ["end"] = true, ["false"] = true, ["for"] = true, ["function"] = true,
+            ["if"] = true, ["in"] = true, ["local"] = true, ["nil"] = true, ["not"] = true,
+            ["or"] = true, ["repeat"] = true, ["return"] = true, ["then"] = true, ["true"] = true,
+            ["until"] = true, ["while"] = true,
+        }
+        local BUILTINS = {
+            ["game"] = true, ["workspace"] = true, ["script"] = true, ["task"] = true, ["math"] = true,
+            ["string"] = true, ["table"] = true, ["pcall"] = true, ["xpcall"] = true, ["pairs"] = true,
+            ["ipairs"] = true, ["tonumber"] = true, ["tostring"] = true, ["print"] = true, ["warn"] = true,
+            ["error"] = true, ["Instance"] = true, ["Vector2"] = true, ["Vector3"] = true, ["CFrame"] = true,
+            ["Color3"] = true, ["UDim2"] = true, ["Enum"] = true, ["loadstring"] = true, ["typeof"] = true,
+        }
 
-    local function escapeRich(s)
-        return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
-    end
+        function highlightLua(src)
+            local kwHex  = Theme.AccentPink:ToHex()
+            local biHex  = Theme.AccentPurple:ToHex()
+            local strHex = Theme.Sakura:ToHex()
+            local cmtHex = Theme.SubText:ToHex()
+            local out, n, i = {}, #src, 1
 
-    function highlightLua(src)
-        local kwHex  = Theme.AccentPink:ToHex()
-        local biHex  = Theme.AccentPurple:ToHex()
-        local strHex = Theme.Sakura:ToHex()
-        local cmtHex = Theme.SubText:ToHex()
-        local out, n, i = {}, #src, 1
-
-        local function span(hexCol, text)
-            out[#out + 1] = '<font color="#' .. hexCol .. '">' .. escapeRich(text) .. '</font>'
-        end
-
-        while i <= n do
-            local c = src:sub(i, i)
-            if c == "-" and src:sub(i + 1, i + 1) == "-" then
-                local eq = src:match("^%-%-%[(=*)%[", i)
-                local close = eq and select(2, src:find("%]" .. eq .. "%]", i + 4 + #eq, true))
-                local stop = close or ((src:find("\n", i + 2, true) or (n + 1)) - 1)
-                span(cmtHex, src:sub(i, stop))
-                i = stop + 1
-            elseif c == "[" and src:match("^%[(=*)%[", i) then
-                local eq = src:match("^%[(=*)%[", i)
-                local _, close = src:find("%]" .. eq .. "%]", i + 2 + #eq, true)
-                local stop = close or n
-                span(strHex, src:sub(i, stop))
-                i = stop + 1
-            elseif c == '"' or c == "'" then
-                local j = i + 1
-                while j <= n do
-                    local cj = src:sub(j, j)
-                    if cj == "\\" then
-                        j = j + 2
-                    elseif cj == c or cj == "\n" then
-                        if cj == c then j = j + 1 end
-                        break
-                    else
-                        j = j + 1
-                    end
-                end
-                span(strHex, src:sub(i, j - 1))
-                i = j
-            elseif c:match("[%a_]") then
-                local s, e = src:find("^[%w_]+", i)
-                local w = src:sub(s, e)
-                if KEYWORDS[w] then
-                    span(kwHex, w)
-                elseif BUILTINS[w] then
-                    span(biHex, w)
-                else
-                    out[#out + 1] = w
-                end
-                i = e + 1
-            elseif c:match("%d") then
-                local s, e = src:find("^0x[%da-fA-F]+", i)
-                if not s then s, e = src:find("^%d+%.?%d*", i) end
-                span(strHex, src:sub(s, e))
-                i = e + 1
-            else
-                out[#out + 1] = escapeRich(c)
-                i = i + 1
+            local function span(hexCol, text)
+                out[#out + 1] = '<font color="#' .. hexCol .. '">' .. escapeRich(text) .. '</font>'
             end
+
+            while i <= n do
+                local c = src:sub(i, i)
+                if c == "-" and src:sub(i + 1, i + 1) == "-" then
+                    local eq = src:match("^%-%-%[(=*)%[", i)
+                    local close = eq and select(2, src:find("%]" .. eq .. "%]", i + 4 + #eq, true))
+                    local stop = close or ((src:find("\n", i + 2, true) or (n + 1)) - 1)
+                    span(cmtHex, src:sub(i, stop))
+                    i = stop + 1
+                elseif c == "[" and src:match("^%[(=*)%[", i) then
+                    local eq = src:match("^%[(=*)%[", i)
+                    local _, close = src:find("%]" .. eq .. "%]", i + 2 + #eq, true)
+                    local stop = close or n
+                    span(strHex, src:sub(i, stop))
+                    i = stop + 1
+                elseif c == '"' or c == "'" then
+                    local j = i + 1
+                    while j <= n do
+                        local cj = src:sub(j, j)
+                        if cj == "\\" then
+                            j = j + 2
+                        elseif cj == c or cj == "\n" then
+                            if cj == c then j = j + 1 end
+                            break
+                        else
+                            j = j + 1
+                        end
+                    end
+                    span(strHex, src:sub(i, j - 1))
+                    i = j
+                elseif c:match("[%a_]") then
+                    local s, e = src:find("^[%w_]+", i)
+                    local w = src:sub(s, e)
+                    if KEYWORDS[w] then
+                        span(kwHex, w)
+                    elseif BUILTINS[w] then
+                        span(biHex, w)
+                    else
+                        out[#out + 1] = w
+                    end
+                    i = e + 1
+                elseif c:match("%d") then
+                    local s, e = src:find("^0x[%da-fA-F]+", i)
+                    if not s then s, e = src:find("^%d+%.?%d*", i) end
+                    span(strHex, src:sub(s, e))
+                    i = e + 1
+                else
+                    out[#out + 1] = escapeRich(c)
+                    i = i + 1
+                end
+            end
+            return table.concat(out)
         end
-        return table.concat(out)
-    end
     end
 
     --// ---- NotBoxA: Add / Edit / Import ----
@@ -1086,7 +945,6 @@ return function(ctx)
             })
         end
 
-        -- TextBoxA1: Script Name
         local NameLabel = fieldLabel("NameLabel", "Script Name", 42)
         local NameBox = new("TextBox", {
             Position = UDim2.fromOffset(16, 62),
@@ -1109,7 +967,6 @@ return function(ctx)
         local NameStroke = stroke(NameBox)
         bindBoxFocus(NameBox, NameStroke)
 
-        -- TextBoxA2: Script (two-way scrolling frame with line numbers and live syntax highlighting)
         fieldLabel("CodeLabel", "Script", 102)
 
         local function miniAction(text, rightOffset)
@@ -1259,12 +1116,11 @@ return function(ctx)
             end)
         end
 
-        local function followCaret()
+        CodeBox:GetPropertyChangedSignal("CursorPosition"):Connect(function()
             if caretQueued then return end
             caretQueued = true
             task.defer(moveCaretIntoView)
-        end
-        CodeBox:GetPropertyChangedSignal("CursorPosition"):Connect(followCaret)
+        end)
 
         new("Frame", {
             Size = UDim2.new(1, -32, 0, 1),
@@ -1275,46 +1131,10 @@ return function(ctx)
             ZIndex = 52,
         }, Box)
 
-        local function option(text, pos, bgToken, textToken, outlined)
-            local Btn = new("TextButton", {
-                Size = UDim2.new(0.5, -22, 0, 34),
-                Position = pos,
-                BackgroundColor3 = Theme[bgToken],
-                Text = text,
-                Font = Enum.Font.GothamBold,
-                TextSize = 14,
-                TextColor3 = Theme[textToken],
-                AutoButtonColor = false,
-                ZIndex = 52,
-            }, Box)
-            corner(Btn, 8)
-            local S = outlined and stroke(Btn, Theme.Border, 1) or nil
-            pressScale(Btn, 0.95)
-
-            Btn.MouseEnter:Connect(function()
-                if outlined then
-                    tween(Btn, 0.15, { BackgroundColor3 = Theme.Header, TextColor3 = Theme.Sakura })
-                    tween(S, 0.15, { Color = Theme.AccentPurple })
-                else
-                    tween(Btn, 0.15, { BackgroundColor3 = Theme[bgToken]:Lerp(WHITE, 0.15) })
-                end
-            end)
-            Btn.MouseLeave:Connect(function()
-                if outlined then
-                    tween(Btn, 0.15, { BackgroundColor3 = Theme[bgToken], TextColor3 = Theme[textToken] })
-                    tween(S, 0.15, { Color = Theme.Border })
-                else
-                    tween(Btn, 0.15, { BackgroundColor3 = Theme[bgToken] })
-                end
-            end)
-            return Btn
-        end
-
-        local Save   = option(TEXT.save, UDim2.new(0, 16, 1, -46), "AccentPink", "Background")
-        local Cancel = option(TEXT.cancel, UDim2.new(1, -16, 1, -46), "PanelAlt", "Text", true)
+        local Save   = UI.CreateDialogButton(Box, TEXT.save, UDim2.new(0, 16, 1, -46), "AccentPink", "Background")
+        local Cancel = UI.CreateDialogButton(Box, TEXT.cancel, UDim2.new(1, -16, 1, -46), "PanelAlt", "Text", true)
         Cancel.AnchorPoint = Vector2.new(1, 0)
 
-        --// Dialog state
         local current = nil
         local baseline = { name = "", code = "" }
         local hideToken, discardUntil, pasteUntil = 0, 0, 0
@@ -1401,10 +1221,7 @@ return function(ctx)
 
         PasteBtn.MouseButton1Click:Connect(function()
             local clip = readClipboard()
-            if not clip then
-                flashMini(PasteBtn, "Empty", "Paste")
-                return
-            end
+            if not clip then flashMini(PasteBtn, "Empty", "Paste"); return end
             if #clip > MAX_SCRIPT_LEN then
                 showToast("Clipboard text is too large", "error")
                 return
@@ -1439,10 +1256,9 @@ return function(ctx)
 
     ScriptDialog = createScriptDialog()
 
-    --// ---- Entry actions: Add / Edit / Import / Delete / Duplicate / Pin / Auto-run ----
+    --// ---- Entry actions ----
     local function openEditDialog(entry)
-        if isLocked() then return end
-        ScriptDialog.show("edit", entry)
+        if not isLocked() then ScriptDialog.show("edit", entry) end
     end
 
     local function commitEdit(entry, rawName, code)
@@ -1465,8 +1281,7 @@ return function(ctx)
         Rows[entry.id].refresh()
         applyListView()
         ScriptDialog.hide()
-        local msg = name ~= rawName and ('Saved as "%s"'):format(name) or "Saved changes"
-        showToast(msg, "success")
+        showToast(name ~= rawName and ('Saved as "%s"'):format(name) or "Saved changes", "success")
     end
 
     local function commitAdd(name, code)
@@ -1485,8 +1300,7 @@ return function(ctx)
         CreateScriptRow(entry)
         applyListView()
         ScriptDialog.hide()
-        local msg = flag == "renamed" and ('Saved as "%s"'):format(entry.name) or "Script saved"
-        showToast(msg, "success")
+        showToast(flag == "renamed" and ('Saved as "%s"'):format(entry.name) or "Script saved", "success")
     end
 
     local EXAMPLE_NAME = "Example: Hello"
@@ -1526,7 +1340,6 @@ return function(ctx)
     end
 
     local pendingConfirm
-
     DeleteDialog.Yes.MouseButton1Click:Connect(function()
         local pending = pendingConfirm
         pendingConfirm = nil
@@ -1574,17 +1387,13 @@ return function(ctx)
             onAction = function()
                 table.insert(ScriptList, math.min(idx, #ScriptList + 1), entry)
                 local okU, errU = saveLibrary()
-                if not okU then
-                    undone = true
-                    if rec then rec.Row.Visible = true end
-                    applyListView()
-                    showToast("Restored in memory (save failed, will retry): " .. tostring(errU), "error")
-                    scheduleSave()
-                    return
-                end
                 undone = true
                 if rec then rec.Row.Visible = true end
                 applyListView()
+                if not okU then
+                    showToast("Restored in memory (save failed, will retry): " .. tostring(errU), "error")
+                    scheduleSave()
+                end
             end,
         })
         task.delay(UNDO_SECONDS + 0.3, finalize)
@@ -1651,8 +1460,7 @@ return function(ctx)
         if entry.autoPlace == game.PlaceId then
             showToast(entry.review and "Auto-runs in this game once reviewed" or "Auto-runs in this game", "info", { duration = 2 })
         elseif entry.auto then
-            showToast(entry.review and "Runs on startup once you have reviewed it" or "Runs on startup (all games)",
-                "info", { duration = 2 })
+            showToast(entry.review and "Runs on startup once you have reviewed it" or "Runs on startup (all games)", "info", { duration = 2 })
         else
             showToast("Auto-run off", "info", { duration = 1.5 })
         end
@@ -1664,14 +1472,10 @@ return function(ctx)
         showToast(State.autoRun and "Auto-run is on" or "Auto-run is paused", "info", { duration = 1.8 })
     end
 
-    --// ---- Shared floating menu (row + header) ----
+    --// ---- Shared floating menu ----
     local MenuCatcher
-
     local function closeContextMenu()
-        if MenuCatcher then
-            MenuCatcher:Destroy()
-            MenuCatcher = nil
-        end
+        if MenuCatcher then MenuCatcher:Destroy(); MenuCatcher = nil end
     end
 
     local function openContextMenu(anchor, items)
@@ -1769,7 +1573,6 @@ return function(ctx)
     end
 
     do
-        -- Function panel 1: pinned at the top, no frame / no border
         local Pinned = new("Frame", {
             Name = "FunctionPanel1",
             LayoutOrder = 1,
@@ -2013,7 +1816,7 @@ return function(ctx)
             local token = searchToken
             task.delay(0.15, function()
                 if token ~= searchToken then return end
-                View.query = SearchBox.Text:match("^%s*(.-)%s*$")
+                View.query = UI.Trim(SearchBox.Text)
                 applyListView()
             end)
         end)
@@ -2148,16 +1951,14 @@ return function(ctx)
                 if not ExecIcon.Parent then return end
                 paintInfo()
                 if state == "running" then return end
-                if state == "running_long" then
-                    showStopIcon(Theme.Danger)
-                    return
-                end
+                if state == "running_long" then showStopIcon(Theme.Danger); return end
                 resetPlayIcon()
                 if state == "ok" or state == "error" then
                     tintIcon(ExecIcon, state == "ok" and Theme.Sakura or Theme.Danger)
                     task.delay(1, function()
-                        if seq ~= runVisualSeq then return end
-                        if ExecIcon.Parent then tintIcon(ExecIcon, Theme.AccentPink) end
+                        if seq == runVisualSeq and ExecIcon.Parent then
+                            tintIcon(ExecIcon, Theme.AccentPink)
+                        end
                     end)
                 end
             end
@@ -2189,8 +1990,7 @@ return function(ctx)
             end)
 
             MoreBtn.MouseButton1Click:Connect(function()
-                if isLocked() then return end
-                openContextMenu(MoreBtn, buildRowItems(entry))
+                if not isLocked() then openContextMenu(MoreBtn, buildRowItems(entry)) end
             end)
             return rec
         end
@@ -2199,8 +1999,7 @@ return function(ctx)
         fitListPanel()
 
         LibMoreBtn.MouseButton1Click:Connect(function()
-            if isLocked() then return end
-            openContextMenu(LibMoreBtn, buildLibraryItems())
+            if not isLocked() then openContextMenu(LibMoreBtn, buildLibraryItems()) end
         end)
 
         local report = loadLibrary()
@@ -2211,11 +2010,9 @@ return function(ctx)
         announceLoad(report)
 
         AddBtn.MouseButton1Click:Connect(function()
-            if isLocked() then return end
-            ScriptDialog.show("add")
+            if not isLocked() then ScriptDialog.show("add") end
         end)
 
-        -- Options 1: Save (Add / Edit / Import)
         ScriptDialog.Save.MouseButton1Click:Connect(function()
             local dialogMode = ScriptDialog.getMode()
             local code = ScriptDialog.CodeBox.Text
@@ -2256,7 +2053,6 @@ return function(ctx)
             end
         end)
 
-        -- Dialog: Run = test run of what is typed (nothing is saved)
         ScriptDialog.RunBtn.MouseButton1Click:Connect(function()
             local code = ScriptDialog.CodeBox.Text
             if code:match("^%s*$") then
@@ -2279,15 +2075,11 @@ return function(ctx)
         end)
 
         ScriptTab:GetPropertyChangedSignal("Visible"):Connect(function()
-            if not ScriptTab.Visible then
-                closeContextMenu()
-                return
-            end
+            if not ScriptTab.Visible then closeContextMenu(); return end
             for _, rec in pairs(Rows) do rec.paintInfo() end
             applyListView()
         end)
 
-        -- Auto-run: start the scripts marked for all games or this game shortly after the UI has loaded
         if State.autoRun then
             local queue = {}
             for _, e in ipairs(ScriptList) do
