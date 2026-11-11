@@ -1497,12 +1497,17 @@ return function(ctx)
             local kind = input.UserInputType
             if kind ~= Enum.UserInputType.MouseButton1 and kind ~= Enum.UserInputType.Touch then return end
             stopDrag()
-            local startInput, startPos = input.Position, Pill.Position
+            local vp = Gui.AbsoluteSize
+            local startInput = input.Position
+            local startAbsX = Pill.AbsolutePosition.X + Pill.AbsoluteSize.X / 2
+            local startAbsY = Pill.AbsolutePosition.Y
             dragMoveConn = UserInputService.InputChanged:Connect(function(i)
                 if i.UserInputType == Enum.UserInputType.MouseMovement or i == input then
+                    if vp.X <= 0 or vp.Y <= 0 then return end
                     local d = i.Position - startInput
-                    Pill.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                        startPos.Y.Scale, startPos.Y.Offset + d.Y)
+                    local curAbsX = startAbsX + d.X
+                    local curAbsY = startAbsY + d.Y
+                    Pill.Position = UDim2.new(curAbsX / vp.X, 0, curAbsY / vp.Y, 0)
                 end
             end)
             dragEndConn = input.Changed:Connect(function()

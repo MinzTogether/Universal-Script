@@ -888,9 +888,44 @@ makeDraggable(TopBar, MainUI, commitUIState)
 --// ================= DIALOGS & OVERLAY =================
 local setOverlay, createDialogButton, CloseDialog, ResetDialog, DeleteDialog
 do
+    local OVERLAY_TRANSPARENCY = 0.45
     local DIALOG_SIZE = UDim2.fromOffset(310, 160)
+    local overlayTween, overlayCount = nil, 0
 
-    function setOverlay() end
+    local InteractionBlocker = new("Frame", {
+        Name = "InteractionBlocker",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Active = true,
+        Visible = false,
+        ZIndex = 50,
+    }, MainUI)
+
+    function setOverlay(on)
+        if on then
+            overlayCount = overlayCount + 1
+            if overlayCount == 1 then
+                if overlayTween then overlayTween:Cancel() end
+                InteractionBlocker.Visible = true
+                overlayTween = tween(InteractionBlocker, FADE_IN_TIME, { BackgroundTransparency = OVERLAY_TRANSPARENCY }, EASE_QUAD, DIR_OUT)
+            end
+        else
+            if overlayCount > 0 then
+                overlayCount = overlayCount - 1
+            end
+            if overlayCount == 0 then
+                if overlayTween then overlayTween:Cancel() end
+                overlayTween = tween(InteractionBlocker, BUBBLE_OUT_TIME, { BackgroundTransparency = 1 }, EASE_QUAD, DIR_IN)
+                overlayTween.Completed:Connect(function(state)
+                    if state == Enum.PlaybackState.Completed and overlayCount == 0 then
+                        InteractionBlocker.Visible = false
+                    end
+                end)
+            end
+        end
+    end
 
     function createDialogButton(parent, text, pos, bgToken, textToken, outlined)
         local Btn = new("TextButton", {
