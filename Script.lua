@@ -885,6 +885,7 @@ return function(ctx)
         local Box = new("Frame", {
             Name = "NotBoxA",
             Visible = false,
+            Active = true,
             AnchorPoint = ANCHOR_CENTER,
             Position = CENTER,
             Size = UDim2.new(),
@@ -908,15 +909,6 @@ return function(ctx)
             Color = ColorSequence.new(Theme.AccentPurple, ACCENT),
             Rotation = 45,
         }, stroke(Box, WHITE, 1.5))
-
-        new("UIGradient", {
-            Color = ColorSequence.new(Theme.AccentPurple, ACCENT),
-        }, new("Frame", {
-            Size = UDim2.new(1, 0, 0, 3),
-            BackgroundColor3 = WHITE,
-            BorderSizePixel = 0,
-            ZIndex = 52,
-        }, Box))
 
         local TitleLabel = label(Box, {
             Name = "DialogTitle",

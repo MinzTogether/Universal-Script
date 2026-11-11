@@ -393,19 +393,8 @@ return function(D)
         local refreshItems, updateWinbox = noop, noop
         closeList = noop
 
-        local holds, prevLocked = 0, false
-        local function hold()
-            if holds == 0 then
-                prevLocked = isLocked()
-                setLocked(true)
-            end
-            holds = holds + 1
-        end
-        local function release()
-            if holds == 0 then return end
-            holds = holds - 1
-            if holds == 0 then setLocked(prevLocked) end
-        end
+        local function hold() end
+        local function release() end
 
         local listeners = {}
         function onChanged(fn)

@@ -200,7 +200,7 @@ do
     end
 
     function tween(inst, time, props, style, dir)
-        local dur = (Saved and Saved.reduceMotion) and 0 or time
+        local dur = ((Saved and Saved.reduceMotion) or time <= 0) and 0.001 or time
         local t = TweenService:Create(inst, infoFor(dur, style or EASE_QUAD, dir or DIR_OUT), props)
         for k in pairs(props) do
             if k == "Color" or string.sub(k, -6) == "Color3" then
@@ -888,35 +888,9 @@ makeDraggable(TopBar, MainUI, commitUIState)
 --// ================= DIALOGS & OVERLAY =================
 local setOverlay, createDialogButton, CloseDialog, ResetDialog, DeleteDialog
 do
-    local OVERLAY_TRANSPARENCY = 0.45
     local DIALOG_SIZE = UDim2.fromOffset(310, 160)
-    local overlayTween
 
-    local InteractionBlocker = new("Frame", {
-        Name = "InteractionBlocker",
-        Size = UDim2.fromScale(1, 1),
-        BackgroundColor3 = Color3.new(0, 0, 0),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Active = true,
-        Visible = false,
-        ZIndex = 20,
-    }, MainUI)
-
-    function setOverlay(on)
-        if overlayTween then overlayTween:Cancel() end
-        if on then
-            InteractionBlocker.Visible = true
-            overlayTween = tween(InteractionBlocker, FADE_IN_TIME, { BackgroundTransparency = OVERLAY_TRANSPARENCY }, EASE_QUAD, DIR_OUT)
-        else
-            overlayTween = tween(InteractionBlocker, BUBBLE_OUT_TIME, { BackgroundTransparency = 1 }, EASE_QUAD, DIR_IN)
-            overlayTween.Completed:Connect(function(state)
-                if state == Enum.PlaybackState.Completed then
-                    InteractionBlocker.Visible = false
-                end
-            end)
-        end
-    end
+    function setOverlay() end
 
     function createDialogButton(parent, text, pos, bgToken, textToken, outlined)
         local Btn = new("TextButton", {
@@ -957,6 +931,7 @@ do
         local Box = new("Frame", {
             Name = name,
             Visible = false,
+            Active = true,
             AnchorPoint = ANCHOR_CENTER,
             Position = CENTER,
             Size = UDim2.new(),
@@ -979,14 +954,6 @@ do
 
         local BoxStroke = stroke(Box, WHITE, 1.5)
         new("UIGradient", { Color = ColorSequence.new(Theme.AccentPurple, Theme[yesToken]), Rotation = 45 }, BoxStroke)
-
-        local Accent = new("Frame", {
-            Size = UDim2.new(1, 0, 0, 3),
-            BackgroundColor3 = WHITE,
-            BorderSizePixel = 0,
-            ZIndex = 52,
-        }, Box)
-        new("UIGradient", { Color = ColorSequence.new(Theme.AccentPurple, Theme[yesToken]) }, Accent)
 
         label(Box, {
             Size = UDim2.new(1, -32, 0, 20),
@@ -1181,7 +1148,8 @@ end)
 --// ================= RESIZE MODE =================
 local resizeMode = false
 do
-    local RESIZE_HANDLE_SIZE = 18
+    local HANDLE_SZ, CLIP_SZ, ARC_THICK, ARC_GAP = 24, 18, 3, 2
+    local HANDLE_OUTSET = ARC_GAP + ARC_THICK
     local resizeDragCorner, resizeInput
     local dragStart, startPos
     local startW, startH, dirX, dirY = 0, 0, 0, 0
@@ -1199,23 +1167,66 @@ do
         local pos, size = MainUI.AbsolutePosition - origin, MainUI.AbsoluteSize
         for cornerName, handle in pairs(ResizeHandles) do
             local a = CORNER_ANCHORS[cornerName]
-            handle.Position = UDim2.fromOffset(pos.X + size.X * a.X, pos.Y + size.Y * a.Y)
+            local dx = a.X == 1 and 1 or -1
+            local dy = a.Y == 1 and 1 or -1
+            handle.Position = UDim2.fromOffset(
+                pos.X + size.X * a.X + dx * HANDLE_OUTSET,
+                pos.Y + size.Y * a.Y + dy * HANDLE_OUTSET
+            )
         end
     end
 
     for cornerName, anchor in pairs(CORNER_ANCHORS) do
+        local dx = anchor.X == 1 and 1 or -1
+        local dy = anchor.Y == 1 and 1 or -1
+
         local Handle = new("Frame", {
-            Name = "ResizeHandle",
-            AnchorPoint = ANCHOR_CENTER,
-            Size = UDim2.fromOffset(RESIZE_HANDLE_SIZE, RESIZE_HANDLE_SIZE),
-            BackgroundColor3 = Theme.AccentPink,
-            BorderSizePixel = 0,
+            Name = "ResizeHandle_" .. cornerName,
+            AnchorPoint = anchor,
+            Size = UDim2.fromOffset(HANDLE_SZ, HANDLE_SZ),
+            BackgroundTransparency = 1,
             Visible = false,
             Active = true,
             ZIndex = 100,
         }, ScreenGui)
-        corner(Handle, 6)
-        stroke(Handle, Theme.Text, 1.5)
+
+        local Clip = new("Frame", {
+            AnchorPoint = anchor,
+            Position = UDim2.fromScale(anchor.X, anchor.Y),
+            Size = UDim2.fromOffset(CLIP_SZ, CLIP_SZ),
+            BackgroundTransparency = 1,
+            ClipsDescendants = true,
+            ZIndex = 100,
+        }, Handle)
+
+        local Arc = new("Frame", {
+            AnchorPoint = anchor,
+            Position = UDim2.new(anchor.X, -dx * ARC_THICK, anchor.Y, -dy * ARC_THICK),
+            Size = UDim2.fromOffset(CLIP_SZ * 2 + 6, CLIP_SZ * 2 + 6),
+            BackgroundTransparency = 1,
+            ZIndex = 100,
+        }, Clip)
+        corner(Arc, 12 + ARC_GAP)
+        stroke(Arc, Theme.AccentPink, ARC_THICK)
+
+        corner(new("Frame", {
+            AnchorPoint = Vector2.new(0.5, anchor.Y),
+            Position = UDim2.new(anchor.X, -dx * CLIP_SZ, anchor.Y, 0),
+            Size = UDim2.fromOffset(ARC_THICK, ARC_THICK),
+            BackgroundColor3 = Theme.AccentPink,
+            BorderSizePixel = 0,
+            ZIndex = 100,
+        }, Handle), ARC_THICK)
+
+        corner(new("Frame", {
+            AnchorPoint = Vector2.new(anchor.X, 0.5),
+            Position = UDim2.new(anchor.X, 0, anchor.Y, -dy * CLIP_SZ),
+            Size = UDim2.fromOffset(ARC_THICK, ARC_THICK),
+            BackgroundColor3 = Theme.AccentPink,
+            BorderSizePixel = 0,
+            ZIndex = 100,
+        }, Handle), ARC_THICK)
+
         ResizeHandles[cornerName] = Handle
 
         local Grip = new("TextButton", {
@@ -1237,8 +1248,7 @@ do
             dragStart = input.Position
             startW, startH = MainUI.Size.X.Offset, MainUI.Size.Y.Offset
             startPos = MainUI.Position
-            dirX = anchor.X == 1 and 1 or -1
-            dirY = anchor.Y == 1 and 1 or -1
+            dirX, dirY = dx, dy
 
             local endConn
             endConn = input.Changed:Connect(function()
@@ -1257,6 +1267,7 @@ do
     end
     MainUI:GetPropertyChangedSignal("AbsolutePosition"):Connect(onMainUIRectChanged)
     MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(onMainUIRectChanged)
+    MainUIScale:GetPropertyChangedSignal("Scale"):Connect(onMainUIRectChanged)
 
     track(UserInputService.InputChanged:Connect(function(input)
         if not resizeMode or not resizeDragCorner or not isMove(input) then return end
@@ -1276,16 +1287,19 @@ do
 
     local function setResizeMode(enabled)
         resizeMode = enabled
-        uiLocked = enabled
         resizeDragCorner, resizeInput = nil, nil
         drawIcon(ResizeIcon, "resize", enabled and Theme.AccentPink or Theme.Text, Theme.PanelAlt)
         tween(MainUIStroke, 0.2, {
             Color = enabled and Theme.AccentPink or Theme.Border,
             Thickness = enabled and 2 or 1,
         })
-        for _, h in pairs(ResizeHandles) do h.Visible = enabled end
+        for _, h in pairs(ResizeHandles) do h.Visible = enabled and MainUI.Visible end
         if enabled then updateResizeHandlePositions() end
     end
+
+    MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
+        if not MainUI.Visible and resizeMode then setResizeMode(false) end
+    end)
 
     ResizeBtn.MouseButton1Click:Connect(function()
         setResizeMode(not resizeMode)

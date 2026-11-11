@@ -161,7 +161,6 @@ return function(ctx)
             Popup.token = Popup.token + 1
             local token = Popup.token
             PopBlocker.Visible = false
-            setLocked(false)
             local owner = Popup.owner
             Popup.owner = nil
             if owner then owner.onClosed() end
@@ -217,7 +216,6 @@ return function(ctx)
 
             Popup.open, Popup.owner = true, api
             Popup.token = Popup.token + 1
-            setLocked(true)
             PopBlocker.Visible = true
 
             PopList.Size = UDim2.fromOffset(w, 0)
