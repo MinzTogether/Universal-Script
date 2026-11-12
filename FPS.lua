@@ -1481,10 +1481,11 @@ return function(ctx)
         end
 
         local function settle()
-            local vp, size, pos = Gui.AbsoluteSize, Pill.AbsoluteSize, Pill.AbsolutePosition
+            local vp, size = Gui.AbsoluteSize, Pill.AbsoluteSize
             if vp.X <= 0 or vp.Y <= 0 then return end
-            local cx = math.clamp(pos.X + size.X / 2, size.X / 2, math.max(size.X / 2, vp.X - size.X / 2))
-            local ty = math.clamp(pos.Y, 0, math.max(0, vp.Y - size.Y))
+            -- Not AbsolutePosition: with IgnoreGuiInset it is shifted by the GUI inset, which made the pill creep up on every drag
+            local cx = math.clamp(Pill.Position.X.Scale * vp.X, size.X / 2, math.max(size.X / 2, vp.X - size.X / 2))
+            local ty = math.clamp(Pill.Position.Y.Scale * vp.Y, 0, math.max(0, vp.Y - size.Y))
             px, py = cx / vp.X, ty / vp.Y
             Pill.Position = UDim2.fromScale(px, py)
             Prefs.set("overlay", { x = px, y = py })
@@ -1502,15 +1503,12 @@ return function(ctx)
             stopDrag()
             local vp = Gui.AbsoluteSize
             local startInput = input.Position
-            local startAbsX = Pill.AbsolutePosition.X + Pill.AbsoluteSize.X / 2
-            local startAbsY = Pill.AbsolutePosition.Y
+            local startX, startY = Pill.Position.X.Scale, Pill.Position.Y.Scale
             dragMoveConn = UserInputService.InputChanged:Connect(function(i)
                 if i.UserInputType == Enum.UserInputType.MouseMovement or i == input then
                     if vp.X <= 0 or vp.Y <= 0 then return end
                     local d = i.Position - startInput
-                    local curAbsX = startAbsX + d.X
-                    local curAbsY = startAbsY + d.Y
-                    Pill.Position = UDim2.new(curAbsX / vp.X, 0, curAbsY / vp.Y, 0)
+                    Pill.Position = UDim2.fromScale(startX + d.X / vp.X, startY + d.Y / vp.Y)
                 end
             end)
             dragEndConn = input.Changed:Connect(function()
