@@ -1165,7 +1165,7 @@ return function(ctx)
             refreshEditorView()
 
             hideToken = hideToken + 1
-            setOverlay(true)
+            setOverlay(true, Box)
             Box.Visible = true
             Box.Size = UDim2.new()
             tween(Box, BUBBLE_IN_TIME, { Size = target }, EASE_QUAD, DIR_OUT)
@@ -1181,7 +1181,7 @@ return function(ctx)
                 if state ~= Enum.PlaybackState.Completed or token ~= hideToken then return end
                 Box.Visible = false
                 current = nil
-                setOverlay(false)
+                setOverlay(false, Box)
             end)
         end
 

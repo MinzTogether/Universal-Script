@@ -628,14 +628,16 @@ return function(D)
         end
 
         local function positionList()
-            local rp = Row.AbsolutePosition - MainUI.AbsolutePosition
-            local rs = Row.AbsoluteSize
+            -- Absolute values already include MainUI's UIScale, the list offsets do not
+            local sc = (D.getUIScale and D.getUIScale()) or 1
+            local rp = (Row.AbsolutePosition - MainUI.AbsolutePosition) / sc
+            local rs = Row.AbsoluteSize / sc
             local n = #THEMES
             local fullH = n * ITEM_H + (n - 1) * ITEM_GAP + LIST_PAD * 2
             local maxH  = LIST_MAX_ROWS * ITEM_H + (LIST_MAX_ROWS - 1) * ITEM_GAP + LIST_PAD * 2
             local minH  = 3 * ITEM_H + 2 * ITEM_GAP + LIST_PAD * 2
 
-            local below = MainUI.AbsoluteSize.Y - (rp.Y + rs.Y + 6) - 8
+            local below = MainUI.AbsoluteSize.Y / sc - (rp.Y + rs.Y + 6) - 8
             local above = rp.Y - 6 - 8
             local flip, room = false, below
             if below < minH and above > below then flip, room = true, above end

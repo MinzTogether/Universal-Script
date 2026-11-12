@@ -164,7 +164,7 @@ return function(ctx)
             local owner = Popup.owner
             Popup.owner = nil
             if owner then owner.onClosed() end
-            tween(PopList, 0.1, { Size = UDim2.fromOffset(PopList.AbsoluteSize.X, 0) }, EASE_QUAD, DIR_IN).Completed:Connect(function()
+            tween(PopList, 0.1, { Size = UDim2.fromOffset(PopList.Size.X.Offset, 0) }, EASE_QUAD, DIR_IN).Completed:Connect(function()
                 if Popup.token == token then PopList.Visible = false end
             end)
         end
@@ -207,11 +207,14 @@ return function(ctx)
             local w = math.max(maxW + 32, 110)
             local h = n * ITEM_H + (n - 1) * 2 + POP_PAD * 2
 
-            local mp, ms = MainUI.AbsolutePosition, MainUI.AbsoluteSize
-            local ap, asz = api.Frame.AbsolutePosition, api.Frame.AbsoluteSize
-            local x = (ap.X + asz.X) - mp.X
-            local y = (ap.Y + asz.Y) - mp.Y + POP_GAP
-            if y + h > ms.Y - 6 then y = (ap.Y - mp.Y) - POP_GAP - h end
+            -- Absolute values already include MainUI's UIScale, the popup offsets do not
+            local sc = ctx.getUIScale()
+            local ms = MainUI.AbsoluteSize / sc
+            local rel = (api.Frame.AbsolutePosition - MainUI.AbsolutePosition) / sc
+            local asz = api.Frame.AbsoluteSize / sc
+            local x = rel.X + asz.X
+            local y = rel.Y + asz.Y + POP_GAP
+            if y + h > ms.Y - 6 then y = rel.Y - POP_GAP - h end
             y = math.max(y, 4)
 
             Popup.open, Popup.owner = true, api

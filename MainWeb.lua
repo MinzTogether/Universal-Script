@@ -886,11 +886,12 @@ end
 makeDraggable(TopBar, MainUI, commitUIState)
 
 --// ================= DIALOGS & OVERLAY =================
-local setOverlay, createDialogButton, CloseDialog, ResetDialog, DeleteDialog
+local setOverlay, isOverlayOn, createDialogButton, CloseDialog, ResetDialog, DeleteDialog
 do
     local OVERLAY_TRANSPARENCY = 0.45
     local DIALOG_SIZE = UDim2.fromOffset(310, 160)
-    local overlayTween, overlayCount = nil, 0
+    local overlayTween, overlayOn = nil, false
+    local owners, frozenScrolls = {}, {}
 
     local InteractionBlocker = new("Frame", {
         Name = "InteractionBlocker",
@@ -903,27 +904,50 @@ do
         ZIndex = 50,
     }, MainUI)
 
-    function setOverlay(on)
+    -- Active only sinks button clicks: hover, wheel scroll, TopBar drag and an already focused TextBox
+    -- still reached MainUI under the dark layer, so everything inside it is switched off while it is shown.
+    local function lockMainUI(on)
+        for _, child in ipairs(MainUI:GetChildren()) do
+            if child:IsA("GuiObject") and child ~= InteractionBlocker then child.Interactable = not on end
+        end
         if on then
-            overlayCount = overlayCount + 1
-            if overlayCount == 1 then
-                if overlayTween then overlayTween:Cancel() end
-                InteractionBlocker.Visible = true
-                overlayTween = tween(InteractionBlocker, FADE_IN_TIME, { BackgroundTransparency = OVERLAY_TRANSPARENCY }, EASE_QUAD, DIR_OUT)
+            local box = UserInputService:GetFocusedTextBox()
+            if box and box:IsDescendantOf(MainUI) then box:ReleaseFocus() end
+            for _, d in ipairs(MainUI:GetDescendants()) do
+                if d:IsA("ScrollingFrame") and d.ScrollingEnabled then
+                    frozenScrolls[d] = true
+                    d.ScrollingEnabled = false
+                end
             end
         else
-            if overlayCount > 0 then
-                overlayCount = overlayCount - 1
+            for d in pairs(frozenScrolls) do
+                frozenScrolls[d] = nil
+                d.ScrollingEnabled = true
             end
-            if overlayCount == 0 then
-                if overlayTween then overlayTween:Cancel() end
-                overlayTween = tween(InteractionBlocker, BUBBLE_OUT_TIME, { BackgroundTransparency = 1 }, EASE_QUAD, DIR_IN)
-                overlayTween.Completed:Connect(function(state)
-                    if state == Enum.PlaybackState.Completed and overlayCount == 0 then
-                        InteractionBlocker.Visible = false
-                    end
-                end)
-            end
+        end
+    end
+
+    function isOverlayOn() return overlayOn end
+
+    -- One entry per dialog (owner), so repeated show/hide calls can neither leave the layer stuck on nor drop it early.
+    function setOverlay(on, owner)
+        owners[owner or setOverlay] = on or nil
+        local want = next(owners) ~= nil
+        if want == overlayOn then return end
+        overlayOn = want
+        if overlayTween then overlayTween:Cancel() end
+        if want then
+            InteractionBlocker.Visible = true
+            lockMainUI(true)
+            overlayTween = tween(InteractionBlocker, FADE_IN_TIME, { BackgroundTransparency = OVERLAY_TRANSPARENCY }, EASE_QUAD, DIR_OUT)
+        else
+            overlayTween = tween(InteractionBlocker, BUBBLE_OUT_TIME, { BackgroundTransparency = 1 }, EASE_QUAD, DIR_IN)
+            overlayTween.Completed:Connect(function(state)
+                if state == Enum.PlaybackState.Completed and not overlayOn then
+                    InteractionBlocker.Visible = false
+                    lockMainUI(false)
+                end
+            end)
         end
     end
 
@@ -1028,7 +1052,7 @@ do
         local hideToken = 0
         local function show()
             hideToken = hideToken + 1
-            setOverlay(true)
+            setOverlay(true, Box)
             Box.Visible = true
             Box.Size = UDim2.new()
             tween(Box, BUBBLE_IN_TIME, { Size = DIALOG_SIZE }, EASE_QUAD, DIR_OUT)
@@ -1037,7 +1061,7 @@ do
         local function hide()
             hideToken = hideToken + 1
             local token = hideToken
-            setOverlay(false)
+            setOverlay(false, Box)
             local sizeTween = tween(Box, BUBBLE_OUT_TIME, { Size = UDim2.new() }, EASE_QUAD, DIR_IN)
             sizeTween.Completed:Connect(function(state)
                 if state ~= Enum.PlaybackState.Completed or token ~= hideToken then return end
@@ -1273,7 +1297,7 @@ do
         }, Handle)
 
         Grip.InputBegan:Connect(function(input)
-            if not resizeMode or resizeDragCorner or not isPress(input) then return end
+            if not resizeMode or isOverlayOn() or resizeDragCorner or not isPress(input) then return end
             if isMaximized then
                 isMaximized = false
                 drawIcon(MaximizeIcon, "maximize", Theme.Text, Theme.PanelAlt)
