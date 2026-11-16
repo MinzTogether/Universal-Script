@@ -901,6 +901,7 @@ do
     local DIALOG_SIZE = UDim2.fromOffset(310, 160)
     local overlayTween, overlayOn = nil, false
     local owners, frozenScrolls, frozenInteractables = {}, {}, {}
+    local interactableAdded = nil
 
     local InteractionBlocker = new("Frame", {
         Name = "InteractionBlocker",
@@ -915,37 +916,44 @@ do
 
     -- Active only sinks button clicks: hover, wheel scroll, TopBar drag and an already focused TextBox
     -- still reached MainUI under the dark layer, so everything inside it is switched off while it is shown.
+    local function freezeMainUIObject(object)
+        if object == InteractionBlocker or object:IsDescendantOf(InteractionBlocker) then return end
+        if not object:IsA("GuiObject") then return end
+        if frozenInteractables[object] == nil then
+            frozenInteractables[object] = object.Interactable
+        end
+        object.Interactable = false
+        if object:IsA("ScrollingFrame") then
+            if frozenScrolls[object] == nil then
+                frozenScrolls[object] = object.ScrollingEnabled
+            end
+            object.ScrollingEnabled = false
+        end
+    end
+
     local function lockMainUI(on)
         if on then
-            for _, child in ipairs(MainUI:GetChildren()) do
-                if child:IsA("GuiObject") and child ~= InteractionBlocker then
-                    if frozenInteractables[child] == nil then
-                        frozenInteractables[child] = child.Interactable
-                    end
-                    child.Interactable = false
-                end
+            if not interactableAdded then
+                interactableAdded = MainUI.DescendantAdded:Connect(freezeMainUIObject)
             end
+            for _, d in ipairs(MainUI:GetDescendants()) do freezeMainUIObject(d) end
             local box = UserInputService:GetFocusedTextBox()
             if box and box:IsDescendantOf(MainUI) then box:ReleaseFocus() end
-            for _, d in ipairs(MainUI:GetDescendants()) do
-                if d:IsA("ScrollingFrame") then
-                    if frozenScrolls[d] == nil then
-                        frozenScrolls[d] = d.ScrollingEnabled
-                    end
-                    d.ScrollingEnabled = false
-                end
-            end
         else
+            if interactableAdded then
+                interactableAdded:Disconnect()
+                interactableAdded = nil
+            end
             for d, wasEnabled in pairs(frozenScrolls) do
                 frozenScrolls[d] = nil
                 if d.Parent and d.ScrollingEnabled == false then
                     d.ScrollingEnabled = wasEnabled
                 end
             end
-            for child, wasInteractable in pairs(frozenInteractables) do
-                frozenInteractables[child] = nil
-                if child.Parent and child.Interactable == false then
-                    child.Interactable = wasInteractable
+            for object, wasInteractable in pairs(frozenInteractables) do
+                frozenInteractables[object] = nil
+                if object.Parent and object.Interactable == false then
+                    object.Interactable = wasInteractable
                 end
             end
         end

@@ -1906,9 +1906,13 @@ return function(ctx)
             end
         end
 
-        local function track(p)
-            if p == LocalPlayer or trackers[p] then return end
+        local generation = 0
+
+        local function track(p, runId)
+            if not active or not folder or runId ~= generation then return end
+            if p == LocalPlayer or trackers[p] or p.Parent ~= Players then return end
             trackers[p] = Core.TrackCharacter(p, function(char, hum, root)
+                if not active or not folder or runId ~= generation then return end
                 local e = { char = char, hum = hum, root = root }
                 buildVisuals(p, e)
                 entries[p] = e
@@ -1924,7 +1928,7 @@ return function(ctx)
                     c3:Disconnect()
                     destroyVisuals(e)
                     entries[p] = nil
-                    if not stopping then syncAll() end
+                    if active and not stopping then syncAll() end
                 end
             end, { onDied = true })
         end
@@ -1970,18 +1974,24 @@ return function(ctx)
         function C.start()
             if active then return end
             active = true
+            generation += 1
+            local runId = generation
             folder = new("Folder", { Name = "ElyseraESP" }, GuiRoot)
-            for _, p in ipairs(Players:GetPlayers()) do track(p) end
-            conns[1] = Players.PlayerAdded:Connect(track)
+            conns[1] = Players.PlayerAdded:Connect(function(p)
+                if active and generation == runId then track(p, runId) end
+            end)
             conns[2] = Players.PlayerRemoving:Connect(function(p)
+                if not active or generation ~= runId then return end
                 if trackers[p] then
                     trackers[p].destroy()
                     trackers[p] = nil
                 end
             end)
             conns[3] = LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+                if not active or generation ~= runId then return end
                 for p, e in pairs(entries) do refreshColor(p, e) end
             end)
+            for _, p in ipairs(Players:GetPlayers()) do track(p, runId) end
             syncAll()
         end
 
@@ -1989,6 +1999,7 @@ return function(ctx)
             if not active and not folder then return end
             stopping = true
             active = false
+            generation += 1
             if stopLoop then stopLoop(); stopLoop = nil end
             for _, c in ipairs(conns) do c:Disconnect() end
             table.clear(conns)
