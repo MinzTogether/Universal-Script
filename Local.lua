@@ -2007,6 +2007,7 @@ return function(ctx)
                 t.destroy()
                 trackers[p] = nil
             end
+            table.clear(entries)
             if folder then folder:Destroy(); folder = nil end
             hlCount, stopping = 0, false
         end
