@@ -91,6 +91,11 @@ local FADE_OUT_TIME   = BUBBLE_OUT_TIME / 3
 local CONTENT_EDGE    = 2
 
 local uiLocked = false
+local manualLocked = false
+local overlayLocked = false
+local function syncUiLock()
+    uiLocked = manualLocked or overlayLocked
+end
 local Saved
 
 --// ================= ROOT =================
@@ -535,11 +540,17 @@ corner(MainUI, 12)
 local MainUIStroke = stroke(MainUI)
 local MainUIScale = new("UIScale", { Scale = Saved.uiScale }, MainUI)
 
+local isMaximized = false
+
 local function setUIScale(s)
     s = math.clamp(tonumber(s) or 1, 0.6, 1.4)
     Saved.uiScale = s
     MainUIScale.Scale = s
     ToggleUIScale.Scale = s
+    if isMaximized then
+        local viewport = getViewport()
+        MainUI.Size = UDim2.fromOffset(viewport.X / s, viewport.Y / s)
+    end
     saveSettings()
     return s
 end
@@ -873,8 +884,6 @@ do
 end
 
 --// ================= DRAG SUPPORT =================
-local isMaximized = false
-
 local function commitUIState()
     if isMaximized then return end
     local p = MainUI.Position
@@ -891,7 +900,7 @@ do
     local OVERLAY_TRANSPARENCY = 0.45
     local DIALOG_SIZE = UDim2.fromOffset(310, 160)
     local overlayTween, overlayOn = nil, false
-    local owners, frozenScrolls = {}, {}
+    local owners, frozenScrolls, frozenInteractables = {}, {}, {}
 
     local InteractionBlocker = new("Frame", {
         Name = "InteractionBlocker",
@@ -907,27 +916,42 @@ do
     -- Active only sinks button clicks: hover, wheel scroll, TopBar drag and an already focused TextBox
     -- still reached MainUI under the dark layer, so everything inside it is switched off while it is shown.
     local function lockMainUI(on)
-        for _, child in ipairs(MainUI:GetChildren()) do
-            if child:IsA("GuiObject") and child ~= InteractionBlocker then child.Interactable = not on end
-        end
         if on then
+            for _, child in ipairs(MainUI:GetChildren()) do
+                if child:IsA("GuiObject") and child ~= InteractionBlocker then
+                    if frozenInteractables[child] == nil then
+                        frozenInteractables[child] = child.Interactable
+                    end
+                    child.Interactable = false
+                end
+            end
             local box = UserInputService:GetFocusedTextBox()
             if box and box:IsDescendantOf(MainUI) then box:ReleaseFocus() end
             for _, d in ipairs(MainUI:GetDescendants()) do
-                if d:IsA("ScrollingFrame") and d.ScrollingEnabled then
-                    frozenScrolls[d] = true
+                if d:IsA("ScrollingFrame") then
+                    if frozenScrolls[d] == nil then
+                        frozenScrolls[d] = d.ScrollingEnabled
+                    end
                     d.ScrollingEnabled = false
                 end
             end
         else
-            for d in pairs(frozenScrolls) do
+            for d, wasEnabled in pairs(frozenScrolls) do
                 frozenScrolls[d] = nil
-                d.ScrollingEnabled = true
+                if d.Parent and d.ScrollingEnabled == false then
+                    d.ScrollingEnabled = wasEnabled
+                end
+            end
+            for child, wasInteractable in pairs(frozenInteractables) do
+                frozenInteractables[child] = nil
+                if child.Parent and child.Interactable == false then
+                    child.Interactable = wasInteractable
+                end
             end
         end
     end
 
-    function isOverlayOn() return overlayOn end
+    function isOverlayOn() return overlayLocked end
 
     -- One entry per dialog (owner), so repeated show/hide calls can neither leave the layer stuck on nor drop it early.
     function setOverlay(on, owner)
@@ -937,6 +961,8 @@ do
         overlayOn = want
         if overlayTween then overlayTween:Cancel() end
         if want then
+            overlayLocked = true
+            syncUiLock()
             InteractionBlocker.Visible = true
             lockMainUI(true)
             overlayTween = tween(InteractionBlocker, FADE_IN_TIME, { BackgroundTransparency = OVERLAY_TRANSPARENCY }, EASE_QUAD, DIR_OUT)
@@ -946,6 +972,8 @@ do
                 if state == Enum.PlaybackState.Completed and not overlayOn then
                     InteractionBlocker.Visible = false
                     lockMainUI(false)
+                    overlayLocked = false
+                    syncUiLock()
                 end
             end)
         end
@@ -1061,11 +1089,11 @@ do
         local function hide()
             hideToken = hideToken + 1
             local token = hideToken
-            setOverlay(false, Box)
             local sizeTween = tween(Box, BUBBLE_OUT_TIME, { Size = UDim2.new() }, EASE_QUAD, DIR_IN)
             sizeTween.Completed:Connect(function(state)
                 if state ~= Enum.PlaybackState.Completed or token ~= hideToken then return end
                 Box.Visible = false
+                setOverlay(false, Box)
             end)
         end
 
@@ -1157,8 +1185,9 @@ local function toggleMaximize()
         isMaximized = true
         drawIcon(MaximizeIcon, "restore", Theme.Text, Theme.PanelAlt)
         local viewport = getViewport()
+        local s = Saved.uiScale
         tween(MainUI, 0.25, {
-            Size = UDim2.fromOffset(viewport.X, viewport.Y),
+            Size = UDim2.fromOffset(viewport.X / s, viewport.Y / s),
             Position = CENTER,
         }, EASE_QUAD, DIR_OUT)
     end
@@ -2534,7 +2563,10 @@ do
         end,
         isOpen = function() return isOpen end,
         isLocked = function() return uiLocked end,
-        setLocked = function(v) uiLocked = v end,
+        setLocked = function(v)
+            manualLocked = v and true or false
+            syncUiLock()
+        end,
     }
 
     function makeCtx(tab)

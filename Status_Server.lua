@@ -394,6 +394,10 @@ return function(ctx)
             stopAutoRejoin()
             pcall(function()
                 kickConns[#kickConns + 1] = GuiService.ErrorMessageChanged:Connect(function(msg)
+                    if type(msg) ~= "string" then
+                        local ok, current = pcall(GuiService.GetErrorMessage, GuiService)
+                        msg = ok and current or nil
+                    end
                     if type(msg) == "string" and msg ~= "" then triggerAutoRejoin() end
                 end)
             end)

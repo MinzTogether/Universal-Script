@@ -671,7 +671,9 @@ return function(ctx)
             info = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
             tweenInfos[time] = info
         end
-        TweenService:Create(inst, info, props):Play()
+        local tw = TweenService:Create(inst, info, props)
+        tw:Play()
+        return tw
     end
 
     function Core.Label(parent, props)
@@ -1740,7 +1742,7 @@ return function(ctx)
     function Features.CreateEspController(opts)
         local HIGHLIGHT_BUDGET = 31
         local entries, trackers, conns, folder, stopLoop = {}, {}, {}, nil, nil
-        local hlCount, stopping = 0, false
+        local hlCount, stopping, active = 0, false, false
         local syncAll
 
         local function teamColor(p)
@@ -1966,7 +1968,8 @@ return function(ctx)
 
         local C = {}
         function C.start()
-            if folder then return end
+            if active then return end
+            active = true
             folder = new("Folder", { Name = "ElyseraESP" }, GuiRoot)
             for _, p in ipairs(Players:GetPlayers()) do track(p) end
             conns[1] = Players.PlayerAdded:Connect(track)
@@ -1983,7 +1986,9 @@ return function(ctx)
         end
 
         function C.stop()
+            if not active and not folder then return end
             stopping = true
+            active = false
             if stopLoop then stopLoop(); stopLoop = nil end
             for _, c in ipairs(conns) do c:Disconnect() end
             table.clear(conns)
@@ -2016,6 +2021,7 @@ return function(ctx)
             if controller then controller.refreshStyle() end
         end)
         controller = Features.CreateEspController(opts)
+        Core.OnDestroy(controller.stop)
         ui.setEnabled(false)
 
         return Core.BindToggle(Switch, Set, {

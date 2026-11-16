@@ -818,13 +818,13 @@ return function(ctx)
                 local c = src:sub(i, i)
                 if c == "-" and src:sub(i + 1, i + 1) == "-" then
                     local eq = src:match("^%-%-%[(=*)%[", i)
-                    local close = eq and select(2, src:find("%]" .. eq .. "%]", i + 4 + #eq, true))
+                    local close = eq and select(2, src:find("]" .. eq .. "]", i + 4 + #eq, true))
                     local stop = close or ((src:find("\n", i + 2, true) or (n + 1)) - 1)
                     span(cmtHex, src:sub(i, stop))
                     i = stop + 1
                 elseif c == "[" and src:match("^%[(=*)%[", i) then
                     local eq = src:match("^%[(=*)%[", i)
-                    local _, close = src:find("%]" .. eq .. "%]", i + 2 + #eq, true)
+                    local _, close = src:find("]" .. eq .. "]", i + 2 + #eq, true)
                     local stop = close or n
                     span(strHex, src:sub(i, stop))
                     i = stop + 1

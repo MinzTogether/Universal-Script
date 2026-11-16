@@ -773,8 +773,13 @@ return function(ctx)
             return hiddenOk
         end
 
+        local function readProp(inst, prop, hidden)
+            if hidden then return gethiddenproperty(inst, prop) end
+            return inst[prop]
+        end
+
         local function probe(inst, prop, value, hidden)
-            local cur = hidden and gethiddenproperty(inst, prop) or inst[prop]
+            local cur = readProp(inst, prop, hidden)
             if cur == value then return false end
             local now
             if hidden then
@@ -798,7 +803,7 @@ return function(ctx)
         end
 
         local function revert(inst, prop, e)
-            local cur = e[3] and gethiddenproperty(inst, prop) or inst[prop]
+            local cur = readProp(inst, prop, e[3])
             if cur ~= e[2] then return end
             if e[3] then sethiddenproperty(inst, prop, e[1]) else inst[prop] = e[1] end
         end
