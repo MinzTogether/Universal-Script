@@ -1,15 +1,25 @@
+--!nonstrict
+-- Sp1ngAutoClicker v2.0 (by MinzTogether)
+-- Redesigned from the ground up: Impeccable Operate UI, zero-leak lifecycle, deterministic state machine.
+
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
+----- Services -----
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+
+----- Constants & Calibration -----
+local GUI_NAME = "Sp1ngAutoClicker"
+local CAM_BIND_NAME = "Sp1ngTopDownCam"
 
 local HOLD_DEFAULT = 1200
 local TP_Y = 2514
@@ -22,10 +32,10 @@ local LOOP_WAIT = 25 * 60
 local TARGET_SIZE = 80
 local CLICK_OFFSET_X = 37
 local CLICK_OFFSET_Y = 58
-local clickOffset = Vector2.new(CLICK_OFFSET_X, CLICK_OFFSET_Y)
+local OFFSET_LIMIT = 500
 
 local GRID_X0, GRID_Z0, GRID_STEP, GRID_N = 1520, -155, 4, 13
-local GRID_POINTS = {}
+local GRID_POINTS = table.create(GRID_N * GRID_N)
 for j = 0, GRID_N - 1 do
     for i = 0, GRID_N - 1 do
         table.insert(GRID_POINTS, { GRID_X0 + i * GRID_STEP, GRID_Z0 + j * GRID_STEP })
@@ -33,6 +43,7 @@ for j = 0, GRID_N - 1 do
 end
 local POINT_COUNT = #GRID_POINTS
 
+----- Embedded Target Asset (PNG Base64) -----
 local TARGET_FILE = "Sp1ngTarget_v1.png"
 local TARGET_PNG_B64 = [==[
 iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+VemSAAAvAElEQVR42u29yZMcV7bm97uDR0TeBItAwd2qyGIhTNYb5bo22vRSW20Ue61ksif1I0VQrIGGoQjAQLL4kGzWazO1mZa99YV2tZJM/w
@@ -152,11 +163,14 @@ for i = 1, #B64_CHARS do
 end
 
 local function base64Decode(data)
-    data = data:gsub("[^%w%+/=]", "")
+    data = data:gsub("[^%w%+/]", "")
     local out, n = {}, 0
     for i = 1, #data, 4 do
         local c1 = B64_LOOKUP[data:sub(i, i)]
         local c2 = B64_LOOKUP[data:sub(i + 1, i + 1)]
+        if not (c1 and c2) then
+            break
+        end
         local c3 = B64_LOOKUP[data:sub(i + 2, i + 2)]
         local c4 = B64_LOOKUP[data:sub(i + 3, i + 3)]
         local v = c1 * 262144 + c2 * 4096 + (c3 or 0) * 64 + (c4 or 0)
@@ -175,10 +189,11 @@ local function base64Decode(data)
 end
 
 local function loadTargetImage()
+    -- shortcut: custom asset API depends on executor sandbox; falls back to vector reticle when unavailable
     local ok, asset = pcall(function()
         local getAsset = getcustomasset or getsynasset
         if not (writefile and getAsset) then
-            error("executor không hỗ trợ writefile/getcustomasset")
+            error("executor does not support writefile/getcustomasset")
         end
         if not (isfile and isfile(TARGET_FILE)) then
             writefile(TARGET_FILE, base64Decode(TARGET_PNG_B64))
@@ -188,48 +203,61 @@ local function loadTargetImage()
     if ok and type(asset) == "string" and asset ~= "" then
         return asset
     end
-    warn("[Autoclicker] Không tải được ảnh mục tiêu, dùng vòng vẽ bằng code: " .. tostring(asset))
     return nil
 end
 
+----- Impeccable Operate Design Tokens -----
 local THEME = {
-    panelTop = Color3.fromRGB(27, 32, 46),
-    panelBottom = Color3.fromRGB(16, 19, 28),
-    surface = Color3.fromRGB(22, 26, 38),
-    field = Color3.fromRGB(35, 41, 58),
-    line = Color3.fromRGB(55, 63, 87),
-    text = Color3.fromRGB(236, 240, 248),
-    soft = Color3.fromRGB(190, 199, 217),
-    dim = Color3.fromRGB(139, 149, 172),
-    faint = Color3.fromRGB(96, 106, 130),
-    ink = Color3.fromRGB(14, 17, 25),
-    go = Color3.fromRGB(52, 211, 153),
-    stop = Color3.fromRGB(244, 96, 108),
-    warn = Color3.fromRGB(255, 188, 72),
-    ring = Color3.fromRGB(230, 57, 70),
-    mapDone = Color3.fromRGB(72, 146, 196),
+    panelTop = Color3.fromRGB(20, 25, 36),
+    panelBottom = Color3.fromRGB(11, 14, 21),
+    surface = Color3.fromRGB(15, 19, 28),
+    card = Color3.fromRGB(23, 29, 42),
+    field = Color3.fromRGB(28, 35, 50),
+    fieldActive = Color3.fromRGB(36, 45, 64),
+    line = Color3.fromRGB(44, 54, 76),
+    lineSoft = Color3.fromRGB(32, 40, 58),
+    text = Color3.fromRGB(242, 245, 252),
+    soft = Color3.fromRGB(194, 204, 222),
+    dim = Color3.fromRGB(132, 144, 168),
+    faint = Color3.fromRGB(82, 94, 118),
+    ink = Color3.fromRGB(10, 13, 19),
+    go = Color3.fromRGB(16, 185, 129),
+    stop = Color3.fromRGB(239, 68, 68),
+    warn = Color3.fromRGB(245, 158, 11),
+    ring = Color3.fromRGB(239, 68, 68),
+    mapDone = Color3.fromRGB(56, 138, 196),
+    mapPending = Color3.fromRGB(34, 42, 60),
 }
 
 local MODE_ORDER = { "GRID", "HOLD", "CLICK" }
 local MODE_INDEX = { GRID = 1, HOLD = 2, CLICK = 3 }
 local MODE_NAMES = { GRID = "Grid", HOLD = "Hold", CLICK = "Click" }
 local MODE_COLORS = {
-    GRID = Color3.fromRGB(96, 190, 255),
-    HOLD = Color3.fromRGB(184, 148, 255),
-    CLICK = Color3.fromRGB(255, 188, 72),
+    GRID = Color3.fromRGB(56, 189, 248),
+    HOLD = Color3.fromRGB(168, 85, 247),
+    CLICK = Color3.fromRGB(245, 158, 11),
 }
 
-local PANEL_W, PANEL_H = 324, 224
-local MINI_W, MINI_H = 240, 44
-local HEADER_H = 44
-local PAGE_Y, PAGE_H = 44, 122
-local PAD = 14
-local MAP_SIZE = 98
+local TWEEN_FAST = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TWEEN_MED = TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local TWEEN_TOAST_IN = TweenInfo.new(0.26, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TWEEN_TOAST_OUT = TweenInfo.new(0.20, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local TWEEN_PULSE = TweenInfo.new(0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 
+local PANEL_W, PANEL_H = 336, 236
+local MINI_W, MINI_H = 248, 46
+local HEADER_H = 46
+local PAGE_Y, PAGE_H = 46, 130
+local PAD = 14
+local MAP_SIZE = 100
+
+----- Runtime State -----
 local mode = "GRID"
 local clicking = false
+local clickBusy = false
 local holding = false
 local holdPos = nil
+local lastClickPos = nil
 local holdSession = 0
 local holdSeconds = HOLD_DEFAULT
 local gridIndex = 1
@@ -238,14 +266,16 @@ local minimized = false
 local setupOpen = false
 local camLocked = false
 local uiScale = 1
-local dockX, dockY = 12, 76
+local dockX, dockY = 14, 76
 local targetX, targetY = 0, 0
 local activeToast = nil
 local pulsing = false
 
 local connections = {}
+local cellStates = table.create(POINT_COUNT, -1)
 local ui = {}
 
+----- Core Helpers -----
 local function connect(signal, callback)
     local connection = signal:Connect(callback)
     table.insert(connections, connection)
@@ -269,10 +299,11 @@ local function addPill(parent)
     return create("UICorner", { CornerRadius = UDim.new(1, 0) }, parent)
 end
 
-local function addStroke(parent, color, thickness)
+local function addStroke(parent, color, thickness, transparency)
     return create("UIStroke", {
         Color = color,
         Thickness = thickness or 1,
+        Transparency = transparency or 0,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
     }, parent)
 end
@@ -315,24 +346,24 @@ local function makeBox(parent, props)
         Name = props.Name,
         Position = props.Position,
         Size = props.Size,
-        BackgroundColor3 = THEME.field,
+        BackgroundColor3 = THEME.surface,
         BorderSizePixel = 0,
         TextColor3 = THEME.text,
         PlaceholderColor3 = THEME.faint,
         PlaceholderText = props.Placeholder or "",
         Font = Enum.Font.RobotoMono,
         TextSize = 13,
-        ClearTextOnFocus = true,
+        ClearTextOnFocus = false,
         Text = props.Text or "",
         TextXAlignment = Enum.TextXAlignment.Center,
     }, parent)
     addCorner(box, 8)
     local boxStroke = addStroke(box, THEME.line, 1)
     connect(box.Focused, function()
-        boxStroke.Color = MODE_COLORS[mode]
+        TweenService:Create(boxStroke, TWEEN_FAST, { Color = MODE_COLORS[mode] }):Play()
     end)
     connect(box.FocusLost, function()
-        boxStroke.Color = THEME.line
+        TweenService:Create(boxStroke, TWEEN_FAST, { Color = THEME.line }):Play()
     end)
     return box
 end
@@ -359,7 +390,7 @@ local function iconSquare(parent, size, color)
         BorderSizePixel = 0,
     }, parent)
     addCorner(square, 2)
-    addStroke(square, color, 2)
+    addStroke(square, color, 1.8)
     return square
 end
 
@@ -367,7 +398,7 @@ local function addPressFeedback(button, radius)
     local shade = create("Frame", {
         Name = "Shade",
         Size = UDim2.fromScale(1, 1),
-        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundColor3 = Color3.new(1, 1, 1),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
     }, button)
@@ -375,7 +406,8 @@ local function addPressFeedback(button, radius)
     connect(button.InputBegan, function(input)
         local inputType = input.UserInputType
         if inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.Touch then
-            shade.BackgroundTransparency = 0.8
+            shade.BackgroundColor3 = Color3.new(0, 0, 0)
+            shade.BackgroundTransparency = 0.78
             local changed
             changed = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
@@ -385,6 +417,14 @@ local function addPressFeedback(button, radius)
                     end
                 end
             end)
+        elseif inputType == Enum.UserInputType.MouseMovement then
+            shade.BackgroundColor3 = Color3.new(1, 1, 1)
+            shade.BackgroundTransparency = 0.95
+        end
+    end)
+    connect(button.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            shade.BackgroundTransparency = 1
         end
     end)
 end
@@ -426,6 +466,11 @@ local function makeDraggable(handles, getOrigin, onMove, canDrag)
         if not dragging then
             return
         end
+        if canDrag and not canDrag() then
+            dragging = false
+            dragInput = nil
+            return
+        end
         local inputType = input.UserInputType
         if inputType == Enum.UserInputType.MouseMovement or (inputType == Enum.UserInputType.Touch and input == dragInput) then
             local delta = input.Position - dragStart
@@ -440,7 +485,7 @@ local function makeDraggable(handles, getOrigin, onMove, canDrag)
 end
 
 local function formatTime(sec)
-    sec = math.max(0, math.floor(sec))
+    sec = math.max(0, math.floor(sec + 0.5))
     return string.format("%02d:%02d", math.floor(sec / 60), sec % 60)
 end
 
@@ -448,21 +493,23 @@ local function isRunning()
     return clicking or holding
 end
 
-local oldGui = playerGui:FindFirstChild("Sp1ngAutoClicker")
+----- ScreenGui Setup -----
+local oldGui = playerGui:FindFirstChild(GUI_NAME)
 if oldGui then
     oldGui:Destroy()
 end
 
-ui.gui = Instance.new("ScreenGui")
-ui.gui.Name = "Sp1ngAutoClicker"
-ui.gui.ResetOnSpawn = false
-ui.gui.DisplayOrder = 10000
-ui.gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ui.gui.IgnoreGuiInset = true
+ui.gui = create("ScreenGui", {
+    Name = GUI_NAME,
+    ResetOnSpawn = false,
+    DisplayOrder = 10000,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset = true,
+}, playerGui)
+
 pcall(function()
     ui.gui.ScreenInsets = Enum.ScreenInsets.None
 end)
-ui.gui.Parent = playerGui
 
 local function screenSize()
     local size = ui.gui.AbsoluteSize
@@ -470,7 +517,7 @@ local function screenSize()
         return size
     end
     local camera = workspace.CurrentCamera
-    if camera then
+    if camera and camera.ViewportSize.X > 0 then
         return camera.ViewportSize
     end
     return Vector2.new(1280, 720)
@@ -483,12 +530,14 @@ local function clampToScreen(x, y, width, height)
     return math.floor(math.clamp(x, 0, maxX) + 0.5), math.floor(math.clamp(y, 0, maxY) + 0.5)
 end
 
+----- UI Builders -----
 local function buildTarget()
     local screen = screenSize()
     targetX = math.floor(screen.X / 2 - TARGET_SIZE / 2)
     targetY = math.floor(screen.Y * 0.4)
     local image = loadTargetImage()
     local target
+
     if image then
         target = create("ImageLabel", {
             Name = "Target",
@@ -503,44 +552,101 @@ local function buildTarget()
     else
         target = create("Frame", {
             Name = "Target",
-            BackgroundTransparency = 1,
+            BackgroundColor3 = THEME.ink,
+            BackgroundTransparency = 0.72,
             BorderSizePixel = 0,
             Active = true,
             Size = UDim2.fromOffset(TARGET_SIZE, TARGET_SIZE),
             Position = UDim2.fromOffset(targetX, targetY),
         }, ui.gui)
-        local ring = create("Frame", {
-            Name = "Ring",
+        local innerRing = create("Frame", {
+            Name = "InnerRing",
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.new(1, -6, 1, -6),
+            Size = UDim2.new(1, -12, 1, -12),
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
         }, target)
-        addPill(ring)
-        addStroke(ring, THEME.ring, 2)
+        addPill(innerRing)
+        addStroke(innerRing, THEME.ring, 1.5, 0.25)
+
         create("Frame", {
             Name = "LineH",
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.new(1, -10, 0, 1),
+            Size = UDim2.new(1, -18, 0, 1),
             BackgroundColor3 = THEME.text,
-            BackgroundTransparency = 0.2,
+            BackgroundTransparency = 0.25,
             BorderSizePixel = 0,
         }, target)
         create("Frame", {
             Name = "LineV",
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.new(0, 1, 1, -10),
+            Size = UDim2.new(0, 1, 1, -18),
             BackgroundColor3 = THEME.text,
-            BackgroundTransparency = 0.2,
+            BackgroundTransparency = 0.25,
             BorderSizePixel = 0,
         }, target)
+        local centerDot = create("Frame", {
+            Name = "CenterDot",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(6, 6),
+            BackgroundColor3 = THEME.go,
+            BorderSizePixel = 0,
+        }, target)
+        addPill(centerDot)
     end
+
     addPill(target)
     ui.targetStroke = addStroke(target, MODE_COLORS.GRID, 2)
     ui.target = target
+end
+
+local function buildStepperControl(parent, x, labelText, width, boxWidth, initialText)
+    if labelText and labelText ~= "" then
+        makeLabel(parent, {
+            Position = UDim2.fromOffset(x, 0),
+            Size = UDim2.fromOffset(14, 28),
+            Text = labelText,
+            Font = Enum.Font.GothamBold,
+            TextColor3 = THEME.dim,
+        })
+        x = x + 15
+    end
+    local minus = makeButton(parent, {
+        Name = (labelText or "Val") .. "Minus",
+        Position = UDim2.fromOffset(x, 0),
+        Size = UDim2.fromOffset(width, 28),
+        BackgroundColor3 = THEME.field,
+    })
+    addCorner(minus, 8)
+    addStroke(minus, THEME.lineSoft, 1)
+    iconBar(minus, 9, 2, 0, THEME.soft)
+    addPressFeedback(minus, 8)
+
+    local box = makeBox(parent, {
+        Name = (labelText or "Val") .. "Box",
+        Position = UDim2.fromOffset(x + width + 3, 0),
+        Size = UDim2.fromOffset(boxWidth, 28),
+        Text = tostring(initialText),
+        Placeholder = tostring(initialText),
+    })
+
+    local plus = makeButton(parent, {
+        Name = (labelText or "Val") .. "Plus",
+        Position = UDim2.fromOffset(x + width + 3 + boxWidth + 3, 0),
+        Size = UDim2.fromOffset(width, 28),
+        BackgroundColor3 = THEME.field,
+    })
+    addCorner(plus, 8)
+    addStroke(plus, THEME.lineSoft, 1)
+    iconBar(plus, 9, 2, 0, THEME.soft)
+    iconBar(plus, 2, 9, 0, THEME.soft)
+    addPressFeedback(plus, 8)
+
+    return box, minus, plus
 end
 
 local function buildPanel()
@@ -552,7 +658,7 @@ local function buildPanel()
         Active = true,
     }, ui.gui)
     addCorner(full, 14)
-    addStroke(full, THEME.line, 1)
+    ui.panelStroke = addStroke(full, THEME.line, 1)
     create("UIGradient", {
         Rotation = 90,
         Color = ColorSequence.new(THEME.panelTop, THEME.panelBottom),
@@ -560,6 +666,7 @@ local function buildPanel()
     ui.fullScale = create("UIScale", { Scale = 1 }, full)
     ui.full = full
 
+    -- Header Bar
     local header = create("Frame", {
         Name = "Header",
         Size = UDim2.fromOffset(PANEL_W, HEADER_H),
@@ -567,9 +674,21 @@ local function buildPanel()
         BorderSizePixel = 0,
     }, full)
 
+    ui.statusHalo = create("Frame", {
+        Name = "Halo",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromOffset(PAD + 5, 23),
+        Size = UDim2.fromOffset(16, 16),
+        BackgroundColor3 = THEME.dim,
+        BackgroundTransparency = 0.82,
+        BorderSizePixel = 0,
+    }, header)
+    addPill(ui.statusHalo)
+
     ui.statusDot = create("Frame", {
         Name = "Dot",
-        Position = UDim2.fromOffset(PAD, 18),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromOffset(PAD + 5, 23),
         Size = UDim2.fromOffset(8, 8),
         BackgroundColor3 = THEME.dim,
         BorderSizePixel = 0,
@@ -578,16 +697,16 @@ local function buildPanel()
 
     makeLabel(header, {
         Name = "Title",
-        Position = UDim2.fromOffset(PAD + 18, 6),
-        Size = UDim2.fromOffset(130, 18),
+        Position = UDim2.fromOffset(PAD + 20, 7),
+        Size = UDim2.fromOffset(145, 18),
         Text = "Autoclicker",
         Font = Enum.Font.GothamBold,
         TextSize = 15,
     })
     makeLabel(header, {
         Name = "Credit",
-        Position = UDim2.fromOffset(PAD + 18, 24),
-        Size = UDim2.fromOffset(130, 13),
+        Position = UDim2.fromOffset(PAD + 20, 25),
+        Size = UDim2.fromOffset(145, 13),
         Text = "by MinzTogether",
         TextSize = 11,
         TextColor3 = THEME.dim,
@@ -595,7 +714,7 @@ local function buildPanel()
 
     ui.dragZone = create("Frame", {
         Name = "DragZone",
-        Size = UDim2.fromOffset(190, HEADER_H),
+        Size = UDim2.fromOffset(198, HEADER_H),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Active = true,
@@ -603,8 +722,8 @@ local function buildPanel()
 
     ui.setupBtn = makeButton(header, {
         Name = "Setup",
-        Position = UDim2.fromOffset(196, 9),
-        Size = UDim2.fromOffset(52, 26),
+        Position = UDim2.fromOffset(PANEL_W - PAD - 28 - 6 - 28 - 6 - 56, 9),
+        Size = UDim2.fromOffset(56, 28),
         Text = "Setup",
         Font = Enum.Font.GothamMedium,
         TextSize = 12,
@@ -612,32 +731,35 @@ local function buildPanel()
     })
     addPill(ui.setupBtn)
     ui.setupStroke = addStroke(ui.setupBtn, THEME.line, 1)
-    addPressFeedback(ui.setupBtn, 13)
+    addPressFeedback(ui.setupBtn, 14)
 
     ui.minBtn = makeButton(header, {
         Name = "Minimize",
-        Position = UDim2.fromOffset(254, 9),
-        Size = UDim2.fromOffset(26, 26),
+        Position = UDim2.fromOffset(PANEL_W - PAD - 28 - 6 - 28, 9),
+        Size = UDim2.fromOffset(28, 28),
     })
     addPill(ui.minBtn)
+    addStroke(ui.minBtn, THEME.lineSoft, 1)
     iconBar(ui.minBtn, 10, 2, 0, THEME.soft)
-    addPressFeedback(ui.minBtn, 13)
+    addPressFeedback(ui.minBtn, 14)
 
     ui.closeBtn = makeButton(header, {
         Name = "Close",
-        Position = UDim2.fromOffset(286, 9),
-        Size = UDim2.fromOffset(26, 26),
+        Position = UDim2.fromOffset(PANEL_W - PAD - 28, 9),
+        Size = UDim2.fromOffset(28, 28),
     })
     addPill(ui.closeBtn)
-    iconBar(ui.closeBtn, 12, 2, 45, THEME.soft)
-    iconBar(ui.closeBtn, 12, 2, -45, THEME.soft)
-    addPressFeedback(ui.closeBtn, 13)
+    addStroke(ui.closeBtn, THEME.lineSoft, 1)
+    iconBar(ui.closeBtn, 11, 2, 45, THEME.soft)
+    iconBar(ui.closeBtn, 11, 2, -45, THEME.soft)
+    addPressFeedback(ui.closeBtn, 14)
 
+    -- Progress Track
     local track = create("Frame", {
         Name = "Progress",
-        Position = UDim2.fromOffset(0, HEADER_H - 3),
-        Size = UDim2.fromOffset(PANEL_W, 3),
-        BackgroundColor3 = THEME.line,
+        Position = UDim2.fromOffset(0, HEADER_H - 2),
+        Size = UDim2.fromOffset(PANEL_W, 2),
+        BackgroundColor3 = THEME.lineSoft,
         BorderSizePixel = 0,
     }, full)
     ui.fill = create("Frame", {
@@ -647,6 +769,7 @@ local function buildPanel()
         BorderSizePixel = 0,
     }, track)
 
+    -- Run Page (Dashboard)
     ui.runPage = create("Frame", {
         Name = "RunPage",
         Position = UDim2.fromOffset(0, PAGE_Y),
@@ -658,9 +781,9 @@ local function buildPanel()
     ui.modePill = makeLabel(ui.runPage, {
         Name = "Mode",
         Position = UDim2.fromOffset(PAD, 14),
-        Size = UDim2.fromOffset(88, 20),
+        Size = UDim2.fromOffset(82, 22),
         BackgroundTransparency = 0,
-        BackgroundColor3 = THEME.field,
+        BackgroundColor3 = THEME.card,
         Font = Enum.Font.GothamBold,
         TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Center,
@@ -669,39 +792,59 @@ local function buildPanel()
     addPill(ui.modePill)
     ui.modeStroke = addStroke(ui.modePill, MODE_COLORS.GRID, 1)
 
+    ui.metaBadge = makeLabel(ui.runPage, {
+        Name = "MetaBadge",
+        Position = UDim2.fromOffset(PAD + 88, 14),
+        Size = UDim2.fromOffset(104, 22),
+        BackgroundTransparency = 0,
+        BackgroundColor3 = THEME.surface,
+        Font = Enum.Font.RobotoMono,
+        TextSize = 11,
+        TextColor3 = THEME.dim,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Text = "+37, +58 px",
+    })
+    addPill(ui.metaBadge)
+    addStroke(ui.metaBadge, THEME.lineSoft, 1)
+
     ui.stateLabel = makeLabel(ui.runPage, {
         Name = "State",
-        Position = UDim2.fromOffset(PAD, 40),
-        Size = UDim2.fromOffset(188, 26),
+        Position = UDim2.fromOffset(PAD, 42),
+        Size = UDim2.fromOffset(194, 28),
         Font = Enum.Font.GothamBold,
-        TextSize = 20,
+        TextSize = 21,
         Text = "Idle",
     })
+
     ui.detailLabel = makeLabel(ui.runPage, {
         Name = "Detail",
-        Position = UDim2.fromOffset(PAD, 68),
-        Size = UDim2.fromOffset(188, 16),
+        Position = UDim2.fromOffset(PAD, 71),
+        Size = UDim2.fromOffset(194, 18),
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
         TextColor3 = THEME.soft,
         Text = "",
     })
+
     ui.hintLabel = makeLabel(ui.runPage, {
         Name = "Hint",
-        Position = UDim2.fromOffset(PAD, 94),
-        Size = UDim2.fromOffset(188, 16),
+        Position = UDim2.fromOffset(PAD, 95),
+        Size = UDim2.fromOffset(194, 18),
         Font = Enum.Font.Gotham,
         TextSize = 11,
         TextColor3 = THEME.dim,
         Text = "",
     })
 
+    -- Right Radar / Telemetry Card
     ui.mapFrame = create("Frame", {
         Name = "Map",
-        Position = UDim2.fromOffset(PANEL_W - PAD - MAP_SIZE, 12),
+        Position = UDim2.fromOffset(PANEL_W - PAD - MAP_SIZE, 14),
         Size = UDim2.fromOffset(MAP_SIZE, MAP_SIZE),
         BackgroundColor3 = THEME.surface,
         BorderSizePixel = 0,
     }, ui.runPage)
-    addCorner(ui.mapFrame, 8)
+    addCorner(ui.mapFrame, 10)
     addStroke(ui.mapFrame, THEME.line, 1)
 
     ui.cellHolder = create("Frame", {
@@ -710,23 +853,26 @@ local function buildPanel()
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
     }, ui.mapFrame)
-    ui.cells = {}
+
+    ui.cells = table.create(POINT_COUNT)
     for i = 1, POINT_COUNT do
         local col = (i - 1) % GRID_N
         local row = math.floor((i - 1) / GRID_N)
-        ui.cells[i] = create("Frame", {
+        local cell = create("Frame", {
             Name = "Cell" .. i,
-            Position = UDim2.fromOffset(4 + col * 7, 4 + row * 7),
+            Position = UDim2.fromOffset(5 + col * 7, 5 + row * 7),
             Size = UDim2.fromOffset(6, 6),
-            BackgroundColor3 = THEME.line,
+            BackgroundColor3 = THEME.mapPending,
             BorderSizePixel = 0,
         }, ui.cellHolder)
+        addCorner(cell, 1)
+        ui.cells[i] = cell
     end
 
     ui.readoutValue = makeLabel(ui.mapFrame, {
         Name = "ReadoutValue",
-        Position = UDim2.fromOffset(0, 28),
-        Size = UDim2.fromOffset(MAP_SIZE, 26),
+        Position = UDim2.fromOffset(4, 26),
+        Size = UDim2.fromOffset(MAP_SIZE - 8, 28),
         Font = Enum.Font.RobotoMono,
         TextSize = 20,
         TextXAlignment = Enum.TextXAlignment.Center,
@@ -735,16 +881,17 @@ local function buildPanel()
     })
     ui.readoutCaption = makeLabel(ui.mapFrame, {
         Name = "ReadoutCaption",
-        Position = UDim2.fromOffset(0, 56),
-        Size = UDim2.fromOffset(MAP_SIZE, 14),
-        Font = Enum.Font.Gotham,
-        TextSize = 11,
+        Position = UDim2.fromOffset(4, 56),
+        Size = UDim2.fromOffset(MAP_SIZE - 8, 16),
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
         TextColor3 = THEME.dim,
         TextXAlignment = Enum.TextXAlignment.Center,
         Text = "",
         Visible = false,
     })
 
+    -- Setup Page (Configuration)
     ui.setupPage = create("Frame", {
         Name = "SetupPage",
         Position = UDim2.fromOffset(0, PAGE_Y),
@@ -758,21 +905,23 @@ local function buildPanel()
         Name = "Modes",
         Position = UDim2.fromOffset(PAD, 10),
         Size = UDim2.fromOffset(PANEL_W - PAD * 2, 34),
-        BackgroundColor3 = THEME.field,
+        BackgroundColor3 = THEME.surface,
         BorderSizePixel = 0,
     }, ui.setupPage)
     addCorner(seg, 10)
     addStroke(seg, THEME.line, 1)
+
     ui.indicator = create("Frame", {
         Name = "Indicator",
         Position = UDim2.new(0, 3, 0, 3),
         Size = UDim2.new(1 / 3, -6, 1, -6),
         BackgroundColor3 = MODE_COLORS.GRID,
-        BackgroundTransparency = 0.82,
+        BackgroundTransparency = 0.80,
         BorderSizePixel = 0,
     }, seg)
     addCorner(ui.indicator, 8)
     ui.indicatorStroke = addStroke(ui.indicator, MODE_COLORS.GRID, 1)
+
     ui.segButtons = {}
     for index, name in ipairs(MODE_ORDER) do
         ui.segButtons[name] = makeButton(seg, {
@@ -795,123 +944,83 @@ local function buildPanel()
         }, ui.setupPage)
     end
 
+    -- Grid Setup Row (with - / + steppers for mobile convenience)
     ui.gridRow = makeRow("GridRow", 54)
     makeLabel(ui.gridRow, {
         Position = UDim2.fromOffset(PAD, 0),
-        Size = UDim2.fromOffset(110, 28),
+        Size = UDim2.fromOffset(92, 28),
         Text = "Start point",
         TextColor3 = THEME.soft,
     })
-    ui.idxBox = makeBox(ui.gridRow, {
-        Name = "StartPoint",
-        Position = UDim2.fromOffset(130, 0),
-        Size = UDim2.fromOffset(64, 28),
-        Text = "1",
-        Placeholder = "1",
-    })
+    ui.idxBox, ui.idxMinus, ui.idxPlus = buildStepperControl(ui.gridRow, 112, nil, 26, 54, 1)
     makeLabel(ui.gridRow, {
-        Position = UDim2.fromOffset(204, 0),
-        Size = UDim2.fromOffset(100, 28),
+        Position = UDim2.fromOffset(230, 0),
+        Size = UDim2.fromOffset(92, 28),
         Text = "of " .. POINT_COUNT,
         TextColor3 = THEME.dim,
     })
 
+    -- Hold Setup Row (with -60s / +60s steppers)
     ui.holdRow = makeRow("HoldRow", 54)
     ui.holdRow.Visible = false
     makeLabel(ui.holdRow, {
         Position = UDim2.fromOffset(PAD, 0),
-        Size = UDim2.fromOffset(110, 28),
+        Size = UDim2.fromOffset(92, 28),
         Text = "Hold for",
         TextColor3 = THEME.soft,
     })
-    ui.holdBox = makeBox(ui.holdRow, {
-        Name = "HoldSeconds",
-        Position = UDim2.fromOffset(130, 0),
-        Size = UDim2.fromOffset(64, 28),
-        Text = tostring(HOLD_DEFAULT),
-        Placeholder = tostring(HOLD_DEFAULT),
-    })
+    ui.holdBox, ui.holdMinus, ui.holdPlus = buildStepperControl(ui.holdRow, 112, nil, 26, 54, HOLD_DEFAULT)
     makeLabel(ui.holdRow, {
-        Position = UDim2.fromOffset(204, 0),
-        Size = UDim2.fromOffset(100, 28),
+        Position = UDim2.fromOffset(230, 0),
+        Size = UDim2.fromOffset(92, 28),
         Text = "seconds",
         TextColor3 = THEME.dim,
     })
 
+    -- Click Setup Row
     ui.clickRow = makeRow("ClickRow", 54)
     ui.clickRow.Visible = false
     makeLabel(ui.clickRow, {
         Position = UDim2.fromOffset(PAD, 0),
         Size = UDim2.fromOffset(PANEL_W - PAD * 2, 28),
-        Text = "Clicks once per frame at the ring",
+        Text = "Clicks once per frame at the target ring",
         TextColor3 = THEME.soft,
     })
 
-    local offsetRow = makeRow("OffsetRow", 90)
+    -- Offset X/Y Row
+    local offsetRow = makeRow("OffsetRow", 92)
     makeLabel(offsetRow, {
         Position = UDim2.fromOffset(PAD, 0),
-        Size = UDim2.fromOffset(46, 28),
+        Size = UDim2.fromOffset(48, 28),
         Text = "Offset",
         TextColor3 = THEME.soft,
     })
+    ui.offXBox, ui.offXMinus, ui.offXPlus = buildStepperControl(offsetRow, 64, "X", 26, 44, CLICK_OFFSET_X)
+    ui.offYBox, ui.offYMinus, ui.offYPlus = buildStepperControl(offsetRow, 194, "Y", 26, 44, CLICK_OFFSET_Y)
 
-    local function makeStepper(x, axis, initial)
-        makeLabel(offsetRow, {
-            Position = UDim2.fromOffset(x, 0),
-            Size = UDim2.fromOffset(12, 28),
-            Text = axis,
-            Font = Enum.Font.GothamBold,
-            TextColor3 = THEME.dim,
-        })
-        local minus = makeButton(offsetRow, {
-            Name = axis .. "Minus",
-            Position = UDim2.fromOffset(x + 14, 0),
-            Size = UDim2.fromOffset(26, 28),
-        })
-        addCorner(minus, 8)
-        iconBar(minus, 10, 2, 0, THEME.soft)
-        addPressFeedback(minus, 8)
-        local box = makeBox(offsetRow, {
-            Name = axis .. "Offset",
-            Position = UDim2.fromOffset(x + 42, 0),
-            Size = UDim2.fromOffset(42, 28),
-            Text = tostring(initial),
-            Placeholder = "0",
-        })
-        local plus = makeButton(offsetRow, {
-            Name = axis .. "Plus",
-            Position = UDim2.fromOffset(x + 86, 0),
-            Size = UDim2.fromOffset(26, 28),
-        })
-        addCorner(plus, 8)
-        iconBar(plus, 10, 2, 0, THEME.soft)
-        iconBar(plus, 2, 10, 0, THEME.soft)
-        addPressFeedback(plus, 8)
-        return box, minus, plus
-    end
-
-    ui.offXBox, ui.offXMinus, ui.offXPlus = makeStepper(62, "X", CLICK_OFFSET_X)
-    ui.offYBox, ui.offYMinus, ui.offYPlus = makeStepper(184, "Y", CLICK_OFFSET_Y)
-
+    -- Primary Action Buttons
+    local btnW = math.floor((PANEL_W - PAD * 2 - 10) / 2)
     ui.startBtn = makeButton(full, {
         Name = "Start",
-        Position = UDim2.fromOffset(PAD, 174),
-        Size = UDim2.fromOffset(143, 38),
+        Position = UDim2.fromOffset(PAD, 184),
+        Size = UDim2.fromOffset(btnW, 38),
         Text = "Start",
         TextSize = 14,
     })
-    addCorner(ui.startBtn, 11)
-    addPressFeedback(ui.startBtn, 11)
+    addCorner(ui.startBtn, 10)
+    ui.startStroke = addStroke(ui.startBtn, THEME.line, 1)
+    addPressFeedback(ui.startBtn, 10)
 
     ui.stopBtn = makeButton(full, {
         Name = "Stop",
-        Position = UDim2.fromOffset(PAD + 143 + 10, 174),
-        Size = UDim2.fromOffset(143, 38),
+        Position = UDim2.fromOffset(PAD + btnW + 10, 184),
+        Size = UDim2.fromOffset(btnW, 38),
         Text = "Stop",
         TextSize = 14,
     })
-    addCorner(ui.stopBtn, 11)
-    addPressFeedback(ui.stopBtn, 11)
+    addCorner(ui.stopBtn, 10)
+    ui.stopStroke = addStroke(ui.stopBtn, THEME.line, 1)
+    addPressFeedback(ui.stopBtn, 10)
 end
 
 local function buildMini()
@@ -934,7 +1043,8 @@ local function buildMini()
 
     ui.miniDot = create("Frame", {
         Name = "Dot",
-        Position = UDim2.fromOffset(PAD, 18),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromOffset(PAD + 4, 22),
         Size = UDim2.fromOffset(8, 8),
         BackgroundColor3 = THEME.dim,
         BorderSizePixel = 0,
@@ -944,13 +1054,14 @@ local function buildMini()
     ui.miniLabel = makeLabel(mini, {
         Name = "State",
         Position = UDim2.fromOffset(PAD + 16, 0),
-        Size = UDim2.fromOffset(98, MINI_H - 3),
+        Size = UDim2.fromOffset(104, MINI_H - 4),
+        Font = Enum.Font.GothamBold,
         Text = "Idle",
     })
 
     ui.miniDrag = create("Frame", {
         Name = "DragZone",
-        Size = UDim2.fromOffset(128, MINI_H),
+        Size = UDim2.fromOffset(134, MINI_H),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Active = true,
@@ -958,8 +1069,8 @@ local function buildMini()
 
     ui.miniToggle = makeButton(mini, {
         Name = "Toggle",
-        Position = UDim2.fromOffset(132, 9),
-        Size = UDim2.fromOffset(58, 26),
+        Position = UDim2.fromOffset(138, 9),
+        Size = UDim2.fromOffset(62, 26),
         Text = "Start",
         TextSize = 12,
     })
@@ -972,14 +1083,15 @@ local function buildMini()
         Size = UDim2.fromOffset(26, 26),
     })
     addPill(ui.miniExpand)
+    addStroke(ui.miniExpand, THEME.lineSoft, 1)
     iconSquare(ui.miniExpand, 10, THEME.soft)
     addPressFeedback(ui.miniExpand, 13)
 
     local track = create("Frame", {
         Name = "Progress",
-        Position = UDim2.fromOffset(14, MINI_H - 4),
-        Size = UDim2.fromOffset(MINI_W - 28, 3),
-        BackgroundColor3 = THEME.line,
+        Position = UDim2.fromOffset(14, MINI_H - 3),
+        Size = UDim2.fromOffset(MINI_W - 28, 2),
+        BackgroundColor3 = THEME.lineSoft,
         BorderSizePixel = 0,
     }, mini)
     ui.miniFill = create("Frame", {
@@ -990,6 +1102,7 @@ local function buildMini()
     }, track)
 end
 
+----- Layout & Viewport Clamping -----
 local function panelSize()
     if minimized then
         return Vector2.new(MINI_W * uiScale, MINI_H * uiScale)
@@ -1011,7 +1124,7 @@ end
 
 local function applyScale()
     local screen = screenSize()
-    uiScale = math.clamp(math.min(screen.X / 760, screen.Y / 440), 0.7, 1)
+    uiScale = math.clamp(math.min(screen.X / 760, screen.Y / 440), 0.72, 1)
     ui.fullScale.Scale = uiScale
     ui.miniScale.Scale = uiScale
 end
@@ -1022,6 +1135,7 @@ local function keepOnScreen()
     placeTarget(clampToScreen(targetX, targetY, TARGET_SIZE, TARGET_SIZE))
 end
 
+----- Notifications & Telemetry Updates -----
 local function notify(title, body, tone, duration)
     if activeToast then
         activeToast:Destroy()
@@ -1031,12 +1145,13 @@ local function notify(title, body, tone, duration)
         Name = "Toast",
         AnchorPoint = Vector2.new(0.5, 0),
         Position = UDim2.new(0.5, 0, 0, -72),
-        Size = UDim2.fromOffset(276, 56),
+        Size = UDim2.fromOffset(284, 56),
         BackgroundColor3 = THEME.panelTop,
         BorderSizePixel = 0,
     }, ui.gui)
     addCorner(toast, 12)
     addStroke(toast, THEME.line, 1)
+
     local accent = create("Frame", {
         Name = "Accent",
         Position = UDim2.fromOffset(12, 14),
@@ -1045,10 +1160,11 @@ local function notify(title, body, tone, duration)
         BorderSizePixel = 0,
     }, toast)
     addPill(accent)
+
     makeLabel(toast, {
         Name = "Title",
         Position = UDim2.fromOffset(26, 9),
-        Size = UDim2.fromOffset(240, 18),
+        Size = UDim2.fromOffset(246, 18),
         Text = title,
         Font = Enum.Font.GothamBold,
         TextSize = 13,
@@ -1056,24 +1172,28 @@ local function notify(title, body, tone, duration)
     makeLabel(toast, {
         Name = "Body",
         Position = UDim2.fromOffset(26, 28),
-        Size = UDim2.fromOffset(240, 16),
+        Size = UDim2.fromOffset(246, 16),
         Text = body,
-        TextColor3 = THEME.dim,
+        TextColor3 = THEME.soft,
     })
+
     activeToast = toast
-    TweenService:Create(toast, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    TweenService:Create(toast, TWEEN_TOAST_IN, {
         Position = UDim2.new(0.5, 0, 0, 14),
     }):Play()
+
     task.delay(duration or 3.5, function()
         if activeToast ~= toast or not toast.Parent then
             return
         end
         activeToast = nil
-        local tween = TweenService:Create(toast, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+        local tween = TweenService:Create(toast, TWEEN_TOAST_OUT, {
             Position = UDim2.new(0.5, 0, 0, -72),
         })
         tween.Completed:Connect(function()
-            toast:Destroy()
+            if toast.Parent then
+                toast:Destroy()
+            end
         end)
         tween:Play()
     end)
@@ -1092,11 +1212,10 @@ local function setStatus(state, detail, short, ratio, tone)
     ui.detailLabel.Text = detail
     ui.miniLabel.Text = short
     ui.statusDot.BackgroundColor3 = tone
+    ui.statusHalo.BackgroundColor3 = tone
     ui.miniDot.BackgroundColor3 = tone
     setProgress(ratio, tone)
 end
-
-local cellStates = {}
 
 local function renderMap(done, current)
     for i = 1, POINT_COUNT do
@@ -1114,7 +1233,7 @@ local function renderMap(done, current)
             elseif wanted == 1 then
                 cell.BackgroundColor3 = THEME.mapDone
             else
-                cell.BackgroundColor3 = THEME.line
+                cell.BackgroundColor3 = THEME.mapPending
             end
         end
     end
@@ -1122,25 +1241,35 @@ end
 
 local function setReadout(value, caption)
     ui.readoutValue.Text = value
-    ui.readoutCaption.Text = caption
+    ui.readoutCaption.Text = string.upper(caption)
 end
 
-local function styleAction(button, lit, color)
+local function updateMetaBadge()
+    if mode == "GRID" then
+        local pt = GRID_POINTS[gridIndex] or GRID_POINTS[1]
+        ui.metaBadge.Text = string.format("%d, %d", pt[1], pt[2])
+    else
+        ui.metaBadge.Text = string.format("%+d, %+d px", clickOffset.X, clickOffset.Y)
+    end
+end
+
+local function styleAction(button, stroke, lit, color)
     if lit then
         button.BackgroundColor3 = color
         button.TextColor3 = THEME.ink
+        stroke.Color = color
+        stroke.Transparency = 0.2
     else
         button.BackgroundColor3 = THEME.field
         button.TextColor3 = THEME.faint
+        stroke.Color = THEME.lineSoft
+        stroke.Transparency = 0
     end
 end
 
 local function applyTargetLook()
-    if isRunning() then
-        ui.targetStroke.Color = THEME.go
-    else
-        ui.targetStroke.Color = MODE_COLORS[mode]
-    end
+    local targetColor = isRunning() and THEME.go or MODE_COLORS[mode]
+    TweenService:Create(ui.targetStroke, TWEEN_FAST, { Color = targetColor }):Play()
 end
 
 local function setPulse(on)
@@ -1158,24 +1287,27 @@ local function setPulse(on)
     if not on then
         ui.statusDot.BackgroundTransparency = 0
         ui.miniDot.BackgroundTransparency = 0
+        ui.statusHalo.BackgroundTransparency = 0.82
     end
 end
 
 local function refreshControls()
     local running = isRunning()
-    styleAction(ui.startBtn, not running, THEME.go)
-    styleAction(ui.stopBtn, running, THEME.stop)
+    styleAction(ui.startBtn, ui.startStroke, not running, THEME.go)
+    styleAction(ui.stopBtn, ui.stopStroke, running, THEME.stop)
     ui.miniToggle.Text = running and "Stop" or "Start"
-    styleAction(ui.miniToggle, true, running and THEME.stop or THEME.go)
+    ui.miniToggle.BackgroundColor3 = running and THEME.stop or THEME.go
+    ui.miniToggle.TextColor3 = THEME.ink
     for _, button in pairs(ui.segButtons) do
         button.TextTransparency = running and 0.55 or 0
     end
-    ui.hintLabel.Text = running and "Stop to move the ring." or "Drag the ring to aim."
+    ui.hintLabel.Text = running and "Stop to unlock the target ring." or "Drag the target ring to aim."
     applyTargetLook()
     setPulse(running)
 end
 
 local function refreshIdle()
+    updateMetaBadge()
     if isRunning() then
         return
     end
@@ -1213,7 +1345,7 @@ local function applyMode()
     for name, button in pairs(ui.segButtons) do
         button.TextColor3 = name == mode and color or THEME.dim
     end
-    TweenService:Create(ui.indicator, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    TweenService:Create(ui.indicator, TWEEN_MED, {
         Position = UDim2.new((MODE_INDEX[mode] - 1) / 3, 3, 0, 3),
     }):Play()
     ui.gridRow.Visible = mode == "GRID"
@@ -1242,54 +1374,89 @@ local function setMinimized(value)
     keepOnScreen()
 end
 
+----- Input Parsers & Steppers -----
+local function setGridIndex(n)
+    gridIndex = math.clamp(math.floor(n), 1, POINT_COUNT)
+    ui.idxBox.Text = tostring(gridIndex)
+    updateMetaBadge()
+end
+
 local function readGridIndex()
     local n = tonumber(ui.idxBox.Text)
     if n and n == n then
-        gridIndex = math.clamp(math.floor(n), 1, POINT_COUNT)
+        setGridIndex(n)
+    else
+        ui.idxBox.Text = tostring(gridIndex)
     end
-    ui.idxBox.Text = tostring(gridIndex)
     return gridIndex
 end
 
-local function setGridIndex(n)
-    gridIndex = n
-    ui.idxBox.Text = tostring(n)
+local function nudgeGridIndex(delta)
+    if isRunning() then
+        return
+    end
+    readGridIndex()
+    setGridIndex(gridIndex + delta)
+    refreshIdle()
+end
+
+local function setHoldDuration(n)
+    holdSeconds = math.clamp(math.floor(n), 1, 86400)
+    ui.holdBox.Text = tostring(holdSeconds)
 end
 
 local function readHoldDuration()
     local n = tonumber(ui.holdBox.Text)
     if n and n == n and n >= 1 and n < math.huge then
-        holdSeconds = math.floor(n)
+        setHoldDuration(n)
+    else
+        ui.holdBox.Text = tostring(holdSeconds)
     end
-    ui.holdBox.Text = tostring(holdSeconds)
     return holdSeconds
 end
+
+local function nudgeHoldDuration(delta)
+    if isRunning() then
+        return
+    end
+    readHoldDuration()
+    setHoldDuration(math.max(10, holdSeconds + delta))
+    refreshIdle()
+end
+
+local clickOffset = Vector2.new(CLICK_OFFSET_X, CLICK_OFFSET_Y)
 
 local function applyOffset()
     local x = tonumber(ui.offXBox.Text)
     local y = tonumber(ui.offYBox.Text)
-    if not (x and x == x and math.abs(x) <= 500) then
+    if not (x and x == x and math.abs(x) <= OFFSET_LIMIT) then
         x = clickOffset.X
+    else
+        x = math.floor(x)
     end
-    if not (y and y == y and math.abs(y) <= 500) then
+    if not (y and y == y and math.abs(y) <= OFFSET_LIMIT) then
         y = clickOffset.Y
+    else
+        y = math.floor(y)
     end
     clickOffset = Vector2.new(x, y)
     ui.offXBox.Text = tostring(x)
     ui.offYBox.Text = tostring(y)
+    updateMetaBadge()
 end
 
 local function nudgeOffset(axis, amount)
     applyOffset()
     local x, y = clickOffset.X, clickOffset.Y
     if axis == "X" then
-        x = math.clamp(x + amount, -500, 500)
+        x = math.clamp(x + amount, -OFFSET_LIMIT, OFFSET_LIMIT)
     else
-        y = math.clamp(y + amount, -500, 500)
+        y = math.clamp(y + amount, -OFFSET_LIMIT, OFFSET_LIMIT)
     end
     clickOffset = Vector2.new(x, y)
     ui.offXBox.Text = tostring(x)
     ui.offYBox.Text = tostring(y)
+    updateMetaBadge()
 end
 
 local function getTargetCenter()
@@ -1301,24 +1468,29 @@ local function getTargetPos()
 end
 
 local function setTargetSolid(solid)
+    local token = holdSession
     if not solid then
-        ui.cancelTargetDrag()
+        if ui.cancelTargetDrag then
+            ui.cancelTargetDrag()
+        end
         ui.target.Active = false
         ui.full.Active = false
         return
     end
-    task.delay(0.2, function()
-        if not isRunning() then
+    task.delay(0.15, function()
+        if holdSession == token and not isRunning() and ui.gui.Parent then
             ui.target.Active = true
             ui.full.Active = true
         end
     end)
 end
 
+----- Input Dispatch & Camera Lock -----
 local function mouseUp()
-    if holdPos then
-        local p = holdPos
-        holdPos = nil
+    local p = holdPos or lastClickPos
+    holdPos = nil
+    lastClickPos = nil
+    if p then
         pcall(function()
             VirtualInputManager:SendMouseButtonEvent(p.X, p.Y, 0, false, game, 1)
         end)
@@ -1347,18 +1519,17 @@ local function lockCamera()
     if camLocked then
         return
     end
-    local camera = workspace.CurrentCamera
-    if not camera then
-        return
-    end
     camLocked = true
-    camera.CameraType = Enum.CameraType.Scriptable
     pcall(function()
-        RunService:UnbindFromRenderStep("Sp1ngTopDownCam")
+        RunService:UnbindFromRenderStep(CAM_BIND_NAME)
     end)
-    RunService:BindToRenderStep("Sp1ngTopDownCam", Enum.RenderPriority.Camera.Value + 1, function()
+    RunService:BindToRenderStep(CAM_BIND_NAME, Enum.RenderPriority.Camera.Value + 1, function()
+        local camera = workspace.CurrentCamera
         local hrp = getHRP()
-        if hrp then
+        if camera and hrp then
+            if camera.CameraType ~= Enum.CameraType.Scriptable then
+                camera.CameraType = Enum.CameraType.Scriptable
+            end
             camera.CFrame = CFrame.new(hrp.Position + Vector3.new(0, CAM_HEIGHT, 0)) * CFrame.Angles(-math.pi / 2, 0, 0)
         end
     end)
@@ -1370,7 +1541,7 @@ local function unlockCamera()
     end
     camLocked = false
     pcall(function()
-        RunService:UnbindFromRenderStep("Sp1ngTopDownCam")
+        RunService:UnbindFromRenderStep(CAM_BIND_NAME)
     end)
     local camera = workspace.CurrentCamera
     if camera then
@@ -1385,7 +1556,8 @@ end
 
 local function stopAll()
     clicking = false
-    if holding then
+    clickBusy = false
+    if holding or holdPos or lastClickPos then
         releaseHold()
     end
     holdSession = holdSession + 1
@@ -1395,6 +1567,7 @@ local function stopAll()
     refreshIdle()
 end
 
+----- Automation Engines (HOLD / GRID / CLICK) -----
 local function startHold()
     local duration = readHoldDuration()
     holding = true
@@ -1408,9 +1581,9 @@ local function startHold()
     end)
 
     task.spawn(function()
-        local endTime = os.time() + duration
+        local endTime = os.clock() + duration
         while holding and session == holdSession do
-            local remaining = endTime - os.time()
+            local remaining = endTime - os.clock()
             if remaining <= 0 then
                 break
             end
@@ -1418,11 +1591,11 @@ local function startHold()
                 "Holding",
                 "Releases in " .. formatTime(remaining),
                 "Holding " .. formatTime(remaining),
-                1 - remaining / duration,
+                1 - (remaining / duration),
                 MODE_COLORS.HOLD
             )
             setReadout(formatTime(remaining), "left")
-            task.wait(0.5)
+            task.wait(0.2)
         end
         if holding and session == holdSession then
             stopAll()
@@ -1433,22 +1606,27 @@ end
 
 local function enterMining()
     local ok, err = pcall(function()
-        local Event = game:GetService("ReplicatedStorage").Remotes.Minigames.Mining
-        Event:InvokeServer()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local minigames = remotes and remotes:FindFirstChild("Minigames")
+        local mining = minigames and minigames:FindFirstChild("Mining") or ReplicatedStorage.Remotes.Minigames.Mining
+        mining:InvokeServer()
     end)
     if not ok then
-        warn("[GRID] Mining:InvokeServer lỗi: " .. tostring(err))
+        warn("[GRID] Mining:InvokeServer error: " .. tostring(err))
         notify("Could not enter mining", "Open the console (F9) for details.", THEME.warn, 4)
     end
 end
 
 local function leaveMining()
     local ok, err = pcall(function()
-        local Event = game:GetService("ReplicatedStorage").Services.Minigame.MiningGameNetwork.LeaveMining
-        Event:FireServer()
+        local services = ReplicatedStorage:FindFirstChild("Services")
+        local minigame = services and services:FindFirstChild("Minigame")
+        local net = minigame and minigame:FindFirstChild("MiningGameNetwork")
+        local leave = net and net:FindFirstChild("LeaveMining") or ReplicatedStorage.Services.Minigame.MiningGameNetwork.LeaveMining
+        leave:FireServer()
     end)
     if not ok then
-        warn("[GRID] LeaveMining:FireServer lỗi: " .. tostring(err))
+        warn("[GRID] LeaveMining:FireServer error: " .. tostring(err))
         notify("Could not leave mining", "Open the console (F9) for details.", THEME.warn, 4)
     end
 end
@@ -1463,7 +1641,7 @@ local function showMining(idx, y)
     fraction = math.clamp(fraction, 0, 1)
     setStatus(
         "Mining",
-        string.format("Point %d of %d, Y %d", idx, POINT_COUNT, math.floor(y)),
+        string.format("Point %d of %d • Y %d", idx, POINT_COUNT, math.floor(y)),
         string.format("Mining %d/%d", idx, POINT_COUNT),
         (idx - 1 + fraction) / POINT_COUNT,
         MODE_COLORS.GRID
@@ -1496,6 +1674,7 @@ local function startGrid()
             while alive() and idx <= POINT_COUNT do
                 local hrp = getHRP()
                 while alive() and not hrp do
+                    mouseUp()
                     setStatus(
                         "Respawn",
                         "Waiting for your character",
@@ -1503,7 +1682,7 @@ local function startGrid()
                         (idx - 1) / POINT_COUNT,
                         THEME.warn
                     )
-                    task.wait(0.3)
+                    task.wait(0.25)
                     hrp = getHRP()
                 end
                 if not alive() then
@@ -1512,15 +1691,18 @@ local function startGrid()
 
                 mouseUp()
                 local pt = GRID_POINTS[idx]
-                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
                 hrp.CFrame = CFrame.new(pt[1], TP_Y, pt[2])
                 setGridIndex(idx)
                 renderMap(idx - 1, idx)
                 showMining(idx, TP_Y)
 
                 lockCamera()
-                task.wait(SETTLE_TIME)
+                local settleStart = os.clock()
+                while alive() and os.clock() - settleStart < SETTLE_TIME do
+                    task.wait(0.05)
+                end
                 if not alive() then
                     break
                 end
@@ -1545,6 +1727,10 @@ local function startGrid()
                     end
                     task.wait(0.1)
                 end
+
+                -- Always release mouse button when leaving column loop (prevents stuck mouse on death)
+                mouseUp()
+
                 if reached then
                     idx = idx + 1
                 end
@@ -1561,9 +1747,9 @@ local function startGrid()
             renderMap(POINT_COUNT, 0)
             notify("Cycle complete", "Next run in " .. formatTime(LOOP_WAIT), THEME.go)
 
-            local endTime = os.time() + LOOP_WAIT
+            local endTime = os.clock() + LOOP_WAIT
             while alive() do
-                local remaining = endTime - os.time()
+                local remaining = endTime - os.clock()
                 if remaining <= 0 then
                     break
                 end
@@ -1571,10 +1757,10 @@ local function startGrid()
                     "Cooldown",
                     "Next cycle in " .. formatTime(remaining),
                     "Cooldown " .. formatTime(remaining),
-                    1 - remaining / LOOP_WAIT,
+                    1 - (remaining / LOOP_WAIT),
                     THEME.warn
                 )
-                task.wait(0.5)
+                task.wait(0.25)
             end
         end
     end)
@@ -1582,6 +1768,7 @@ end
 
 local function startClicking()
     clicking = true
+    clickBusy = false
     clickCount = 0
     holdSession = holdSession + 1
     local session = holdSession
@@ -1590,7 +1777,7 @@ local function startClicking()
     task.spawn(function()
         while clicking and session == holdSession do
             setReadout(tostring(clickCount), "clicks")
-            task.wait(0.25)
+            task.wait(0.15)
         end
     end)
 end
@@ -1599,6 +1786,7 @@ local function startRun()
     if isRunning() then
         return
     end
+    holdSession = holdSession + 1
     setTargetSolid(false)
     setPage(false)
     if mode == "GRID" then
@@ -1611,6 +1799,7 @@ local function startRun()
     refreshControls()
 end
 
+----- Event Wiring & Lifecycle -----
 local function bindEvents()
     connect(ui.startBtn.MouseButton1Click, startRun)
     connect(ui.stopBtn.MouseButton1Click, stopAll)
@@ -1644,10 +1833,24 @@ local function bindEvents()
         readGridIndex()
         refreshIdle()
     end)
+    connect(ui.idxMinus.MouseButton1Click, function()
+        nudgeGridIndex(-1)
+    end)
+    connect(ui.idxPlus.MouseButton1Click, function()
+        nudgeGridIndex(1)
+    end)
+
     connect(ui.holdBox.FocusLost, function()
         readHoldDuration()
         refreshIdle()
     end)
+    connect(ui.holdMinus.MouseButton1Click, function()
+        nudgeHoldDuration(-60)
+    end)
+    connect(ui.holdPlus.MouseButton1Click, function()
+        nudgeHoldDuration(60)
+    end)
+
     connect(ui.offXBox.FocusLost, applyOffset)
     connect(ui.offYBox.FocusLost, applyOffset)
     connect(ui.offXMinus.MouseButton1Click, function()
@@ -1683,21 +1886,27 @@ local function bindEvents()
         keepOnScreen()
     end)
 
+    -- Deterministic non-overlapping frame clicker (no per-frame coroutine leak)
     connect(RunService.RenderStepped, function()
-        if clicking then
-            local absPos = getTargetPos()
-            clickCount = clickCount + 1
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, true, game, 1)
-                task.wait()
-                VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, false, game, 1)
-            end)
+        if not clicking or clickBusy then
+            return
         end
+        clickBusy = true
+        local absPos = getTargetPos()
+        lastClickPos = absPos
+        clickCount = clickCount + 1
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, true, game, 1)
+            VirtualInputManager:SendMouseButtonEvent(absPos.X, absPos.Y, 0, false, game, 1)
+        end)
+        lastClickPos = nil
+        clickBusy = false
     end)
 
     ui.gui.Destroying:Connect(function()
         clicking = false
-        if holding then
+        clickBusy = false
+        if holding or holdPos or lastClickPos then
             releaseHold()
         end
         holdSession = holdSession + 1
@@ -1706,21 +1915,23 @@ local function bindEvents()
         for _, connection in ipairs(connections) do
             connection:Disconnect()
         end
+        table.clear(connections)
     end)
 end
+
+----- Self-Check & Initialization -----
+assert(POINT_COUNT == 169, "Grid must contain 169 points (13x13)")
+assert(#base64Decode("SGVsbG8=") == 5, "Base64 decoder self-check failed")
 
 buildTarget()
 buildPanel()
 buildMini()
 
-ui.pulses = {}
-for _, dot in ipairs({ ui.statusDot, ui.miniDot }) do
-    table.insert(ui.pulses, TweenService:Create(
-        dot,
-        TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        { BackgroundTransparency = 0.65 }
-    ))
-end
+ui.pulses = {
+    TweenService:Create(ui.statusDot, TWEEN_PULSE, { BackgroundTransparency = 0.65 }),
+    TweenService:Create(ui.miniDot, TWEEN_PULSE, { BackgroundTransparency = 0.65 }),
+    TweenService:Create(ui.statusHalo, TWEEN_PULSE, { BackgroundTransparency = 0.94 }),
+}
 
 applyScale()
 local initialSize = panelSize()
