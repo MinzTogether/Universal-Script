@@ -1,0 +1,76 @@
+dofile("/tmp/test_inspect/m0_schema.lua")
+-- Add missing properties to CLASSDATA before loading m1/m2/m3
+CLASSDATA.Player.r.CameraMaxZoomDistance = "number"
+CLASSDATA.Player.r.CameraMinZoomDistance = "number"
+CLASSDATA.TextLabel.r.TextSelectable = "boolean"
+CLASSDATA.TextButton.r.TextSelectable = "boolean"
+
+loadLuauFile("/tmp/test_inspect/extracted/test/m1_core.lua")()
+
+local f = assert(io.open("/tmp/test_inspect/extracted/test/m2_instance.lua", "rb"))
+local m2_src = f:read("*a")
+f:close()
+m2_src = m2_src:gsub(
+    "local function absSize%(inst%)",
+    "local inAuto = {}\nlocal function absSize(inst)"
+)
+m2_src = m2_src:gsub(
+    "elseif auto and auto%.Name ~= \"None\" then",
+    "elseif auto and auto.Name ~= \"None\" and not inAuto[inst] then\n        inAuto[inst] = true"
+)
+m2_src = m2_src:gsub(
+    "if auto%.Name == \"Y\" or auto%.Name == \"XY\" then y = math%.max%(y, cs%.Y%) end\n    end",
+    "if auto.Name == \"Y\" or auto.Name == \"XY\" then y = math.max(y, cs.Y) end\n        inAuto[inst] = nil\n    end"
+)
+assert(loadstring(m2_src, "@m2_instance.lua"))()
+loadLuauFile("/tmp/test_inspect/extracted/test/m3_env.lua")()
+
+-- Enhance inputObject to include Changed signal like real Roblox InputObject
+local origInputObject = Harness.inputObject
+Harness.inputObject = function(inputType, state, extra)
+    local o = origInputObject(inputType, state, extra)
+    o.Changed = o.Changed or Harness.newSignal("InputObject.Changed")
+    return o
+end
+
+Harness.defineMethods("TextBox", {
+    CaptureFocus = function(self)
+        Harness.focusedTextBox = self
+        Harness.signal(self, "Focused"):_fire()
+    end,
+    ReleaseFocus = function(self, enterPressed)
+        if Harness.focusedTextBox == self then Harness.focusedTextBox = nil end
+        Harness.signal(self, "FocusLost"):_fire(enterPressed or false, nil)
+    end,
+    IsFocused = function(self)
+        return Harness.focusedTextBox == self
+    end,
+})
+Harness.defineMethods("Player", {
+    GetNetworkPing = function(self) return (Harness.ping or 42) / 1000 end,
+})
+Harness.defineMethods("Stats", {
+    GetTotalMemoryUsageMb = function(self) return Harness.memoryMb or 512 end,
+})
+
+local dir = "/tmp/test_inspect/extracted/"
+for _, name in ipairs({ "MainWeb.lua", "Status_Server.lua", "Local.lua", "Script.lua", "FPS.lua", "Settings.lua" }) do
+    local fh = assert(io.open(dir .. name, "rb"))
+    Harness.files[name] = fh:read("*a")
+    fh:close()
+end
+
+local Elysera = loadLuauFile(dir .. "MainWeb.lua")()
+Harness.flush()
+Harness.advance(2.0, 1/30)
+
+print("Initial descendants in ScreenGui:", #Elysera.ScreenGui:GetDescendants())
+
+-- Let's inspect all Tabs and their children!
+local mainUI = Elysera.ScreenGui:FindFirstChild("MG_Main")
+local fScroll = mainUI.Body.FunctionPanel.FunctionScroll
+for _, tab in ipairs(fScroll:GetChildren()) do
+    if tab:IsA("Frame") then
+        print("TAB:", tab.Name, "Children:", #tab:GetChildren(), "Descendants:", #tab:GetDescendants())
+    end
+end
