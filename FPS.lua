@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ================= FPS TAB (module) =================
 
 return function(ctx)
@@ -789,6 +781,7 @@ return function(ctx)
                 inst[prop] = value
                 now = inst[prop]
             end
+            if now == cur then return false end
             return true, cur, now
         end
 
@@ -924,6 +917,10 @@ return function(ctx)
             clearQueue()
             Opt.watching, Opt.needRescan = false, false
 
+            if UI.GlobalShadows then
+                UI.GlobalShadows.release("FPSOptimizer")
+            end
+
             local t0 = os.clock()
             for inst, rec in pairs(Opt.snapshot) do
                 for prop, e in pairs(rec) do pcall(revert, inst, prop, e) end
@@ -951,20 +948,33 @@ return function(ctx)
         function Features.quality(spec)
             local okR, rendering = pcall(function() return settings().Rendering end)
             if not okR or not rendering then return end
-            local cur = rendering.QualityLevel.Value
+            local okC, cur = pcall(function() return rendering.QualityLevel.Value end)
+            if not okC or type(cur) ~= "number" then return end
             local target
             if cur == 0 then
-                if not (spec.force and spec.cap) then return end
-                target = spec.cap
+                if spec.automaticTarget then
+                    target = spec.automaticTarget
+                elseif spec.applyCapWhenAutomatic and spec.cap then
+                    target = spec.cap
+                else
+                    return
+                end
             else
                 target = math.clamp(cur - (spec.delta or 0), 1, cur)
                 if spec.cap then target = math.min(target, spec.cap) end
             end
-            capture(rendering, "QualityLevel", Enum.QualityLevel:FromValue(target))
+            local okE, enumVal = pcall(Enum.QualityLevel.FromValue, Enum.QualityLevel, target)
+            if okE and enumVal then
+                capture(rendering, "QualityLevel", enumVal)
+            end
         end
 
         function Features.lighting(level)
-            capture(Lighting, "GlobalShadows", false)
+            if UI.GlobalShadows then
+                UI.GlobalShadows.acquire("FPSOptimizer")
+            else
+                capture(Lighting, "GlobalShadows", false)
+            end
             if level >= 2 then
                 capture(Lighting, "ShadowSoftness", 0)
                 capture(Lighting, "EnvironmentDiffuseScale", 0)
@@ -1066,15 +1076,15 @@ return function(ctx)
         local ORDER = { "quality", "lighting", "postFx", "terrain", "particles", "parts" }
         local PROFILES = {
             Balanced = {
-                quality = { delta = 4 }, lighting = 1, postFx = 1, terrain = 1, parts = 1,
+                quality = { delta = 4, applyCapWhenAutomatic = false }, lighting = 1, postFx = 1, terrain = 1, parts = 1,
                 particles = { rate = 0.5 },
             },
             Performance = {
-                quality = { cap = 3 }, lighting = 2, postFx = 2, terrain = 1, parts = 1,
+                quality = { cap = 3, applyCapWhenAutomatic = true, automaticTarget = 3 }, lighting = 2, postFx = 2, terrain = 1, parts = 1,
                 particles = { rate = 0.2, cosmetic = true },
             },
             Extreme = {
-                quality = { cap = 1, force = true }, lighting = 3, postFx = 3, terrain = 2, parts = 2,
+                quality = { cap = 1, applyCapWhenAutomatic = true, automaticTarget = 1, force = true }, lighting = 3, postFx = 3, terrain = 2, parts = 2,
                 particles = { rate = 0.1, cosmetic = true },
             },
         }

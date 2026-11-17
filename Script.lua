@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ================= SCRIPT TAB (module) =================
 
 return function(ctx)
@@ -173,10 +165,20 @@ return function(ctx)
     end
 
     local function idTaken(id)
+        if Rows[id] then return true end
         for _, e in ipairs(ScriptList) do
             if e.id == id then return true end
         end
         return false
+    end
+
+    local function sanitizeTimestamp(v, fallback)
+        local n = tonumber(v)
+        local maxTs = os.time() + 315360000
+        if not n or n ~= n or math.abs(n) >= math.huge or n <= 0 or n > maxTs then
+            return fallback
+        end
+        return math.floor(n)
     end
 
     local function createEntry(name, code, base, opts)
@@ -195,12 +197,14 @@ return function(ctx)
         end
 
         local now = os.time()
+        local createdAt = sanitizeTimestamp(base.createdAt, now)
+        local updatedAt = sanitizeTimestamp(base.updatedAt, createdAt)
         return {
             id        = id,
             name      = name,
             script    = code,
-            createdAt = tonumber(base.createdAt) or now,
-            updatedAt = tonumber(base.updatedAt) or now,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
             favorite  = base.favorite == true,
             auto      = (base.auto == true) or nil,
             autoPlace = tonumber(base.autoPlace) or nil,
@@ -354,9 +358,11 @@ return function(ctx)
         for id, s in pairs(data.stats) do
             if type(id) == "string" and type(s) == "table" then
                 local ok = (type(s.ok) == "boolean") and s.ok or nil
+                local rawN = tonumber(s.n)
+                local safeN = (rawN and rawN == rawN and rawN > 0) and math.floor(math.min(rawN, 1e9)) or 0
                 State.stats[id] = {
-                    t  = tonumber(s.t),
-                    n  = math.max(0, math.floor(tonumber(s.n) or 0)),
+                    t  = sanitizeTimestamp(s.t, nil),
+                    n  = safeN,
                     ok = ok,
                 }
             end
@@ -475,7 +481,10 @@ return function(ctx)
         state.thread = task.spawn(function()
             local okRun, res = xpcall(fn, function(e) return debug.traceback(tostring(e), 2) end)
             if Running[entry.id] ~= state then
-                if okRun and type(res) == "function" then pcall(res) end
+                if not state.cleaned and okRun and type(res) == "function" then
+                    state.cleaned = true
+                    pcall(res)
+                end
                 return
             end
             if okRun and type(res) == "function" then
@@ -504,9 +513,14 @@ return function(ctx)
         local state = Running[entry.id]
         if not state then return false end
         Running[entry.id] = nil
-        if state.thread and task.cancel then pcall(task.cancel, state.thread) end
-        if type(state.cleanup) == "function" then
-            local okC, errC = pcall(state.cleanup)
+        local thread = state.thread
+        state.thread = nil
+        if thread and task.cancel then pcall(task.cancel, thread) end
+        local cleanup = not state.cleaned and state.cleanup or nil
+        state.cleanup = nil
+        state.cleaned = true
+        if type(cleanup) == "function" then
+            local okC, errC = pcall(cleanup)
             if okC then
                 logOut("info", entry.name, "Stopped and cleaned up")
             else
@@ -1354,8 +1368,15 @@ return function(ctx)
             return false
         end
 
+        if Running[entry.id] then
+            stopScript(entry)
+        end
+
         local rec = Rows[entry.id]
-        if rec then rec.Row.Visible = false end
+        if rec then
+            rec.refresh()
+            rec.Row.Visible = false
+        end
         applyListView()
 
         local undone = false
@@ -1374,10 +1395,15 @@ return function(ctx)
             duration = UNDO_SECONDS,
             actionText = "Undo",
             onAction = function()
+                if undone or table.find(ScriptList, entry) then return end
+                entry.name = makeUniqueName(entry.name, entry.id)
                 table.insert(ScriptList, math.min(idx, #ScriptList + 1), entry)
                 local okU, errU = saveLibrary()
                 undone = true
-                if rec then rec.Row.Visible = true end
+                if rec then
+                    rec.refresh()
+                    rec.Row.Visible = true
+                end
                 applyListView()
                 if not okU then
                     showToast("Restored in memory (save failed, will retry): " .. tostring(errU), "error")
@@ -1756,15 +1782,19 @@ return function(ctx)
                 end)
             elseif View.sort == "edited" then
                 table.sort(arr, function(a, b)
-                    if a.updatedAt ~= b.updatedAt then return a.updatedAt > b.updatedAt end
+                    local ua = sanitizeTimestamp(a.updatedAt, 0)
+                    local ub = sanitizeTimestamp(b.updatedAt, 0)
+                    if ua ~= ub then return ua > ub end
                     return a.id < b.id
                 end)
             elseif View.sort == "recent" then
                 table.sort(arr, function(a, b)
-                    local x = State.stats[a.id] and State.stats[a.id].t or 0
-                    local y = State.stats[b.id] and State.stats[b.id].t or 0
+                    local x = sanitizeTimestamp(State.stats[a.id] and State.stats[a.id].t, 0)
+                    local y = sanitizeTimestamp(State.stats[b.id] and State.stats[b.id].t, 0)
                     if x ~= y then return x > y end
-                    if a.updatedAt ~= b.updatedAt then return a.updatedAt > b.updatedAt end
+                    local ua = sanitizeTimestamp(a.updatedAt, 0)
+                    local ub = sanitizeTimestamp(b.updatedAt, 0)
+                    if ua ~= ub then return ua > ub end
                     return a.id < b.id
                 end)
             end

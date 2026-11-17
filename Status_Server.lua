@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ================= STATUS & SERVER TAB (module) =================
 
 return function(ctx)
@@ -45,8 +37,10 @@ return function(ctx)
         return string.format("%dh%dm%ds", math.floor(seconds / 3600), math.floor((seconds % 3600) / 60), seconds % 60)
     end
 
+    local UUID_PATTERN = "^" .. ("%x"):rep(8) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(12) .. "$"
+
     local function isValidJobId(jobId)
-        return type(jobId) == "string" and jobId:match("^%x+%-%x+%-%x+%-%x+%-%x+$") ~= nil
+        return type(jobId) == "string" and #jobId == 36 and jobId:match(UUID_PATTERN) ~= nil
     end
 
     local function parseJoinInput(raw)
@@ -57,7 +51,7 @@ return function(ctx)
         if isValidJobId(text) then return text, nil end
         if text:find("privateserverlinkcode=", 1, true) then return nil, nil, "Private" end
 
-        local jobId = text:match("gameinstanceid=([%x%-]+)")
+        local jobId = text:match("gameinstanceid=([^&#?]+)")
         if not isValidJobId(jobId) then return nil, nil, "Invalid" end
         local placeId = text:match("placeid=(%d+)") or text:match("/games/(%d+)")
         return jobId, tonumber(placeId)
@@ -346,7 +340,7 @@ return function(ctx)
 
     CreateCopyRow(StatusServerTab, "Copy Server JobId", function() return game.JobId end, false)
     CreateCopyRow(StatusServerTab, "Copy Join Link", function()
-        if game.JobId == "" then return "" end
+        if not isValidJobId(game.JobId) then return "" end
         return ("roblox://experiences/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
     end, false)
 
@@ -356,7 +350,7 @@ return function(ctx)
         local RejoinBtn = CreateStyledButton(Frame, "Rejoin", 70)
         RejoinBtn.Activated:Connect(guarded(function(done)
             local ok = not teleportPending and pcall(function()
-                if game.JobId == "" then
+                if not isValidJobId(game.JobId) then
                     TeleportService:Teleport(game.PlaceId, LocalPlayer)
                 else
                     TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
@@ -493,7 +487,7 @@ return function(ctx)
 
         local function isUsable(srv)
             return type(srv) == "table"
-                and type(srv.id) == "string"
+                and isValidJobId(srv.id)
                 and srv.id ~= game.JobId
                 and not failedJobIds[srv.id]
                 and type(srv.playing) == "number"

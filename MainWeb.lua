@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 return (function()
 --// ================= SERVICES =================
 local TweenService     = game:GetService("TweenService")
@@ -1845,12 +1837,82 @@ do
     end
 
     function UI.FormatAgo(ts, withDate)
-        local d = math.max(0, os.time() - (tonumber(ts) or 0))
+        local now = os.time()
+        local stamp = tonumber(ts)
+        if not stamp or stamp ~= stamp or math.abs(stamp) >= math.huge or stamp <= 0 or stamp > now + 315360000 then
+            return withDate and "unknown" or "--"
+        end
+        stamp = math.floor(stamp)
+        local d = math.max(0, now - stamp)
         if d < (withDate and 45 or 60) then return withDate and "just now" or "<1m ago" end
         if d < 3600 then return ("%dm ago"):format(math.max(1, math.floor(d / 60))) end
         if d < 86400 then return ("%dh ago"):format(math.floor(d / 3600)) end
-        if withDate and d >= 7 * 86400 then return os.date("%b %d", ts) end
-        return ("%dd ago"):format(math.floor(d / 86400))
+        if withDate and d >= 7 * 86400 then
+            local ok, str = pcall(os.date, "%b %d", stamp)
+            if ok and type(str) == "string" then return str end
+        end
+        local days = math.floor(d / 86400)
+        if days > 36500 then return withDate and "unknown" or "--" end
+        return ("%dd ago"):format(days)
+    end
+
+    do
+        local Lighting = game:GetService("Lighting")
+        local owners = {}
+        local base, conn = nil, nil
+        local writing = false
+
+        local function enforce()
+            if Lighting.GlobalShadows ~= false then
+                writing = true
+                pcall(function() Lighting.GlobalShadows = false end)
+                writing = false
+            end
+        end
+
+        local function unbindWatch()
+            if conn then conn:Disconnect(); conn = nil end
+        end
+
+        local function bindWatch()
+            if conn then return end
+            conn = Lighting:GetPropertyChangedSignal("GlobalShadows"):Connect(function()
+                if writing or next(owners) == nil then return end
+                local now = Lighting.GlobalShadows
+                if now ~= false then
+                    base = now
+                    enforce()
+                end
+            end)
+        end
+
+        UI.GlobalShadows = {
+            acquire = function(owner)
+                if not owner then return end
+                if next(owners) == nil then
+                    base = Lighting.GlobalShadows
+                end
+                owners[owner] = true
+                bindWatch()
+                enforce()
+            end,
+            release = function(owner)
+                if not owner or not owners[owner] then return end
+                owners[owner] = nil
+                if next(owners) ~= nil then
+                    enforce()
+                    return
+                end
+                unbindWatch()
+                local restoreVal = base
+                base = nil
+                if restoreVal ~= nil and Lighting.GlobalShadows ~= restoreVal then
+                    writing = true
+                    pcall(function() Lighting.GlobalShadows = restoreVal end)
+                    writing = false
+                end
+            end,
+        }
     end
 
     function UI.ThemedColors(tokens)
