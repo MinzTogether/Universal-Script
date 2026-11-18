@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ================= SCRIPT TAB (module) =================
 
 return function(ctx)
@@ -62,6 +54,11 @@ return function(ctx)
 
     local OutputPanel, StatusLabel, SearchRow, SearchBox, EmptyLabel, ScriptDialog
     local applyListView, CreateScriptRow, fitListPanel
+    local modConns = {}
+    local function trackConn(c)
+        modConns[#modConns + 1] = c
+        return c
+    end
 
     local borderStroke       = UI.BorderStroke
     local createAccentButton = UI.CreateAccentButton
@@ -173,10 +170,20 @@ return function(ctx)
     end
 
     local function idTaken(id)
+        if Rows[id] then return true end
         for _, e in ipairs(ScriptList) do
             if e.id == id then return true end
         end
         return false
+    end
+
+    local function sanitizeTimestamp(v, fallback)
+        local n = tonumber(v)
+        local maxTs = os.time() + 315360000
+        if not n or n ~= n or math.abs(n) >= math.huge or n <= 0 or n > maxTs then
+            return fallback
+        end
+        return math.floor(n)
     end
 
     local function createEntry(name, code, base, opts)
@@ -195,12 +202,14 @@ return function(ctx)
         end
 
         local now = os.time()
+        local createdAt = sanitizeTimestamp(base.createdAt, now)
+        local updatedAt = sanitizeTimestamp(base.updatedAt, createdAt)
         return {
             id        = id,
             name      = name,
             script    = code,
-            createdAt = tonumber(base.createdAt) or now,
-            updatedAt = tonumber(base.updatedAt) or now,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
             favorite  = base.favorite == true,
             auto      = (base.auto == true) or nil,
             autoPlace = tonumber(base.autoPlace) or nil,
@@ -288,20 +297,27 @@ return function(ctx)
             if not canFS then report.status = "memory_only"; return report end
 
             local data, why, body = readJson(SCRIPT_FILE)
-            if why == "missing" then report.status = "empty"; return report end
+            local items, version = extractItems(data)
+            if not why and not items then why = "bad_schema" end
 
-            if why then
+            if why == "missing" then
+                local bData, bWhy, bBody = readJson(BACKUP_FILE)
+                if bWhy == "missing" then report.status = "empty"; return report end
+                local bItems, bVer = extractItems(bData)
+                if bWhy or not bItems then report.status = "corrupt"; return report end
+                data, body, items, version = bData, bBody, bItems, bVer
+                report.status = "recovered"
+            elseif why then
                 if body then
                     report.corruptFile = dataPath(("L-scr.corrupt-%d.json"):format(os.time()))
                     pcall(writefile, report.corruptFile, body)
                 end
-                data, why, body = readJson(BACKUP_FILE)
-                if why then report.status = "corrupt"; return report end
+                local bData, bWhy, bBody = readJson(BACKUP_FILE)
+                local bItems, bVer = extractItems(bData)
+                if bWhy or not bItems then report.status = "corrupt"; return report end
+                data, body, items, version = bData, bBody, bItems, bVer
                 report.status = "recovered"
             end
-
-            local items, version = extractItems(data)
-            if not items then report.status = "corrupt"; return report end
             if report.status == "ok" then lastSaved = body end
 
             for _, item in ipairs(items) do
@@ -353,10 +369,13 @@ return function(ctx)
         if type(data.stats) ~= "table" then return end
         for id, s in pairs(data.stats) do
             if type(id) == "string" and type(s) == "table" then
-                local ok = (type(s.ok) == "boolean") and s.ok or nil
+                local ok = nil
+                if type(s.ok) == "boolean" then ok = s.ok end
+                local rawN = tonumber(s.n)
+                local safeN = (rawN and rawN == rawN and rawN > 0) and math.floor(math.min(rawN, 1e9)) or 0
                 State.stats[id] = {
-                    t  = tonumber(s.t),
-                    n  = math.max(0, math.floor(tonumber(s.n) or 0)),
+                    t  = sanitizeTimestamp(s.t, nil),
+                    n  = safeN,
                     ok = ok,
                 }
             end
@@ -421,10 +440,11 @@ return function(ctx)
 
     local function getCompiled(entry)
         local c = compileCache[entry]
-        if c and c.src == entry.script then return true, c.fn end
+        if c and c.src == entry.script then return true, c.fn, nil, c.env end
         local ok, fn, info = compileScript(entry.script, entry.name)
-        if ok then compileCache[entry] = { src = entry.script, fn = fn } end
-        return ok, fn, info
+        local baseEnv = (ok and typeof(getfenv) == "function") and getfenv(fn) or nil
+        if ok then compileCache[entry] = { src = entry.script, fn = fn, env = baseEnv } end
+        return ok, fn, info, baseEnv
     end
 
     local function describe(info)
@@ -450,11 +470,25 @@ return function(ctx)
         if OutputPanel then OutputPanel.append(level, name, text) end
     end
 
+    local function runStateCleanups(state)
+        if state.cleaned then return false, true end
+        state.cleaned = true
+        local list = state.cleanups
+        state.cleanups = {}
+        if not list or #list == 0 then return false, true end
+        local firstErr
+        for _, cb in ipairs(list) do
+            local okC, errC = pcall(cb)
+            if not okC and firstErr == nil then firstErr = errC end
+        end
+        return true, firstErr == nil, firstErr
+    end
+
     local function runScript(entry, onState)
         onState = onState or function() end
         if Running[entry.id] then return false, "already_running" end
 
-        local ok, fn, info = getCompiled(entry)
+        local ok, fn, info, baseEnv = getCompiled(entry)
         if not ok then
             local why = describe(info)
             logOut("error", entry.name, "Compile error - " .. why)
@@ -465,7 +499,27 @@ return function(ctx)
         end
 
         touchRun(entry)
-        local state = { startedAt = os.clock(), onState = onState, entry = entry }
+        local state = { startedAt = os.clock(), onState = onState, entry = entry, cleanups = {}, cleaned = false }
+        local function registerCleanup(cb)
+            if type(cb) ~= "function" then return cb end
+            if state.cleaned or Running[entry.id] ~= state then
+                pcall(cb)
+                return cb
+            end
+            for _, existing in ipairs(state.cleanups) do
+                if existing == cb then return cb end
+            end
+            state.cleanups[#state.cleanups + 1] = cb
+            return cb
+        end
+
+        if typeof(setfenv) == "function" and type(baseEnv) == "table" then
+            pcall(setfenv, fn, setmetatable({ OnStop = registerCleanup, onStop = registerCleanup }, {
+                __index = baseEnv,
+                __newindex = baseEnv,
+            }))
+        end
+
         Running[entry.id] = state
         onState("running")
         task.delay(0.4, function()
@@ -473,13 +527,14 @@ return function(ctx)
         end)
 
         state.thread = task.spawn(function()
-            local okRun, res = xpcall(fn, function(e) return debug.traceback(tostring(e), 2) end)
+            local okRun, res = xpcall(fn, function(e) return debug.traceback(tostring(e), 2) end, registerCleanup)
             if Running[entry.id] ~= state then
-                if okRun and type(res) == "function" then pcall(res) end
+                if okRun and type(res) == "function" then registerCleanup(res) end
+                runStateCleanups(state)
                 return
             end
-            if okRun and type(res) == "function" then
-                state.cleanup = res
+            if okRun and (type(res) == "function" or #state.cleanups > 0) then
+                if type(res) == "function" then registerCleanup(res) end
                 state.thread = nil
                 logOut("ok", entry.name, ("Active with cleanup hook (%.2fs)"):format(os.clock() - state.startedAt))
                 finishRun(entry, true)
@@ -492,6 +547,7 @@ return function(ctx)
                 finishRun(entry, true)
                 onState("ok")
             else
+                runStateCleanups(state)
                 logOut("error", entry.name, "Runtime error - " .. tostring(res))
                 finishRun(entry, false)
                 onState("error", firstLine(res))
@@ -504,9 +560,11 @@ return function(ctx)
         local state = Running[entry.id]
         if not state then return false end
         Running[entry.id] = nil
-        if state.thread and task.cancel then pcall(task.cancel, state.thread) end
-        if type(state.cleanup) == "function" then
-            local okC, errC = pcall(state.cleanup)
+        local thread = state.thread
+        state.thread = nil
+        if thread and task.cancel then pcall(task.cancel, thread) end
+        local hadCleanup, okC, errC = runStateCleanups(state)
+        if hadCleanup then
             if okC then
                 logOut("info", entry.name, "Stopped and cleaned up")
             else
@@ -526,7 +584,7 @@ return function(ctx)
         return #entries
     end
 
-    ScreenGui.Destroying:Connect(stopAll)
+    trackConn(ScreenGui.Destroying:Connect(stopAll))
 
     local canClipboard = typeof(getclipboard) == "function"
     local canRun = typeof(loadstring) == "function"
@@ -598,16 +656,31 @@ return function(ctx)
         return true, fileName
     end
 
+    local function resolveImportPath(raw)
+        if raw:find("%z") then return nil end
+        local norm = raw:gsub("\\", "/")
+        if norm:match("^/") or norm:match("^%a:") then return nil end
+        norm = norm:gsub("^%./+", "")
+        if norm:sub(1, 8) == "Elysera/" then
+            norm = norm:sub(9)
+        end
+        if norm == "" or norm:find("/", 1, true) or norm:find("..", 1, true) or norm:find(":", 1, true) then
+            return nil
+        end
+        return dataPath(norm)
+    end
+
     local function importLibrary(text)
         text = UI.Trim(text)
         if text == "" then return nil, "Nothing to import" end
 
         if canFS and #text < 200 and not text:find("[{%[\r\n]") then
-            for _, path in ipairs({ dataPath(text), text }) do
+            local path = resolveImportPath(text)
+            if path then
                 local okF, exists = pcall(isfile, path)
                 if okF and exists then
                     local okR, body = pcall(readfile, path)
-                    if okR then text = body; break end
+                    if okR then text = body end
                 end
             end
         end
@@ -818,13 +891,13 @@ return function(ctx)
                 local c = src:sub(i, i)
                 if c == "-" and src:sub(i + 1, i + 1) == "-" then
                     local eq = src:match("^%-%-%[(=*)%[", i)
-                    local close = eq and select(2, src:find("%]" .. eq .. "%]", i + 4 + #eq, true))
+                    local close = eq and select(2, src:find("]" .. eq .. "]", i + 4 + #eq, true))
                     local stop = close or ((src:find("\n", i + 2, true) or (n + 1)) - 1)
                     span(cmtHex, src:sub(i, stop))
                     i = stop + 1
                 elseif c == "[" and src:match("^%[(=*)%[", i) then
                     local eq = src:match("^%[(=*)%[", i)
-                    local _, close = src:find("%]" .. eq .. "%]", i + 2 + #eq, true)
+                    local _, close = src:find("]" .. eq .. "]", i + 2 + #eq, true)
                     local stop = close or n
                     span(strHex, src:sub(i, stop))
                     i = stop + 1
@@ -1074,7 +1147,7 @@ return function(ctx)
             end
         end
         CodeBox:GetPropertyChangedSignal("Text"):Connect(refreshEditorView)
-        ScreenGui:GetAttributeChangedSignal("Theme"):Connect(refreshEditorView)
+        trackConn(ScreenGui:GetAttributeChangedSignal("Theme"):Connect(refreshEditorView))
 
         local function moveCaretIntoView()
             caretQueued = false
@@ -1329,12 +1402,12 @@ return function(ctx)
     end
 
     local pendingConfirm
-    DeleteDialog.Yes.MouseButton1Click:Connect(function()
+    trackConn(DeleteDialog.Yes.MouseButton1Click:Connect(function()
         local pending = pendingConfirm
         pendingConfirm = nil
         DeleteDialog.hide()
         if pending and DeleteDialog.Message.Text == pending.message then pending.run() end
-    end)
+    end))
 
     local function askConfirm(message, onYes)
         pendingConfirm = { run = onYes, message = message }
@@ -1354,8 +1427,15 @@ return function(ctx)
             return false
         end
 
+        if Running[entry.id] then
+            stopScript(entry)
+        end
+
         local rec = Rows[entry.id]
-        if rec then rec.Row.Visible = false end
+        if rec then
+            rec.refresh()
+            rec.Row.Visible = false
+        end
         applyListView()
 
         local undone = false
@@ -1374,10 +1454,15 @@ return function(ctx)
             duration = UNDO_SECONDS,
             actionText = "Undo",
             onAction = function()
+                if undone or table.find(ScriptList, entry) then return end
+                entry.name = makeUniqueName(entry.name, entry.id)
                 table.insert(ScriptList, math.min(idx, #ScriptList + 1), entry)
                 local okU, errU = saveLibrary()
                 undone = true
-                if rec then rec.Row.Visible = true end
+                if rec then
+                    rec.refresh()
+                    rec.Row.Visible = true
+                end
                 applyListView()
                 if not okU then
                     showToast("Restored in memory (save failed, will retry): " .. tostring(errU), "error")
@@ -1743,8 +1828,8 @@ return function(ctx)
             if OutputPanel then used = used + OutputPanel.Frame.Size.Y.Offset + TAB_LIST_GAP end
             ListPanel.Size = UDim2.new(1, 0, 0, math.max(80, math.floor(scrollH - used + 0.5)))
         end
-        FunctionScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitListPanel)
-        if MainUI then MainUI:GetPropertyChangedSignal("Size"):Connect(fitListPanel) end
+        trackConn(FunctionScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitListPanel))
+        if MainUI then trackConn(MainUI:GetPropertyChangedSignal("Size"):Connect(fitListPanel)) end
 
         local function orderedEntries()
             local arr = table.clone(ScriptList)
@@ -1756,15 +1841,19 @@ return function(ctx)
                 end)
             elseif View.sort == "edited" then
                 table.sort(arr, function(a, b)
-                    if a.updatedAt ~= b.updatedAt then return a.updatedAt > b.updatedAt end
+                    local ua = sanitizeTimestamp(a.updatedAt, 0)
+                    local ub = sanitizeTimestamp(b.updatedAt, 0)
+                    if ua ~= ub then return ua > ub end
                     return a.id < b.id
                 end)
             elseif View.sort == "recent" then
                 table.sort(arr, function(a, b)
-                    local x = State.stats[a.id] and State.stats[a.id].t or 0
-                    local y = State.stats[b.id] and State.stats[b.id].t or 0
+                    local x = sanitizeTimestamp(State.stats[a.id] and State.stats[a.id].t, 0)
+                    local y = sanitizeTimestamp(State.stats[b.id] and State.stats[b.id].t, 0)
                     if x ~= y then return x > y end
-                    if a.updatedAt ~= b.updatedAt then return a.updatedAt > b.updatedAt end
+                    local ua = sanitizeTimestamp(a.updatedAt, 0)
+                    local ub = sanitizeTimestamp(b.updatedAt, 0)
+                    if ua ~= ub then return ua > ub end
                     return a.id < b.id
                 end)
             end
@@ -2073,12 +2162,12 @@ return function(ctx)
             if not isLocked() then addExample() end
         end)
 
-        ScriptTab:GetPropertyChangedSignal("Visible"):Connect(function()
+        trackConn(ScriptTab:GetPropertyChangedSignal("Visible"):Connect(function()
             if not ScriptTab.Visible then closeContextMenu(); return end
             fitListPanel()
             for _, rec in pairs(Rows) do rec.paintInfo() end
             applyListView()
-        end)
+        end))
 
         if State.autoRun then
             local queue = {}
@@ -2105,6 +2194,19 @@ return function(ctx)
             end
         end
     end
+
+    local function destroyModule()
+        stopAll()
+        closeContextMenu()
+        for _, c in ipairs(modConns) do pcall(c.Disconnect, c) end
+        table.clear(modConns)
+        if ScriptDialog and ScriptDialog.Box then
+            if ScriptDialog.Box.Visible then setOverlay(false, ScriptDialog.Box) end
+            pcall(ScriptDialog.Box.Destroy, ScriptDialog.Box)
+        end
+    end
+    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
+    ScriptDialog.Destroy = destroyModule
 
     return ScriptDialog
 end

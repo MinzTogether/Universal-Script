@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ================= STATUS & SERVER TAB (module) =================
 
 return function(ctx)
@@ -31,7 +23,7 @@ return function(ctx)
     --// ---------- Config ----------
     local SPAM_JOIN_DELAY  = 1.5
     local PENDING_TIMEOUT  = 10
-    local HOP_WAIT_RESULT  = 6
+    local HOP_WAIT_RESULT  = PENDING_TIMEOUT
     local HOP_MAX_ATTEMPTS = 3
     local PAGE_DELAY       = 0.3
 
@@ -45,8 +37,10 @@ return function(ctx)
         return string.format("%dh%dm%ds", math.floor(seconds / 3600), math.floor((seconds % 3600) / 60), seconds % 60)
     end
 
+    local UUID_PATTERN = "^" .. ("%x"):rep(8) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(4) .. "%-" .. ("%x"):rep(12) .. "$"
+
     local function isValidJobId(jobId)
-        return type(jobId) == "string" and jobId:match("^%x+%-%x+%-%x+%-%x+%-%x+$") ~= nil
+        return type(jobId) == "string" and #jobId == 36 and jobId:match(UUID_PATTERN) ~= nil
     end
 
     local function parseJoinInput(raw)
@@ -57,45 +51,85 @@ return function(ctx)
         if isValidJobId(text) then return text, nil end
         if text:find("privateserverlinkcode=", 1, true) then return nil, nil, "Private" end
 
-        local jobId = text:match("gameinstanceid=([%x%-]+)")
+        local jobId = text:match("gameinstanceid=([^&#?]+)")
         if not isValidJobId(jobId) then return nil, nil, "Invalid" end
         local placeId = text:match("placeid=(%d+)") or text:match("/games/(%d+)")
         return jobId, tonumber(placeId)
     end
 
     --// ---------- Shared teleport state ----------
-    local teleportPending = false
+    local activeAttempt   = nil
     local pendingToken    = 0
     local failStreak      = 0
+    local destroyed       = false
+    local teardown        = {}
+    local function onDestroy(fn) teardown[#teardown + 1] = fn end
+    local function trackConn(c) teardown[#teardown + 1] = function() c:Disconnect() end; return c end
 
-    local function markPending()
-        teleportPending = true
-        pendingToken = pendingToken + 1
-        local token = pendingToken
-        task.delay(PENDING_TIMEOUT, function()
-            if pendingToken == token then teleportPending = false end
-        end)
+    local function isTeleportPending()
+        if not activeAttempt or activeAttempt.status ~= "pending" then return false end
+        if os.clock() >= activeAttempt.deadline then
+            activeAttempt.status = "timeout"
+            activeAttempt = nil
+            return false
+        end
+        return true
     end
 
-    local failedConn = TeleportService.TeleportInitFailed:Connect(function(player)
-        if player ~= LocalPlayer then return end
+    local function requestTeleport(kind, placeId, jobId)
+        local targetPlace = placeId or game.PlaceId
+        if jobId ~= nil then
+            if not isValidJobId(jobId) then return false, "Invalid" end
+            if jobId == game.JobId and kind ~= "rejoin" then return false, "Same" end
+        end
+        if isTeleportPending() then return false, "Busy" end
+        local ok = pcall(function()
+            if jobId ~= nil then
+                TeleportService:TeleportToPlaceInstance(targetPlace, jobId, LocalPlayer)
+            else
+                TeleportService:Teleport(targetPlace, LocalPlayer)
+            end
+        end)
+        if not ok then return false, "Failed" end
         pendingToken = pendingToken + 1
-        teleportPending = false
-        failStreak = failStreak + 1
-    end)
+        local attempt = {
+            id = pendingToken,
+            kind = kind or "join",
+            placeId = targetPlace,
+            jobId = jobId,
+            status = "pending",
+            deadline = os.clock() + PENDING_TIMEOUT,
+        }
+        activeAttempt = attempt
+        task.delay(PENDING_TIMEOUT, function()
+            if activeAttempt == attempt and attempt.status == "pending" then
+                attempt.status = "timeout"
+                activeAttempt = nil
+            end
+        end)
+        return true, attempt
+    end
 
-    ScreenGui.Destroying:Connect(function()
-        failedConn:Disconnect()
-    end)
+    trackConn(TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, _, placeId)
+        if player ~= LocalPlayer then return end
+        if not isTeleportPending() then return end
+        if type(placeId) == "number" and placeId > 0 and activeAttempt.placeId and placeId ~= activeAttempt.placeId then
+            return
+        end
+        local attempt = activeAttempt
+        attempt.status = "failed"
+        attempt.result = teleportResult
+        activeAttempt = nil
+        pendingToken = pendingToken + 1
+        if attempt.kind == "spam" then
+            failStreak = failStreak + 1
+        end
+    end))
 
-    local function joinServer(jobId, placeId)
+    local function joinServer(jobId, placeId, kind)
         if not isValidJobId(jobId) then return false, "Invalid" end
         if jobId == game.JobId then return false, "Same" end
-        if teleportPending then return false, "Busy" end
-        local ok = pcall(TeleportService.TeleportToPlaceInstance, TeleportService, placeId or game.PlaceId, jobId, LocalPlayer)
-        if not ok then return false, "Failed" end
-        markPending()
-        return true
+        return requestTeleport(kind or "join", placeId or game.PlaceId, jobId)
     end
 
     --// ---------- Server history ----------
@@ -216,15 +250,16 @@ return function(ctx)
             liveRun = liveRun + 1
             local myRun = liveRun
             task.spawn(function()
-                while ScreenGui.Parent and myRun == liveRun and windowVisible() do
+                while not destroyed and ScreenGui.Parent and myRun == liveRun and windowVisible() do
                     if isOpen() then refreshLiveRows() end
                     task.wait(0.5)
                 end
             end)
         end
     end
-    StatusServerTab:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged)
-    if MainUI then MainUI:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged) end
+    onDestroy(function() liveRun = liveRun + 1 end)
+    trackConn(StatusServerTab:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged))
+    if MainUI then trackConn(MainUI:GetPropertyChangedSignal("Visible"):Connect(onVisibilityChanged)) end
     onVisibilityChanged()
 
     CreateCopyRow(StatusServerTab, "PlaceID", function() return tostring(game.PlaceId) end, true)
@@ -330,23 +365,24 @@ return function(ctx)
             failStreak = 0
             local myRun = runId
             task.spawn(function()
-                while Switch:GetAttribute("Toggled") and myRun == runId and ScreenGui.Parent do
+                while Switch:GetAttribute("Toggled") and myRun == runId and ScreenGui.Parent and not destroyed do
                     local jobId, placeId = getTarget()
                     if not jobId or jobId == game.JobId then
                         flashStrokeError(BoxStroke)
                         setSpamState(false)
                         break
                     end
-                    if not isLocked() then joinServer(jobId, placeId) end
+                    if not isLocked() then joinServer(jobId, placeId, "spam") end
                     task.wait(SPAM_JOIN_DELAY + math.min(failStreak, 5) * 0.5)
                 end
             end)
         end)
+        onDestroy(function() runId = runId + 1 end)
     end
 
     CreateCopyRow(StatusServerTab, "Copy Server JobId", function() return game.JobId end, false)
     CreateCopyRow(StatusServerTab, "Copy Join Link", function()
-        if game.JobId == "" then return "" end
+        if not isValidJobId(game.JobId) then return "" end
         return ("roblox://experiences/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
     end, false)
 
@@ -355,37 +391,36 @@ return function(ctx)
         local Frame = CreateInfoRow(StatusServerTab, "Rejoin Server")
         local RejoinBtn = CreateStyledButton(Frame, "Rejoin", 70)
         RejoinBtn.Activated:Connect(guarded(function(done)
-            local ok = not teleportPending and pcall(function()
-                if game.JobId == "" then
-                    TeleportService:Teleport(game.PlaceId, LocalPlayer)
-                else
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
-                end
-            end)
-            if ok then markPending() end
-            flashButtonFeedback(RejoinBtn, "Rejoin", ok and "Rejoining..." or "Failed", not ok)
+            local ok, reason = requestTeleport("rejoin", game.PlaceId, isValidJobId(game.JobId) and game.JobId or nil)
+            flashButtonFeedback(RejoinBtn, "Rejoin", ok and "Rejoining..." or (reason == "Busy" and "Busy" or "Failed"), not ok)
             done()
         end))
 
         local KickSwitch = CreateToggleOption(StatusServerTab, "Auto Rejoin on Kick")
         local kickConns = {}
         local rejoining = false
+        local autoRejoinRun = 0
 
         local function triggerAutoRejoin()
-            if rejoining or not KickSwitch:GetAttribute("Toggled") then return end
+            if rejoining or destroyed or not KickSwitch:GetAttribute("Toggled") then return end
             rejoining = true
+            autoRejoinRun = autoRejoinRun + 1
+            local myRun = autoRejoinRun
             showToast("Disconnected - auto rejoining...", "warn", { duration = 4 })
             task.spawn(function()
-                while KickSwitch:GetAttribute("Toggled") and ScreenGui.Parent do
-                    pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
+                while KickSwitch:GetAttribute("Toggled") and myRun == autoRejoinRun and ScreenGui.Parent and not destroyed do
+                    if not isTeleportPending() then
+                        requestTeleport("autorejoin", game.PlaceId, nil)
+                    end
                     task.wait(2.5)
                 end
-                rejoining = false
+                if myRun == autoRejoinRun then rejoining = false end
             end)
         end
 
         local function stopAutoRejoin()
             rejoining = false
+            autoRejoinRun = autoRejoinRun + 1
             for _, c in ipairs(kickConns) do c:Disconnect() end
             table.clear(kickConns)
         end
@@ -394,6 +429,10 @@ return function(ctx)
             stopAutoRejoin()
             pcall(function()
                 kickConns[#kickConns + 1] = GuiService.ErrorMessageChanged:Connect(function(msg)
+                    if type(msg) ~= "string" then
+                        local ok, current = pcall(GuiService.GetErrorMessage, GuiService)
+                        msg = ok and current or nil
+                    end
                     if type(msg) == "string" and msg ~= "" then triggerAutoRejoin() end
                 end)
             end)
@@ -412,7 +451,7 @@ return function(ctx)
         KickSwitch:GetAttributeChangedSignal("Toggled"):Connect(function()
             if KickSwitch:GetAttribute("Toggled") then startAutoRejoin() else stopAutoRejoin() end
         end)
-        ScreenGui.Destroying:Connect(stopAutoRejoin)
+        onDestroy(stopAutoRejoin)
     end
 
     --// ---------- Previous Server & Recent Servers ----------
@@ -489,7 +528,7 @@ return function(ctx)
 
         local function isUsable(srv)
             return type(srv) == "table"
-                and type(srv.id) == "string"
+                and isValidJobId(srv.id)
                 and srv.id ~= game.JobId
                 and not failedJobIds[srv.id]
                 and type(srv.playing) == "number"
@@ -564,22 +603,32 @@ return function(ctx)
             local candidates, err = pickServers(mode)
             if #candidates == 0 then return false, err or "No server" end
 
+            local lastReason = "Failed"
             for tried = 1, math.min(#candidates, HOP_MAX_ATTEMPTS) do
                 local srv = candidates[tried]
-                local ok, reason = joinServer(srv.id)
+                local ok, attemptOrReason = joinServer(srv.id, game.PlaceId, "hop")
                 if not ok then
-                    if reason == "Busy" then return false, "Busy" end
+                    if attemptOrReason == "Busy" then return false, "Busy" end
                     failedJobIds[srv.id] = true
+                    lastReason = attemptOrReason or "Failed"
                 else
-                    for _ = 1, math.ceil(HOP_WAIT_RESULT / 0.2) do
-                        if not teleportPending then break end
+                    local attempt = attemptOrReason
+                    while attempt.status == "pending" and os.clock() < attempt.deadline and ScreenGui.Parent and not destroyed do
+                        if game.JobId == srv.id then return true end
                         task.wait(0.2)
                     end
-                    if teleportPending then return true end
+                    if not ScreenGui.Parent or destroyed or game.JobId == srv.id then
+                        return true
+                    end
+                    if attempt.status == "pending" and os.clock() >= attempt.deadline then
+                        attempt.status = "timeout"
+                        if activeAttempt == attempt then activeAttempt = nil end
+                    end
                     failedJobIds[srv.id] = true
+                    lastReason = (attempt.status == "timeout") and "Timed out" or "Failed"
                 end
             end
-            return false, "Failed"
+            return false, lastReason
         end
 
         local function bindHopButton(title, mode)
@@ -707,4 +756,16 @@ return function(ctx)
             end)
         end))
     end
+
+    local function destroyModule()
+        if destroyed then return end
+        destroyed = true
+        activeAttempt = nil
+        pendingToken = pendingToken + 1
+        for _, fn in ipairs(teardown) do pcall(fn) end
+        table.clear(teardown)
+    end
+    trackConn(ScreenGui.Destroying:Connect(destroyModule))
+    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
+    return { Destroy = destroyModule }
 end

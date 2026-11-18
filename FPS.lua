@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ================= FPS TAB (module) =================
 
 return function(ctx)
@@ -38,11 +30,16 @@ return function(ctx)
     local destroyed = false
     local teardown = {}
     local function onDestroy(fn) teardown[#teardown + 1] = fn end
+    local function trackConn(c) teardown[#teardown + 1] = function() c:Disconnect() end; return c end
 
-    ScreenGui.Destroying:Connect(function()
+    local function destroyModule()
+        if destroyed then return end
         destroyed = true
         for _, fn in ipairs(teardown) do pcall(fn) end
-    end)
+        table.clear(teardown)
+    end
+    trackConn(ScreenGui.Destroying:Connect(destroyModule))
+    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
 
     --// ================= SAVED CHOICES =================
     local Prefs = {}
@@ -76,34 +73,55 @@ return function(ctx)
     do
         local COVER_CAP = 15
         local canSet = typeof(setfpscap) == "function"
-        local original
-        if typeof(getfpscap) == "function" then
+        local canGet = typeof(getfpscap) == "function"
+        local origState, original = "unknown", nil
+
+        local function captureOriginal()
+            if not canGet then return end
             local ok, v = pcall(getfpscap)
-            if ok and type(v) == "number" and v > 0 then original = v end
+            if ok and type(v) == "number" and v == v then
+                if v > 0 then
+                    origState, original = "numeric", v
+                elseif v == 0 then
+                    origState, original = "unlimited", 0
+                end
+            end
         end
+        captureOriginal()
 
         local userCap, coverCap, afkCap, engaged
 
         local function apply()
-            if not canSet then return end
+            if not canSet then return false, "unsupported" end
             local cap = userCap
             if coverCap and (not cap or coverCap < cap) then cap = coverCap end
             if afkCap and (not cap or afkCap < cap) then cap = afkCap end
             if cap then
+                if not engaged then captureOriginal() end
                 engaged = true
                 pcall(setfpscap, cap)
+                return true, "engaged"
             elseif engaged then
                 engaged = false
-                pcall(setfpscap, original or 60)
+                if origState == "numeric" and original then
+                    pcall(setfpscap, original)
+                    return true, "restored"
+                elseif origState == "unlimited" then
+                    pcall(setfpscap, 0)
+                    return true, "restored_unlimited"
+                end
+                return false, "unknown"
             end
+            return true, "idle"
         end
 
         function FpsCap.supported() return canSet end
         function FpsCap.getUser() return userCap end
-        function FpsCap.setUser(fps) userCap = fps; apply() end
-        function FpsCap.setCover(on) coverCap = (on and (original or userCap)) and COVER_CAP or nil; apply() end
-        function FpsCap.setAfk(on) afkCap = on and COVER_CAP or nil; apply() end
-        function FpsCap.restore() userCap, coverCap, afkCap = nil, nil, nil; apply() end
+        function FpsCap.getOriginal() return original, origState end
+        function FpsCap.setUser(fps) userCap = fps; return apply() end
+        function FpsCap.setCover(on) coverCap = on and COVER_CAP or nil; return apply() end
+        function FpsCap.setAfk(on) afkCap = on and COVER_CAP or nil; return apply() end
+        function FpsCap.restore() userCap, coverCap, afkCap = nil, nil, nil; return apply() end
     end
 
     --// ================= MODE SELECTOR (toggle + dropdown) =================
@@ -228,15 +246,15 @@ return function(ctx)
             api.onOpened()
         end
 
-        PopBlocker.Activated:Connect(closePopup)
-        FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(closePopup)
-        MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(closePopup)
-        MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
+        trackConn(PopBlocker.Activated:Connect(closePopup))
+        trackConn(FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(closePopup))
+        trackConn(MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(closePopup))
+        trackConn(MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
             if not MainUI.Visible then closePopup() end
-        end)
-        FPSTab:GetPropertyChangedSignal("Visible"):Connect(function()
+        end))
+        trackConn(FPSTab:GetPropertyChangedSignal("Visible"):Connect(function()
             if not FPSTab.Visible then closePopup() end
-        end)
+        end))
         onDestroy(function()
             closePopup()
             PopBlocker:Destroy()
@@ -773,8 +791,13 @@ return function(ctx)
             return hiddenOk
         end
 
+        local function readProp(inst, prop, hidden)
+            if hidden then return gethiddenproperty(inst, prop) end
+            return inst[prop]
+        end
+
         local function probe(inst, prop, value, hidden)
-            local cur = hidden and gethiddenproperty(inst, prop) or inst[prop]
+            local cur = readProp(inst, prop, hidden)
             if cur == value then return false end
             local now
             if hidden then
@@ -784,6 +807,7 @@ return function(ctx)
                 inst[prop] = value
                 now = inst[prop]
             end
+            if now == cur then return false end
             return true, cur, now
         end
 
@@ -798,7 +822,7 @@ return function(ctx)
         end
 
         local function revert(inst, prop, e)
-            local cur = e[3] and gethiddenproperty(inst, prop) or inst[prop]
+            local cur = readProp(inst, prop, e[3])
             if cur ~= e[2] then return end
             if e[3] then sethiddenproperty(inst, prop, e[1]) else inst[prop] = e[1] end
         end
@@ -919,6 +943,10 @@ return function(ctx)
             clearQueue()
             Opt.watching, Opt.needRescan = false, false
 
+            if UI.GlobalShadows then
+                UI.GlobalShadows.release("FPSOptimizer")
+            end
+
             local t0 = os.clock()
             for inst, rec in pairs(Opt.snapshot) do
                 for prop, e in pairs(rec) do pcall(revert, inst, prop, e) end
@@ -946,20 +974,33 @@ return function(ctx)
         function Features.quality(spec)
             local okR, rendering = pcall(function() return settings().Rendering end)
             if not okR or not rendering then return end
-            local cur = rendering.QualityLevel.Value
+            local okC, cur = pcall(function() return rendering.QualityLevel.Value end)
+            if not okC or type(cur) ~= "number" then return end
             local target
             if cur == 0 then
-                if not (spec.force and spec.cap) then return end
-                target = spec.cap
+                if spec.automaticTarget then
+                    target = spec.automaticTarget
+                elseif spec.applyCapWhenAutomatic and spec.cap then
+                    target = spec.cap
+                else
+                    return
+                end
             else
                 target = math.clamp(cur - (spec.delta or 0), 1, cur)
                 if spec.cap then target = math.min(target, spec.cap) end
             end
-            capture(rendering, "QualityLevel", Enum.QualityLevel:FromValue(target))
+            local okE, enumVal = pcall(Enum.QualityLevel.FromValue, Enum.QualityLevel, target)
+            if okE and enumVal then
+                capture(rendering, "QualityLevel", enumVal)
+            end
         end
 
         function Features.lighting(level)
-            capture(Lighting, "GlobalShadows", false)
+            if UI.GlobalShadows then
+                UI.GlobalShadows.acquire("FPSOptimizer")
+            else
+                capture(Lighting, "GlobalShadows", false)
+            end
             if level >= 2 then
                 capture(Lighting, "ShadowSoftness", 0)
                 capture(Lighting, "EnvironmentDiffuseScale", 0)
@@ -1061,15 +1102,15 @@ return function(ctx)
         local ORDER = { "quality", "lighting", "postFx", "terrain", "particles", "parts" }
         local PROFILES = {
             Balanced = {
-                quality = { delta = 4 }, lighting = 1, postFx = 1, terrain = 1, parts = 1,
+                quality = { delta = 4, applyCapWhenAutomatic = false }, lighting = 1, postFx = 1, terrain = 1, parts = 1,
                 particles = { rate = 0.5 },
             },
             Performance = {
-                quality = { cap = 3 }, lighting = 2, postFx = 2, terrain = 1, parts = 1,
+                quality = { cap = 3, applyCapWhenAutomatic = true, automaticTarget = 3 }, lighting = 2, postFx = 2, terrain = 1, parts = 1,
                 particles = { rate = 0.2, cosmetic = true },
             },
             Extreme = {
-                quality = { cap = 1, force = true }, lighting = 3, postFx = 3, terrain = 2, parts = 2,
+                quality = { cap = 1, applyCapWhenAutomatic = true, automaticTarget = 1, force = true }, lighting = 3, postFx = 3, terrain = 2, parts = 2,
                 particles = { rate = 0.1, cosmetic = true },
             },
         }
@@ -1408,8 +1449,8 @@ return function(ctx)
             if want then table.clear(hist) end
             Meter.want("card", want)
         end
-        FPSTab:GetPropertyChangedSignal("Visible"):Connect(refresh)
-        MainUI:GetPropertyChangedSignal("Visible"):Connect(refresh)
+        trackConn(FPSTab:GetPropertyChangedSignal("Visible"):Connect(refresh))
+        trackConn(MainUI:GetPropertyChangedSignal("Visible"):Connect(refresh))
         refresh()
     end
 
@@ -1532,13 +1573,16 @@ return function(ctx)
 
     --// ================= OPTIMIZE ROWS =================
     local startMode = "Balanced"
+    local attrMode = ScreenGui:GetAttribute("FpsMode")
     for _, m in ipairs(MODES) do
-        if Saved.fpsMode == m then startMode = m end
+        if attrMode == m or (attrMode == nil and Saved.fpsMode == m) then startMode = m end
     end
+    Saved.fpsMode = startMode
     Ctl.mode = startMode
     ScreenGui:SetAttribute("FpsMode", startMode)
 
     local Profile = createModeRow(Optimize.Body, "FPS Profile", MODES, startMode, function(m)
+        Saved.fpsMode = m
         Ctl.mode = m
         ScreenGui:SetAttribute("FpsMode", m)
         saveSettings()
@@ -1548,6 +1592,19 @@ return function(ctx)
         Performance = "Also lights and effects off",
         Extreme = "Lowest quality, flat materials",
     })
+    trackConn(ScreenGui:GetAttributeChangedSignal("FpsMode"):Connect(function()
+        local m = ScreenGui:GetAttribute("FpsMode")
+        if m == Ctl.mode then return end
+        for _, valid in ipairs(MODES) do
+            if m == valid then
+                Saved.fpsMode = m
+                Ctl.mode = m
+                Profile.setMode(m)
+                if Ctl.enabled then reconcile() end
+                break
+            end
+        end
+    end))
     Profile.Frame.LayoutOrder = 1
     Profile.Switch:GetAttributeChangedSignal("Toggled"):Connect(function()
         Ctl.enabled = Profile.Switch:GetAttribute("Toggled") == true
@@ -1693,4 +1750,6 @@ return function(ctx)
         end
         return n
     end)
+
+    return { Destroy = destroyModule, FpsCap = FpsCap }
 end

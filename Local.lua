@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ================= LOCAL TAB (module) =================
 
 return function(ctx)
@@ -69,10 +61,12 @@ return function(ctx)
     end
 
     function Core.SanitizeNumber(s)
+        s = tostring(s or "")
+        local neg = s:sub(1, 1) == "-"
         s = s:gsub("[^%d%.]", "")
-        local dot = s:find(".", 1, true)
-        if dot then s = s:sub(1, dot) .. (s:sub(dot + 1):gsub("%.", "")) end
-        return s:sub(1, 7)
+        s = s:sub(1, 7)
+        if neg then return "-" .. s end
+        return s
     end
 
     function Core.FormatValue(v)
@@ -81,11 +75,18 @@ return function(ctx)
 
     function Core.ParseNumericInput(rawText, opts)
         opts = opts or {}
-        local clean = Core.SanitizeNumber(rawText or "")
-        if clean == "" then return { status = "empty", effective = opts.default } end
+        local minB = (opts.min ~= nil) and tonumber(opts.min) or 0
+        local maxB = (opts.max ~= nil) and tonumber(opts.max) or math.huge
+        if not minB or not maxB or minB ~= minB or maxB ~= maxB or minB > maxB then
+            return { status = "invalid_bounds", effective = opts.default }
+        end
+        local clean = Core.SanitizeNumber(tostring(rawText or ""))
+        if clean == "" or clean == "-" then return { status = "empty", effective = opts.default } end
         local n = tonumber(clean)
-        if clean == "." or not n or n ~= n then return { status = "invalid", effective = opts.default } end
-        local eff = math.clamp(n, 0, opts.max or math.huge)
+        if clean == "." or clean == "-." or not n or n ~= n or math.abs(n) >= math.huge then
+            return { status = "invalid", effective = opts.default }
+        end
+        local eff = math.clamp(n, minB, maxB)
         return {
             status = (eff ~= n) and "clamped" or "ok",
             value = n,
@@ -155,18 +156,37 @@ return function(ctx)
         features[#features + 1] = { handle = handle, onReset = onReset }
     end
 
+    local destroyed = false
     Core.hooks = {}
     function Core.OnDestroy(fn) Core.hooks[#Core.hooks + 1] = fn end
+    local function trackConn(c)
+        Core.OnDestroy(function() c:Disconnect() end)
+        return c
+    end
 
     function Core.TrackCharacter(player, onChar, opts)
         local onDied = opts and opts.onDied
-        local token, cleanup, diedConn = 0, nil, nil
+        local token, activeCleanups, diedConn = 0, nil, nil
+
+        local function cleanOne(item)
+            if type(item) == "function" then
+                pcall(item)
+            elseif typeof(item) == "RBXScriptConnection" or (type(item) == "table" and type(item.Disconnect) == "function") then
+                pcall(item.Disconnect, item)
+            elseif typeof(item) == "Instance" or (type(item) == "table" and type(item.Destroy) == "function") then
+                pcall(item.Destroy, item)
+            end
+        end
 
         local function runCleanup()
             if diedConn then diedConn:Disconnect(); diedConn = nil end
-            local fn = cleanup
-            cleanup = nil
-            if fn then pcall(fn) end
+            local list = activeCleanups
+            activeCleanups = nil
+            if list then
+                for i = #list, 1, -1 do
+                    pcall(list[i])
+                end
+            end
         end
 
         local function handle(char)
@@ -175,14 +195,48 @@ return function(ctx)
             runCleanup()
             local hum = char:WaitForChild("Humanoid", 10)
             local root = char:WaitForChild("HumanoidRootPart", 10)
-            if my ~= token or not hum or not root or not char.Parent then return end
-            local ok, fn = pcall(onChar, char, hum, root)
-            if not ok then warn("[Local] TrackCharacter:", fn); return end
-            cleanup = (type(fn) == "function") and fn or nil
+            if my ~= token or not hum or not root or not char.Parent or (onDied and hum.Health <= 0) then return end
+
+            local myCleanups = {}
+            activeCleanups = myCleanups
+            local function addCleanup(item)
+                if item == nil then return nil end
+                if my ~= token or activeCleanups ~= myCleanups then
+                    cleanOne(item)
+                    return item
+                end
+                local fn
+                if type(item) == "function" then
+                    fn = item
+                elseif typeof(item) == "RBXScriptConnection" or (type(item) == "table" and type(item.Disconnect) == "function") then
+                    fn = function() item:Disconnect() end
+                elseif typeof(item) == "Instance" or (type(item) == "table" and type(item.Destroy) == "function") then
+                    fn = function() item:Destroy() end
+                end
+                if fn then
+                    for _, existing in ipairs(myCleanups) do
+                        if existing == fn then return item end
+                    end
+                    myCleanups[#myCleanups + 1] = fn
+                end
+                return item
+            end
+
             if onDied then
                 diedConn = hum.Died:Connect(function()
                     if my == token then runCleanup() end
                 end)
+            end
+
+            local ok, fn = pcall(onChar, char, hum, root, addCleanup)
+            if not ok then
+                warn("[Local] TrackCharacter:", fn)
+                if my == token then runCleanup() end
+                return
+            end
+            if type(fn) == "function" then addCleanup(fn) end
+            if my ~= token or not char.Parent or (onDied and hum.Health <= 0) then
+                if my == token then runCleanup() end
             end
         end
 
@@ -418,9 +472,12 @@ return function(ctx)
         end)
         bindBoxFocus(Box, BoxStroke)
         Box.FocusLost:Connect(function()
-            local r = Core.ParseNumericInput(Box.Text, { max = opts.max })
+            local r = Core.ParseNumericInput(Box.Text, { max = opts.max, min = opts.min })
             if (r.status == "ok" or r.status == "clamped") and Box.Text ~= r.text then
                 Box.Text = r.text
+            elseif r.status == "invalid" or Box.Text == "-" then
+                if Box.Text ~= "" then flashStrokeError(BoxStroke) end
+                Box.Text = ""
             end
         end)
 
@@ -495,16 +552,23 @@ return function(ctx)
     do
         local MainUI, FunctionScroll = ctx.MainUI, ctx.FunctionScroll
         if MainUI then
-            MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
+            trackConn(MainUI:GetPropertyChangedSignal("Visible"):Connect(function()
                 if not MainUI.Visible then Core.CloseDropdown() end
-            end)
-            MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(Core.CloseDropdown)
+            end))
+            trackConn(MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(Core.CloseDropdown))
         end
         if FunctionScroll then
-            FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(Core.CloseDropdown)
+            trackConn(FunctionScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(Core.CloseDropdown))
         end
-        LocalTab:GetPropertyChangedSignal("Visible"):Connect(function()
+        trackConn(LocalTab:GetPropertyChangedSignal("Visible"):Connect(function()
             if not LocalTab.Visible then Core.CloseDropdown() end
+        end))
+        Core.OnDestroy(function()
+            Core.CloseDropdown()
+            if DD.layer then
+                pcall(DD.layer.Destroy, DD.layer)
+                DD.layer, DD.panel, DD.close = nil, nil, nil
+            end
         end)
     end
 
@@ -671,7 +735,9 @@ return function(ctx)
             info = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
             tweenInfos[time] = info
         end
-        TweenService:Create(inst, info, props):Play()
+        local tw = TweenService:Create(inst, info, props)
+        tw:Play()
+        return tw
     end
 
     function Core.Label(parent, props)
@@ -916,9 +982,10 @@ return function(ctx)
     end)
 
     function Features.CreateTargetBoost(parent, cfg)
-        local row = Core.CreateToggleWithBox(parent, cfg.title, { max = cfg.max })
+        local row = Core.CreateToggleWithBox(parent, cfg.title, { max = cfg.max, min = cfg.min })
         local badge = Core.CreateStatusBadge(row)
         local snaps = setmetatable({}, { __mode = "k" })
+        local applied = setmetatable({}, { __mode = "k" })
         local current, watchConn, presetApi
         local sigs = {}
         local active, applying = false, false
@@ -927,12 +994,52 @@ return function(ctx)
         local onExternal
 
         local function reparse()
-            parsed = Core.ParseNumericInput(row.Box.Text, { max = cfg.max })
-            if cfg.min and parsed.effective and parsed.effective < cfg.min then
-                parsed.effective, parsed.status = cfg.min, "clamped"
-            end
+            parsed = Core.ParseNumericInput(row.Box.Text, { max = cfg.max, min = cfg.min })
         end
         reparse()
+
+        local function recordApplied(t)
+            local rec = applied[t]
+            if not rec then
+                rec = {}
+                applied[t] = rec
+            end
+            for _, prop in ipairs(cfg.props) do
+                rec[prop] = t[prop]
+            end
+        end
+
+        local function mergeExternal(t)
+            local st, last = snaps[t], applied[t]
+            if st == nil or not last then return end
+            if cfg.mergeSnapshot then
+                snaps[t] = cfg.mergeSnapshot(st, t, last)
+            elseif type(st) == "table" then
+                for _, prop in ipairs(cfg.props) do
+                    local cur = t[prop]
+                    if cur ~= last[prop] then
+                        st[prop] = cur
+                        last[prop] = cur
+                    end
+                end
+            else
+                local prop = cfg.props[1]
+                if prop and t[prop] ~= last[prop] then
+                    snaps[t] = t[prop]
+                    last[prop] = t[prop]
+                end
+            end
+        end
+
+        local function restoreTarget(t)
+            local st = snaps[t]
+            if st == nil then return end
+            snaps[t] = nil
+            applied[t] = nil
+            applying = true
+            pcall(cfg.restore, t, st)
+            applying = false
+        end
 
         local function getOriginal()
             local t = cfg.getTarget()
@@ -945,13 +1052,23 @@ return function(ctx)
         end
 
         local function showActive(v)
-            local word = (parsed.status == "clamped") and "Capped" or "Running"
-            badge.set("active", word .. Core.DOT .. Core.FormatValue(v))
+            local eff = cfg.getEffective and cfg.getEffective(v) or v
+            local clamped = (parsed.status == "clamped") or (not cfg.wrapEffective and math.abs(eff - v) > 1e-3)
+            local word = clamped and "Capped" or "Running"
+            badge.set("active", word .. Core.DOT .. Core.FormatValue(eff))
+        end
+        if cfg.bindRefresh then
+            cfg.bindRefresh(function()
+                if active and current and parsed.effective then
+                    showActive(parsed.effective)
+                end
+            end)
         end
 
         local function applyValue(t, v)
             applying = true
             local ok, err = pcall(cfg.apply, t, v)
+            if ok then pcall(recordApplied, t) end
             applying = false
             if not ok then error(err, 0) end
             task.defer(function()
@@ -964,10 +1081,7 @@ return function(ctx)
         local function applyTo(t)
             local v = parsed.effective
             if not v then
-                if snaps[t] ~= nil then
-                    pcall(cfg.restore, t, snaps[t])
-                    snaps[t] = nil
-                end
+                restoreTarget(t)
                 badge.set("paused", "Waiting for value")
                 return
             end
@@ -986,10 +1100,10 @@ return function(ctx)
 
         function onExternal(t)
             if applying or t ~= current or snaps[t] == nil then return end
+            mergeExternal(t)
             local v = parsed.effective
             if not v or cfg.isApplied(t, v) then return end
 
-            snaps[t] = cfg.snapshot(t)
             if not takeBudget() then
                 badge.set("paused", "Overridden by game")
                 return
@@ -1003,10 +1117,7 @@ return function(ctx)
             table.clear(sigs)
             local t = current
             current = nil
-            if t and snaps[t] ~= nil then
-                pcall(cfg.restore, t, snaps[t])
-                snaps[t] = nil
-            end
+            if t then restoreTarget(t) end
         end
 
         local function attach()
@@ -1057,6 +1168,7 @@ return function(ctx)
         local function fillFrom(t)
             local ok, v = pcall(cfg.getValue, t)
             if ok and type(v) == "number" and v == v and v < 1e6 and row.Box.Parent and row.Box.Text == "" then
+                if cfg.min and v < cfg.min then v = cfg.min end
                 row.prefilling = true
                 row.Box.Text = Core.FormatValue(v)
                 row.prefilling = false
@@ -1162,9 +1274,24 @@ return function(ctx)
 
     local JUMP_CFG = humanoidCfg({
         title = "Jump Boost", max = 1000,
-        props = { "JumpPower", "UseJumpPower" },
+        props = { "JumpPower", "UseJumpPower", "JumpHeight" },
         snapshot = function(hum)
             return { use = hum.UseJumpPower, power = hum.JumpPower, height = hum.JumpHeight }
+        end,
+        mergeSnapshot = function(st, hum, last)
+            if hum.UseJumpPower ~= last.UseJumpPower then
+                st.use = hum.UseJumpPower
+                last.UseJumpPower = hum.UseJumpPower
+            end
+            if math.abs(hum.JumpPower - last.JumpPower) > 1e-3 then
+                st.power = hum.JumpPower
+                last.JumpPower = hum.JumpPower
+            end
+            if math.abs(hum.JumpHeight - last.JumpHeight) > 1e-3 then
+                st.height = hum.JumpHeight
+                last.JumpHeight = hum.JumpHeight
+            end
+            return st
         end,
         apply = function(hum, v)
             if not hum.UseJumpPower then hum.UseJumpPower = true end
@@ -1201,15 +1328,177 @@ return function(ctx)
         },
     })
 
-    local ZOOM_CFG = propBoostCfg("CameraMaxZoomDistance", {
-        title = "Max Zoom", max = 1000, waitFor = "player",
-        getTarget = function() return LocalPlayer end,
+    local ZOOM_MIN, ZOOM_MAX = 0.5, 1000
+    local ZoomCoord = {
+        base = nil,
+        last = nil,
+        eff = nil,
+        active = { min = false, max = false },
+        desired = { min = nil, max = nil },
+        refresh = { min = nil, max = nil },
+        writing = false,
+    }
+
+    local function writeZoomPair(p, minVal, maxVal)
+        ZoomCoord.writing = true
+        if minVal > p.CameraMaxZoomDistance then
+            if math.abs(p.CameraMaxZoomDistance - maxVal) > 1e-3 then p.CameraMaxZoomDistance = maxVal end
+            if math.abs(p.CameraMinZoomDistance - minVal) > 1e-3 then p.CameraMinZoomDistance = minVal end
+        else
+            if math.abs(p.CameraMinZoomDistance - minVal) > 1e-3 then p.CameraMinZoomDistance = minVal end
+            if math.abs(p.CameraMaxZoomDistance - maxVal) > 1e-3 then p.CameraMaxZoomDistance = maxVal end
+        end
+        ZoomCoord.last = { min = p.CameraMinZoomDistance, max = p.CameraMaxZoomDistance }
+        ZoomCoord.writing = false
+        for k, fn in pairs(ZoomCoord.refresh) do
+            if ZoomCoord.active[k] and fn then pcall(fn) end
+        end
+    end
+
+    local function ensureZoomBase(p)
+        if not ZoomCoord.base then
+            ZoomCoord.base = {
+                min = p.CameraMinZoomDistance,
+                max = p.CameraMaxZoomDistance,
+            }
+        end
+        return ZoomCoord.base
+    end
+
+    local function resolveZoomPair(changedKey)
+        local base = ZoomCoord.base or { min = ZOOM_MIN, max = ZOOM_MAX }
+        local bMin = math.clamp(base.min, ZOOM_MIN, ZOOM_MAX)
+        local bMax = (base.max >= ZOOM_MIN) and math.clamp(base.max, bMin, ZOOM_MAX) or ZOOM_MAX
+        local dMin = ZoomCoord.active.min and ZoomCoord.desired.min or nil
+        local dMax = ZoomCoord.active.max and ZoomCoord.desired.max or nil
+        local prev = ZoomCoord.eff
+
+        local effMin, effMax
+        if dMin and dMax then
+            if dMin <= dMax then
+                effMin, effMax = dMin, dMax
+            elseif changedKey == "min" then
+                effMax = (prev and prev.max) and math.max(dMax, math.min(prev.max, dMin)) or dMax
+                effMin = math.clamp(dMin, ZOOM_MIN, effMax)
+            elseif changedKey == "max" then
+                effMin = (prev and prev.min) and math.min(dMin, math.max(prev.min, dMax)) or dMin
+                effMax = math.clamp(dMax, effMin, ZOOM_MAX)
+            elseif prev then
+                effMin, effMax = prev.min, prev.max
+            else
+                effMin, effMax = dMax, dMax
+            end
+        elseif dMax then
+            effMin = base.min
+            effMax = math.clamp(math.max(dMax, bMin), ZOOM_MIN, ZOOM_MAX)
+            if effMin > effMax then effMin = effMax end
+        elseif dMin then
+            effMin = math.clamp(math.min(dMin, bMax), ZOOM_MIN, ZOOM_MAX)
+            effMax = math.max(base.max, effMin)
+        else
+            effMin, effMax = base.min, base.max
+        end
+        ZoomCoord.eff = { min = effMin, max = effMax }
+        return effMin, effMax
+    end
+
+    local function mergeZoomExternal(p)
+        local base, last = ZoomCoord.base, ZoomCoord.last
+        if not base or not last or ZoomCoord.writing then return base end
+        local curMin, curMax = p.CameraMinZoomDistance, p.CameraMaxZoomDistance
+        local minChanged = math.abs(curMin - last.min) > 1e-3
+        local maxChanged = math.abs(curMax - last.max) > 1e-3
+        if minChanged then base.min = curMin end
+        if maxChanged then base.max = curMax end
+        if minChanged and not maxChanged and base.min > base.max then
+            base.max = base.min
+        elseif maxChanged and not minChanged and base.max < base.min then
+            base.min = base.max
+        elseif minChanged and maxChanged and base.min > base.max then
+            base.min, base.max = base.max, base.min
+        end
+        resolveZoomPair(nil)
+        return base
+    end
+
+    local function releaseZoomSide(key, p)
+        ZoomCoord.active[key] = false
+        ZoomCoord.desired[key] = nil
+        if not ZoomCoord.active.min and not ZoomCoord.active.max then
+            local base = ZoomCoord.base
+            ZoomCoord.base = nil
+            ZoomCoord.last = nil
+            ZoomCoord.eff = nil
+            if base and p then
+                local rMin, rMax = base.min, base.max
+                if rMin > rMax then rMin, rMax = rMax, rMin end
+                writeZoomPair(p, rMin, rMax)
+                ZoomCoord.last = nil
+            end
+        elseif p and ZoomCoord.base then
+            local effMin, effMax = resolveZoomPair(ZoomCoord.active.min and "min" or "max")
+            writeZoomPair(p, effMin, effMax)
+        end
+    end
+
+    local function zoomBoostCfg(key, prop, cfg)
+        cfg.min = ZOOM_MIN
+        cfg.max = ZOOM_MAX
+        cfg.waitFor = "player"
+        cfg.props = { "CameraMinZoomDistance", "CameraMaxZoomDistance" }
+        cfg.getTarget = function() return LocalPlayer end
+        cfg.snapshot = function(p)
+            return ensureZoomBase(p)
+        end
+        cfg.mergeSnapshot = function(_, p)
+            return mergeZoomExternal(p)
+        end
+        cfg.apply = function(p, v)
+            ensureZoomBase(p)
+            local clamped = math.clamp(v, ZOOM_MIN, ZOOM_MAX)
+            local changed = (not ZoomCoord.active[key]) or (ZoomCoord.desired[key] ~= clamped)
+            ZoomCoord.active[key] = true
+            ZoomCoord.desired[key] = clamped
+            local effMin, effMax = resolveZoomPair(changed and key or nil)
+            writeZoomPair(p, effMin, effMax)
+        end
+        cfg.restore = function(p)
+            releaseZoomSide(key, p)
+        end
+        cfg.getValue = function(p)
+            return p[prop]
+        end
+        cfg.isApplied = function(p)
+            local eff = ZoomCoord.eff
+            if not eff then return false end
+            if ZoomCoord.active.min and math.abs(p.CameraMinZoomDistance - eff.min) >= 1e-3 then
+                return false
+            end
+            if ZoomCoord.active.max and math.abs(p.CameraMaxZoomDistance - eff.max) >= 1e-3 then
+                return false
+            end
+            return p.CameraMinZoomDistance <= p.CameraMaxZoomDistance + 1e-3
+        end
+        cfg.fromSnapshot = function(st)
+            local base = ZoomCoord.base or st
+            return base and base[key] or nil
+        end
+        cfg.getEffective = function(v)
+            return (ZoomCoord.eff and ZoomCoord.eff[key]) or v
+        end
+        cfg.bindRefresh = function(fn)
+            ZoomCoord.refresh[key] = fn
+        end
+        return cfg
+    end
+
+    local ZOOM_CFG = zoomBoostCfg("max", "CameraMaxZoomDistance", {
+        title = "Max Zoom",
         presets = boostPresets(1000),
     })
 
-    local MIN_ZOOM_CFG = propBoostCfg("CameraMinZoomDistance", {
-        title = "Min Zoom", max = 1000, min = 0.5, waitFor = "player",
-        getTarget = function() return LocalPlayer end,
+    local MIN_ZOOM_CFG = zoomBoostCfg("min", "CameraMinZoomDistance", {
+        title = "Min Zoom",
         presets = {
             originalPreset(),
             { label = "0.5", value = 0.5 },
@@ -1226,6 +1515,8 @@ return function(ctx)
             if math.abs(l.ClockTime - ct) > 1e-3 then l.ClockTime = ct end
         end,
         isApplied = function(l, v) return math.abs(l.ClockTime - (v % 24)) < 1e-2 end,
+        getEffective = function(v) return v % 24 end,
+        wrapEffective = true,
         presets = {
             originalPreset(),
             { label = "Dawn",  value = 6 },
@@ -1273,8 +1564,14 @@ return function(ctx)
 
         local function start()
             badge.set("waiting", "Waiting for character")
-            tracker = Core.TrackCharacter(LocalPlayer, function(char)
+            tracker = Core.TrackCharacter(LocalPlayer, function(char, _, _, addCleanup)
                 local parts, original, conns = {}, {}, {}
+                addCleanup(function()
+                    for _, c in ipairs(conns) do c:Disconnect() end
+                    for p, was in pairs(original) do
+                        if p.Parent then p.CanCollide = was end
+                    end
+                end)
 
                 local function add(inst)
                     if inst:IsA("BasePart") and original[inst] == nil then
@@ -1297,13 +1594,6 @@ return function(ctx)
                     end
                 end)
                 badge.set("active", "Running")
-
-                return function()
-                    for _, c in ipairs(conns) do c:Disconnect() end
-                    for p, was in pairs(original) do
-                        if p.Parent then p.CanCollide = was end
-                    end
-                end
             end)
         end
 
@@ -1323,7 +1613,7 @@ return function(ctx)
         local upUntil = 0
         local vel = Vector3.zero
         local active, seated = false, false
-        local tracker, jumpConn, brakeConn
+        local tracker, jumpConn, brakeConn, presetApi
         local parsed = { status = "empty", effective = DEFAULT }
 
         local function updateBadge()
@@ -1338,6 +1628,7 @@ return function(ctx)
 
         local function reparse()
             parsed = Core.ParseNumericInput(row.Box.Text, { max = MAX, default = DEFAULT })
+            if presetApi then presetApi.markActive(parsed.effective) end
             if active and not seated then updateBadge() end
         end
         row.Box:GetPropertyChangedSignal("Text"):Connect(reparse)
@@ -1354,32 +1645,45 @@ return function(ctx)
             end)
             Core.LoadControls()
 
-            tracker = Core.TrackCharacter(LocalPlayer, function(_, hum, root)
+            tracker = Core.TrackCharacter(LocalPlayer, function(_, hum, root, addCleanup)
                 local snap = { platformStand = hum.PlatformStand, autoRotate = hum.AutoRotate }
-                local att = new("Attachment", { Name = "ElyseraFlyAtt" }, root)
-                local lv = new("LinearVelocity", {
+                addCleanup(function()
+                    if hum.Parent then
+                        hum.PlatformStand = snap.platformStand
+                        hum.AutoRotate = snap.autoRotate
+                    end
+                end)
+                local att = addCleanup(new("Attachment", { Name = "ElyseraFlyAtt" }, root))
+                local lv = addCleanup(new("LinearVelocity", {
                     Name = "ElyseraFlyLV",
                     Attachment0 = att,
                     RelativeTo = Enum.ActuatorRelativeTo.World,
                     MaxForce = 1e9,
                     VectorVelocity = Vector3.zero,
-                }, root)
-                local ao = new("AlignOrientation", {
+                }, root))
+                local ao = addCleanup(new("AlignOrientation", {
                     Name = "ElyseraFlyAO",
                     Mode = Enum.OrientationAlignmentMode.OneAttachment,
                     Attachment0 = att,
                     RigidityEnabled = false,
                     MaxTorque = 1e9,
                     Responsiveness = 50,
-                }, root)
+                }, root))
                 hum.PlatformStand = true
                 hum.AutoRotate = false
                 vel = Vector3.zero
-                seated = false
-                updateBadge()
+                if hum.SeatPart then
+                    seated = true
+                    lv.Enabled = false
+                    ao.Enabled = false
+                    badge.set("paused", "Seated")
+                else
+                    seated = false
+                    updateBadge()
+                end
                 local lastVel, lastLook = vel, nil
 
-                local conn = RunService.RenderStepped:Connect(function(dt)
+                addCleanup(RunService.RenderStepped:Connect(function(dt)
                     if hum.Health <= 0 or not root.Parent then return end
                     if hum.SeatPart then
                         if not seated then
@@ -1387,11 +1691,15 @@ return function(ctx)
                             vel = Vector3.zero
                             lastVel = vel
                             lv.VectorVelocity = vel
+                            lv.Enabled = false
+                            ao.Enabled = false
                             badge.set("paused", "Seated")
                         end
                         return
                     elseif seated then
                         seated = false
+                        lv.Enabled = true
+                        ao.Enabled = true
                         updateBadge()
                     end
 
@@ -1413,18 +1721,7 @@ return function(ctx)
                             ao.CFrame = CFrame.lookAt(Vector3.zero, look)
                         end
                     end
-                end)
-
-                return function()
-                    conn:Disconnect()
-                    lv:Destroy()
-                    ao:Destroy()
-                    att:Destroy()
-                    if hum.Parent then
-                        hum.PlatformStand = snap.platformStand
-                        hum.AutoRotate = snap.autoRotate
-                    end
-                end
+                end))
             end, { onDied = true })
         end
 
@@ -1444,12 +1741,13 @@ return function(ctx)
             onReset = function() row.Box.Text = "" end,
         })
 
-        Core.CreatePresetRow(row, {
+        presetApi = Core.CreatePresetRow(row, {
             { label = "30",  value = 30 },
             { label = "60",  value = 60 },
             { label = "120", value = 120 },
             { label = "250", value = 250 },
         })
+        presetApi.markActive(parsed.effective)
         return handle
     end
 
@@ -1461,9 +1759,12 @@ return function(ctx)
         local parsed = { status = "empty", effective = DEFAULT }
         local active = false
         local conns = {}
-        local camSnap, rootSnap
+        local rootSnaps = {}
+        local camSnap
+        local charToken = 0
         local camPos, yaw, pitch = Vector3.zero, 0, 0
         local upUntil = 0
+        local presetApi
 
         local function updateBadge()
             local spd = Core.FormatValue(parsed.effective or DEFAULT)
@@ -1472,13 +1773,79 @@ return function(ctx)
 
         local function reparse()
             parsed = Core.ParseNumericInput(row.Box.Text, { max = MAX, default = DEFAULT })
+            if presetApi then presetApi.markActive(parsed.effective) end
             if active then updateBadge() end
         end
         row.Box:GetPropertyChangedSignal("Text"):Connect(reparse)
         reparse()
 
+        local function captureRoot(root)
+            if not active or not root or not root:IsDescendantOf(Workspace) then return end
+            if rootSnaps[root] == nil then
+                rootSnaps[root] = root.Anchored
+            end
+            root.Anchored = true
+        end
+
+        local function restoreRoot(root)
+            local was = rootSnaps[root]
+            if was ~= nil then
+                rootSnaps[root] = nil
+                if root.Parent then
+                    pcall(function() root.Anchored = was end)
+                end
+            end
+        end
+
+        local function restoreAllRoots()
+            for root, was in pairs(rootSnaps) do
+                rootSnaps[root] = nil
+                if root.Parent then
+                    pcall(function() root.Anchored = was end)
+                end
+            end
+        end
+
+        local function bindCharacter(char)
+            charToken = charToken + 1
+            local myToken = charToken
+            for root in pairs(rootSnaps) do
+                if not char or not root:IsDescendantOf(char) then
+                    restoreRoot(root)
+                end
+            end
+            if not active or not char then return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                captureRoot(root)
+                return
+            end
+            task.spawn(function()
+                local waited = char:WaitForChild("HumanoidRootPart", 10)
+                if active and myToken == charToken and waited and char:IsDescendantOf(Workspace) then
+                    captureRoot(waited)
+                end
+            end)
+        end
+
+        local function resolveCameraSubject()
+            local char = LocalPlayer.Character
+            if char and char:IsDescendantOf(Workspace) then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then return hum end
+            end
+            local saved = camSnap and camSnap.subject
+            if saved and saved:IsDescendantOf(Workspace) then
+                if not saved:IsA("Humanoid") or (char and saved:IsDescendantOf(char)) then
+                    return saved
+                end
+            end
+            return nil
+        end
+
         local function stop()
             active = false
+            charToken = charToken + 1
             for _, c in ipairs(conns) do c:Disconnect() end
             table.clear(conns)
             pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.Default end)
@@ -1487,18 +1854,16 @@ return function(ctx)
                 if cam then
                     pcall(function()
                         cam.CameraType = camSnap.type
-                        if camSnap.subject and camSnap.subject.Parent then
-                            cam.CameraSubject = camSnap.subject
+                        local subject = resolveCameraSubject()
+                        if subject then
+                            cam.CameraSubject = subject
                         end
                         cam.CFrame = camSnap.cf
                     end)
                 end
                 camSnap = nil
             end
-            if rootSnap and rootSnap.root and rootSnap.root.Parent then
-                rootSnap.root.Anchored = rootSnap.anchored
-            end
-            rootSnap = nil
+            restoreAllRoots()
             badge.set("off")
         end
 
@@ -1515,11 +1880,7 @@ return function(ctx)
             camSnap = { type = cam.CameraType, subject = cam.CameraSubject, cf = cam.CFrame }
             cam.CameraType = Enum.CameraType.Scriptable
 
-            local root = Core.GetRoot()
-            if root then
-                rootSnap = { root = root, anchored = root.Anchored }
-                root.Anchored = true
-            end
+            bindCharacter(LocalPlayer.Character)
 
             conns[1] = UserInputService.JumpRequest:Connect(function() upUntil = os.clock() + 0.25 end)
             conns[2] = UserInputService.InputBegan:Connect(function(i, gp)
@@ -1555,6 +1916,14 @@ return function(ctx)
                 camPos = camPos + (dir * speed * dt)
                 c.CFrame = CFrame.new(camPos) * rot
             end)
+            conns[6] = LocalPlayer.CharacterAdded:Connect(bindCharacter)
+            conns[7] = LocalPlayer.CharacterRemoving:Connect(function(char)
+                for root in pairs(rootSnaps) do
+                    if root:IsDescendantOf(char) then
+                        restoreRoot(root)
+                    end
+                end
+            end)
             updateBadge()
         end
 
@@ -1565,12 +1934,13 @@ return function(ctx)
             onReset = function() row.Box.Text = "" end,
         })
 
-        Core.CreatePresetRow(row, {
+        presetApi = Core.CreatePresetRow(row, {
             { label = "30",  value = 30 },
             { label = "60",  value = 60 },
             { label = "120", value = 120 },
             { label = "250", value = 250 },
         })
+        presetApi.markActive(parsed.effective)
         return handle
     end
 
@@ -1594,9 +1964,6 @@ return function(ctx)
         }
         if modeId == "fog" or modeId == "perf" then
             props.FogEnd = function(f) return math.max(f, 100000) end
-        end
-        if modeId == "perf" then
-            props.GlobalShadows = function() return false end
         end
         return props
     end
@@ -1659,16 +2026,32 @@ return function(ctx)
                 end
                 write(p)
             end
+            if UI.GlobalShadows then
+                if mode.id == "perf" then
+                    UI.GlobalShadows.acquire("FullBright")
+                else
+                    UI.GlobalShadows.release("FullBright")
+                end
+            end
             badge.set("active", mode.label)
         end
 
         local function release()
+            if UI.GlobalShadows then
+                UI.GlobalShadows.release("FullBright")
+            end
             if claim then
                 for p in pairs(claim) do giveBack(p) end
                 claim = nil
             end
             badge.set("off")
         end
+
+        Core.OnDestroy(function()
+            if UI.GlobalShadows then
+                UI.GlobalShadows.release("FullBright")
+            end
+        end)
 
         handle = Core.BindToggle(row.Switch, row.Set, { start = apply, stop = release, badge = badge })
 
@@ -1740,7 +2123,7 @@ return function(ctx)
     function Features.CreateEspController(opts)
         local HIGHLIGHT_BUDGET = 31
         local entries, trackers, conns, folder, stopLoop = {}, {}, {}, nil, nil
-        local hlCount, stopping = 0, false
+        local hlCount, stopping, active = 0, false, false
         local syncAll
 
         local function teamColor(p)
@@ -1764,7 +2147,14 @@ return function(ctx)
             }, parent)
         end
 
+        local function isEligible(p, e)
+            return p.Parent == Players
+                and e.char ~= nil and e.char.Parent ~= nil and e.char:IsDescendantOf(Workspace)
+                and e.root ~= nil and e.root.Parent ~= nil and e.root:IsDescendantOf(Workspace)
+        end
+
         local function setOutlineColor(e, color)
+            if not e.outline then return end
             if e.useHl then e.outline.OutlineColor = color else e.outline.Color3 = color end
         end
 
@@ -1777,11 +2167,13 @@ return function(ctx)
             e.bb.Enabled = e.nameLine.Visible or e.distLine.Visible
                 or e.hpLine.Visible or e.teamLine.Visible
             e.bb.AlwaysOnTop = not opts.occluded
-            if e.useHl then
-                e.outline.DepthMode = opts.occluded and Enum.HighlightDepthMode.Occluded
-                    or Enum.HighlightDepthMode.AlwaysOnTop
-            else
-                e.outline.AlwaysOnTop = not opts.occluded
+            if e.outline then
+                if e.useHl then
+                    e.outline.DepthMode = opts.occluded and Enum.HighlightDepthMode.Occluded
+                        or Enum.HighlightDepthMode.AlwaysOnTop
+                else
+                    e.outline.AlwaysOnTop = not opts.occluded
+                end
             end
         end
 
@@ -1802,6 +2194,16 @@ return function(ctx)
                 e.hp, e.maxHp = hp, maxHp
                 e.hpLine.Text = string.format("HP: %d/%d", hp, maxHp)
                 e.hpLine.TextColor3 = RED:Lerp(GREEN, math.clamp(hp / maxHp, 0, 1))
+            end
+        end
+
+        local function refreshBoxBounds(e)
+            if not e.outline or e.useHl or not e.char or not e.char.Parent or not e.root or not e.root.Parent then return end
+            local ok, boxCf, boxSize = pcall(e.char.GetBoundingBox, e.char)
+            if ok and boxCf and boxSize then
+                e.outline.Adornee = e.root
+                e.outline.CFrame = e.root.CFrame:ToObjectSpace(boxCf)
+                e.outline.Size = boxSize
             end
         end
 
@@ -1829,12 +2231,27 @@ return function(ctx)
             }, folder)
         end
 
-        local function setOutlineMode(p, e, asHighlight)
-            if not folder or (e.outline and e.useHl == asHighlight) then return end
+        local function clearOutline(e)
             if e.outline then
                 e.outline:Destroy()
-                if e.useHl then hlCount = hlCount - 1 end
+                e.outline = nil
             end
+            if e.useHl then
+                e.useHl = false
+                hlCount = math.max(0, hlCount - 1)
+            else
+                e.useHl = nil
+            end
+        end
+
+        local function setOutlineMode(p, e, asHighlight)
+            if not folder then return end
+            if asHighlight == nil or not isEligible(p, e) then
+                clearOutline(e)
+                return
+            end
+            if e.outline and e.useHl == asHighlight then return end
+            clearOutline(e)
             e.useHl = asHighlight
             e.outline = makeOutline(p, e, asHighlight)
             if asHighlight then hlCount = hlCount + 1 end
@@ -1864,11 +2281,7 @@ return function(ctx)
         end
 
         local function destroyVisuals(e)
-            if e.outline then
-                if e.useHl then hlCount = hlCount - 1 end
-                e.outline:Destroy()
-                e.outline = nil
-            end
+            clearOutline(e)
             if e.bb then e.bb:Destroy(); e.bb = nil end
         end
 
@@ -1886,43 +2299,90 @@ return function(ctx)
 
         local function rebalance()
             if not folder then return end
-            if countEntries() <= HIGHLIGHT_BUDGET then
-                for p, e in pairs(entries) do setOutlineMode(p, e, true) end
-                return
-            end
             local origin = getOrigin()
-            local ranked = {}
+            local eligible = {}
             for p, e in pairs(entries) do
-                if e.root.Parent then
+                if isEligible(p, e) then
                     local d = (e.root.Position - origin).Magnitude
-                    ranked[#ranked + 1] = { p = p, e = e, key = e.useHl and d * 0.9 or d }
+                    eligible[#eligible + 1] = { p = p, e = e, key = e.useHl and d * 0.9 or d }
+                else
+                    clearOutline(e)
                 end
             end
-            table.sort(ranked, function(a, b) return a.key < b.key end)
-            for i, it in ipairs(ranked) do
-                setOutlineMode(it.p, it.e, i <= HIGHLIGHT_BUDGET)
+            table.sort(eligible, function(a, b)
+                if a.key ~= b.key then return a.key < b.key end
+                return a.p.UserId < b.p.UserId
+            end)
+            for i = HIGHLIGHT_BUDGET + 1, #eligible do
+                local it = eligible[i]
+                setOutlineMode(it.p, it.e, false)
             end
+            local winCount = math.min(#eligible, HIGHLIGHT_BUDGET)
+            for i = 1, winCount do
+                local it = eligible[i]
+                setOutlineMode(it.p, it.e, true)
+            end
+            local actual = 0
+            for _, e in pairs(entries) do
+                if e.outline and e.useHl then actual = actual + 1 end
+            end
+            hlCount = actual
         end
 
-        local function track(p)
-            if p == LocalPlayer or trackers[p] then return end
-            trackers[p] = Core.TrackCharacter(p, function(char, hum, root)
+        local generation = 0
+
+        local function track(p, runId)
+            if not active or not folder or runId ~= generation then return end
+            if p == LocalPlayer or trackers[p] or p.Parent ~= Players then return end
+            trackers[p] = Core.TrackCharacter(p, function(char, hum, root, addCleanup)
+                if not active or not folder or runId ~= generation then return end
                 local e = { char = char, hum = hum, root = root }
+                addCleanup(function()
+                    destroyVisuals(e)
+                    if entries[p] == e then entries[p] = nil end
+                    if active and not stopping then syncAll() end
+                end)
                 buildVisuals(p, e)
                 entries[p] = e
                 setOutlineMode(p, e, hlCount < HIGHLIGHT_BUDGET)
                 refreshHp(e)
 
-                local c1 = hum.HealthChanged:Connect(function() refreshHp(e) end)
-                local c2 = hum:GetPropertyChangedSignal("MaxHealth"):Connect(function() refreshHp(e) end)
-                local c3 = p:GetPropertyChangedSignal("Team"):Connect(function() refreshColor(p, e) end)
-                return function()
-                    c1:Disconnect()
-                    c2:Disconnect()
-                    c3:Disconnect()
-                    destroyVisuals(e)
-                    entries[p] = nil
-                    if not stopping then syncAll() end
+                local boundsQueued = false
+                local function scheduleBoundsRefresh()
+                    if boundsQueued then return end
+                    boundsQueued = true
+                    task.defer(function()
+                        boundsQueued = false
+                        if entries[p] ~= e then return end
+                        if e.bb and e.char and e.char.Parent then
+                            e.bb.Adornee = e.char:FindFirstChild("Head") or e.root
+                        end
+                        refreshBoxBounds(e)
+                    end)
+                end
+
+                addCleanup(hum.HealthChanged:Connect(function() refreshHp(e) end))
+                addCleanup(hum:GetPropertyChangedSignal("MaxHealth"):Connect(function() refreshHp(e) end))
+                addCleanup(p:GetPropertyChangedSignal("Team"):Connect(function() refreshColor(p, e) end))
+                addCleanup(root.AncestryChanged:Connect(function()
+                    if active and not stopping then syncAll() end
+                end))
+                addCleanup(char.DescendantAdded:Connect(function(d)
+                    if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("CharacterMesh") then
+                        scheduleBoundsRefresh()
+                    end
+                end))
+                addCleanup(char.DescendantRemoving:Connect(function(d)
+                    if d:IsA("BasePart") or d:IsA("Accessory") or d:IsA("CharacterMesh") then
+                        scheduleBoundsRefresh()
+                    end
+                end))
+                if p.CharacterAppearanceLoaded then
+                    pcall(function()
+                        addCleanup(p.CharacterAppearanceLoaded:Connect(function()
+                            if entries[p] == e then scheduleBoundsRefresh() end
+                        end))
+                    end)
                 end
             end, { onDied = true })
         end
@@ -1966,24 +2426,34 @@ return function(ctx)
 
         local C = {}
         function C.start()
-            if folder then return end
+            if active then return end
+            active = true
+            generation += 1
+            local runId = generation
             folder = new("Folder", { Name = "ElyseraESP" }, GuiRoot)
-            for _, p in ipairs(Players:GetPlayers()) do track(p) end
-            conns[1] = Players.PlayerAdded:Connect(track)
+            conns[1] = Players.PlayerAdded:Connect(function(p)
+                if active and generation == runId then track(p, runId) end
+            end)
             conns[2] = Players.PlayerRemoving:Connect(function(p)
+                if not active or generation ~= runId then return end
                 if trackers[p] then
                     trackers[p].destroy()
                     trackers[p] = nil
                 end
             end)
             conns[3] = LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+                if not active or generation ~= runId then return end
                 for p, e in pairs(entries) do refreshColor(p, e) end
             end)
+            for _, p in ipairs(Players:GetPlayers()) do track(p, runId) end
             syncAll()
         end
 
         function C.stop()
+            if not active and not folder then return end
             stopping = true
+            active = false
+            generation += 1
             if stopLoop then stopLoop(); stopLoop = nil end
             for _, c in ipairs(conns) do c:Disconnect() end
             table.clear(conns)
@@ -1991,6 +2461,7 @@ return function(ctx)
                 t.destroy()
                 trackers[p] = nil
             end
+            table.clear(entries)
             if folder then folder:Destroy(); folder = nil end
             hlCount, stopping = 0, false
         end
@@ -2016,6 +2487,7 @@ return function(ctx)
             if controller then controller.refreshStyle() end
         end)
         controller = Features.CreateEspController(opts)
+        Core.OnDestroy(controller.stop)
         ui.setEnabled(false)
 
         return Core.BindToggle(Switch, Set, {
@@ -2074,12 +2546,12 @@ return function(ctx)
         local function start()
             rescues = 0
             badge.set("waiting", "Waiting for character")
-            tracker = Core.TrackCharacter(LocalPlayer, function(_, hum, root)
+            tracker = Core.TrackCharacter(LocalPlayer, function(_, hum, root, addCleanup)
                 local safe, lastSample, cooldown = nil, 0, 0
                 if hum.FloorMaterial ~= Enum.Material.Air then safe = root.CFrame end
                 showStatus()
 
-                local conn = RunService.Heartbeat:Connect(function()
+                addCleanup(RunService.Heartbeat:Connect(function()
                     if hum.Health <= 0 or not root.Parent then return end
                     local now = os.clock()
                     if root.Position.Y < voidLine() then
@@ -2095,8 +2567,7 @@ return function(ctx)
                         lastSample = now
                         if hum.FloorMaterial ~= Enum.Material.Air then safe = root.CFrame end
                     end
-                end)
-                return function() conn:Disconnect() end
+                end))
             end, { onDied = true })
         end
 
@@ -2186,15 +2657,15 @@ return function(ctx)
 
         local function track(p)
             if p == LocalPlayer or trackers[p] then return end
-            trackers[p] = Core.TrackCharacter(p, function(char)
+            trackers[p] = Core.TrackCharacter(p, function(char, _, _, addCleanup)
                 local restore = UI.HideCharacter(char)
                 hidden = hidden + 1
-                status()
-                return function()
+                addCleanup(function()
                     restore()
                     hidden = math.max(0, hidden - 1)
                     status()
-                end
+                end)
+                status()
             end)
         end
 
@@ -2327,25 +2798,48 @@ return function(ctx)
             radius = 6,
         })
 
+        local function isFiniteCoord(n)
+            return type(n) == "number" and n == n and math.abs(n) < math.huge
+        end
+
         local function currentXyzText()
             local root = Core.GetRoot()
             if not root then return nil end
-            local p = root.Position
+            local ok, p = pcall(function() return root.Position end)
+            if not ok or typeof(p) ~= "Vector3" then return nil end
+            if not (isFiniteCoord(p.X) and isFiniteCoord(p.Y) and isFiniteCoord(p.Z)) then return nil end
             return string.format("%d, %d, %d", math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5))
         end
 
         CopyBtn.onClick(function()
-            local txt = currentXyzText()
-            if not txt then CopyBtn.flash("No char", 1.2, true); return end
+            local okT, txt = pcall(currentXyzText)
+            if not okT or not txt then CopyBtn.flash(Core.GetRoot() and "Invalid" or "No char", 1.2, true); return end
             local ok = UI.CopyText(txt)
             CopyBtn.flash(ok and "Copied!" or "Failed", 1.2, not ok)
         end)
 
+        local function isValidNumToken(tok)
+            local body = tok:match("^[%+%-]?(.*)$")
+            if not body or body == "" then return false end
+            local mant = body
+            if body:find("[eE]") then
+                local m, exp = body:match("^([^eE]+)[eE]([%+%-]?%d+)$")
+                if not m or not exp then return false end
+                mant = m
+            end
+            return (mant:match("^%d+%.?%d*$") ~= nil) or (mant:match("^%.%d+$") ~= nil)
+        end
+
         local function parseXYZ(s)
+            local raw = tostring(s or "")
+            local low = raw:lower()
+            if low:find("nan", 1, true) or low:find("inf", 1, true) then return nil end
             local nums = {}
-            for tok in tostring(s or ""):gmatch("[%+%-]?%d+%.?%d*") do
+            for tok in raw:gmatch("[%+%-]?%.?%d[%w%.%+%-]*") do
+                if not isValidNumToken(tok) then return nil end
                 local n = tonumber(tok)
-                if n and n == n and math.abs(n) < 1e7 then nums[#nums + 1] = n end
+                if not n or n ~= n or math.abs(n) >= 1e7 then return nil end
+                nums[#nums + 1] = n
             end
             if #nums >= 3 then return nums[1], nums[2], nums[3] end
             return nil
@@ -2373,9 +2867,10 @@ return function(ctx)
 
         task.spawn(function()
             local MainUI = ctx.MainUI
-            while ScreenGui.Parent do
+            while ScreenGui.Parent and not destroyed do
                 if LocalTab.Visible and parent.Visible and (not MainUI or MainUI.Visible) then
-                    local nextText = "XYZ: " .. (currentXyzText() or "--")
+                    local ok, xyz = pcall(currentXyzText)
+                    local nextText = "XYZ: " .. ((ok and xyz) or "--")
                     if PosLabel.Text ~= nextText then PosLabel.Text = nextText end
                 end
                 task.wait(0.4)
@@ -2387,26 +2882,58 @@ return function(ctx)
 
     --// ---------------- Waypoints (with Rename + Export/Import) ----------------
     function Features.CreateWaypoints(parent)
-        local FILE, MAX = "Elysera_Waypoints.json", 15
+        local FILE, MAX, MAX_COORD = "Elysera_Waypoints.json", 15, 1e7
         local HttpService = ctx.HttpService or game:GetService("HttpService")
         local canFS = ctx.canFS == true
         local placeKey = tostring(game.PlaceId)
 
-        local store = UI.ReadJson(FILE) or {}
-        local points = {}
+        local function validCoord(v)
+            return type(v) == "number" and v == v and math.abs(v) <= MAX_COORD
+        end
+
+        local function normalizeRot(r)
+            if r == nil then return 0 end
+            local n = tonumber(r)
+            if not n or n ~= n or math.abs(n) > MAX_COORD then return nil end
+            n = ((n + 180) % 360 + 360) % 360 - 180
+            return (n == n) and n or 0
+        end
+
+        local function sanitizePoint(p)
+            if type(p) ~= "table" then return nil end
+            if not (validCoord(p.x) and validCoord(p.y) and validCoord(p.z)) then return nil end
+            local rot = normalizeRot(p.r)
+            if not rot then return nil end
+            return {
+                n = Core.ClipText(tostring(p.n or "Point"), 24),
+                x = p.x, y = p.y, z = p.z,
+                r = rot,
+            }
+        end
+
+        local rawStore = UI.ReadJson(FILE)
+        local store = type(rawStore) == "table" and rawStore or {}
+        local points, dirty = {}, (rawStore ~= nil and type(rawStore) ~= "table")
         if type(store[placeKey]) == "table" then
             for _, p in ipairs(store[placeKey]) do
-                if #points < MAX and type(p) == "table"
-                    and type(p.x) == "number" and type(p.y) == "number" and type(p.z) == "number" then
-                    points[#points + 1] = {
-                        n = Core.ClipText(tostring(p.n or "Point"), 24),
-                        x = p.x, y = p.y, z = p.z,
-                        r = tonumber(p.r) or 0,
-                    }
+                if #points < MAX then
+                    local wp = sanitizePoint(p)
+                    if wp then
+                        points[#points + 1] = wp
+                    else
+                        dirty = true
+                    end
+                else
+                    dirty = true
                 end
             end
+        elseif store[placeKey] ~= nil then
+            dirty = true
         end
         store[placeKey] = points
+        if dirty and canFS then
+            UI.WriteJson(FILE, store)
+        end
 
         local saveQueued = false
         local function save()
@@ -2535,12 +3062,14 @@ return function(ctx)
                 end
             end)
 
+            local okFmt, coordText = pcall(string.format, "%d, %d, %d",
+                math.floor(p.x + 0.5), math.floor(p.y + 0.5), math.floor(p.z + 0.5))
             Core.Label(Row, {
                 Position = UDim2.fromOffset(10, 23),
                 Size = UDim2.new(1, -104, 0, 14),
                 TextSize = 11,
                 TextColor3 = Theme.SubText,
-                Text = string.format("%d, %d, %d", math.floor(p.x + 0.5), math.floor(p.y + 0.5), math.floor(p.z + 0.5)),
+                Text = okFmt and coordText or "0, 0, 0",
             })
 
             local go = Core.CreateButton(Row, "Go", {
@@ -2558,7 +3087,12 @@ return function(ctx)
             del.Button.TextColor3 = Theme.Danger
 
             go.onClick(function()
-                local cf = CFrame.new(p.x, p.y, p.z) * CFrame.Angles(0, math.rad(p.r), 0)
+                if not (validCoord(p.x) and validCoord(p.y) and validCoord(p.z)) then
+                    note.flash("Invalid position", true)
+                    return
+                end
+                local rot = normalizeRot(p.r) or 0
+                local cf = CFrame.new(p.x, p.y, p.z) * CFrame.Angles(0, math.rad(rot), 0)
                 if Core.TeleportTo(cf) then
                     note.flash("Teleported to " .. p.n)
                 else
@@ -2577,6 +3111,11 @@ return function(ctx)
         rebuild = function()
             for _, c in ipairs(List:GetChildren()) do
                 if c.Name == "Waypoint" then c:Destroy() end
+            end
+            for i = #points, 1, -1 do
+                if not sanitizePoint(points[i]) then
+                    table.remove(points, i)
+                end
             end
             for _, p in ipairs(points) do makeRow(p) end
             Empty.Visible = (#points == 0)
@@ -2597,13 +3136,13 @@ return function(ctx)
             end
             local pos = root.Position
             local _, yaw = root.CFrame:ToOrientation()
-            for _, v in ipairs({ pos.X, pos.Y, pos.Z, yaw }) do
-                if v ~= v or math.abs(v) == math.huge then
-                    note.flash("Invalid position", true)
-                    return
-                end
+            local deg = (yaw == yaw and math.abs(yaw) < math.huge) and math.deg(yaw) or nil
+            local wp = sanitizePoint({ n = name, x = pos.X, y = pos.Y, z = pos.Z, r = deg })
+            if not wp then
+                note.flash("Invalid position", true)
+                return
             end
-            points[#points + 1] = { n = name, x = pos.X, y = pos.Y, z = pos.Z, r = math.deg(yaw) }
+            points[#points + 1] = wp
             Box.Text = ""
             save()
             rebuild()
@@ -2634,24 +3173,31 @@ return function(ctx)
                 note.flash("Invalid waypoint JSON", true)
                 return
             end
-            local added = 0
+            local valid, skipped = {}, 0
+            local cap = MAX - #points
             for _, p in ipairs(listIn) do
-                if #points >= MAX then break end
-                if type(p) == "table" and type(p.x) == "number" and type(p.y) == "number" and type(p.z) == "number" then
-                    points[#points + 1] = {
-                        n = Core.ClipText(tostring(p.n or "Point"), 24),
-                        x = p.x, y = p.y, z = p.z,
-                        r = tonumber(p.r) or 0,
-                    }
-                    added = added + 1
+                local wp = sanitizePoint(p)
+                if wp then
+                    if #valid < cap then
+                        valid[#valid + 1] = wp
+                    else
+                        skipped = skipped + 1
+                    end
+                else
+                    skipped = skipped + 1
                 end
             end
-            if added == 0 then note.flash("No waypoints imported", true); return end
+            if #valid == 0 then note.flash("No waypoints imported", true); return end
+            for _, wp in ipairs(valid) do
+                points[#points + 1] = wp
+            end
             Box.Text = ""
             save()
             rebuild()
-            ImportBtn.flash("+" .. added, 1.2)
-            note.flash("Imported " .. added .. " waypoint(s)")
+            ImportBtn.flash("+" .. #valid, 1.2)
+            local msg = "Imported " .. #valid .. " waypoint(s)"
+            if skipped > 0 then msg = msg .. " (" .. skipped .. " skipped)" end
+            note.flash(msg)
         end)
 
         SaveBtn.onClick(saveHere)
@@ -2779,7 +3325,7 @@ return function(ctx)
             Hud.Visible = viewing ~= nil
         end
 
-        ScreenGui:GetAttributeChangedSignal("Theme"):Connect(renderTitle)
+        local themeConn = ScreenGui:GetAttributeChangedSignal("Theme"):Connect(renderTitle)
 
         local function stopView(keepCamera)
             if not viewing then return end
@@ -2958,12 +3504,14 @@ return function(ctx)
         HudStop.onClick(function() stopView() end)
 
         local conns = {
+            themeConn,
             Players.PlayerAdded:Connect(queueRefresh),
             Players.PlayerRemoving:Connect(function() task.delay(0.25, queueRefresh) end),
             Search:GetPropertyChangedSignal("Text"):Connect(queueRefresh),
         }
         Core.OnDestroy(function()
             for _, c in ipairs(conns) do c:Disconnect() end
+            if Hud then pcall(Hud.Destroy, Hud); Hud = nil end
         end)
 
         local handle = {
@@ -3025,8 +3573,15 @@ return function(ctx)
 
     UI.CreateResetButton(LocalTab, 7, Core.ResetAll)
 
-    ScreenGui.Destroying:Connect(function()
+    local function destroyModule()
+        if destroyed then return end
+        destroyed = true
         Core.ResetAll()
         for _, fn in ipairs(Core.hooks) do pcall(fn) end
-    end)
+        table.clear(Core.hooks)
+    end
+    trackConn(ScreenGui.Destroying:Connect(destroyModule))
+    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
+
+    return { Destroy = destroyModule, Core = Core, Features = Features }
 end

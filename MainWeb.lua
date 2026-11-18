@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 return (function()
 --// ================= SERVICES =================
 local TweenService     = game:GetService("TweenService")
@@ -91,6 +83,11 @@ local FADE_OUT_TIME   = BUBBLE_OUT_TIME / 3
 local CONTENT_EDGE    = 2
 
 local uiLocked = false
+local manualLocked = false
+local overlayLocked = false
+local function syncUiLock()
+    uiLocked = manualLocked or overlayLocked
+end
 local Saved
 
 --// ================= ROOT =================
@@ -370,7 +367,47 @@ if type(Saved.uiScale) ~= "number" then
 else
     Saved.uiScale = math.clamp(Saved.uiScale, 0.6, 1.4)
 end
-if type(Saved.toggleKey) ~= "string" then
+local VALID_KEYCODES = {
+    A = true, B = true, C = true, D = true, E = true, F = true, G = true, H = true, I = true,
+    J = true, K = true, L = true, M = true, N = true, O = true, P = true, Q = true, R = true,
+    S = true, T = true, U = true, V = true, W = true, X = true, Y = true, Z = true,
+    Zero = true, One = true, Two = true, Three = true, Four = true,
+    Five = true, Six = true, Seven = true, Eight = true, Nine = true,
+    KeypadZero = true, KeypadOne = true, KeypadTwo = true, KeypadThree = true, KeypadFour = true,
+    KeypadFive = true, KeypadSix = true, KeypadSeven = true, KeypadEight = true, KeypadNine = true,
+    KeypadPeriod = true, KeypadDivide = true, KeypadMultiply = true,
+    KeypadMinus = true, KeypadPlus = true, KeypadEnter = true, KeypadEquals = true,
+    F1 = true, F2 = true, F3 = true, F4 = true, F5 = true, F6 = true, F7 = true, F8 = true,
+    F9 = true, F10 = true, F11 = true, F12 = true, F13 = true, F14 = true, F15 = true,
+    Up = true, Down = true, Right = true, Left = true,
+    Insert = true, Home = true, End = true, PageUp = true, PageDown = true,
+    LeftShift = true, RightShift = true, LeftControl = true, RightControl = true,
+    LeftAlt = true, RightAlt = true, LeftMeta = true, RightMeta = true,
+    LeftSuper = true, RightSuper = true, Mode = true, Compose = true,
+    Help = true, Print = true, SysReq = true, Break = true, Menu = true, Power = true, Euro = true, Undo = true,
+    Backspace = true, Tab = true, Clear = true, Return = true, Pause = true, Escape = true, Space = true,
+    QuotedDouble = true, Hash = true, Dollar = true, Percent = true, Ampersand = true, Quote = true,
+    LeftParenthesis = true, RightParenthesis = true, Asterisk = true, Plus = true, Comma = true,
+    Minus = true, Period = true, Slash = true, Colon = true, Semicolon = true,
+    Less = true, Equals = true, Greater = true, Question = true, At = true,
+    LeftBracket = true, Backslash = true, RightBracket = true, Caret = true, Underscore = true,
+    Backquote = true, LeftCurly = true, Pipe = true, RightCurly = true, Tilde = true, Delete = true,
+    CapsLock = true, ScrollLock = true, NumLock = true, World1 = true, World2 = true,
+    ButtonX = true, ButtonY = true, ButtonA = true, ButtonB = true,
+    ButtonR1 = true, ButtonL1 = true, ButtonR2 = true, ButtonL2 = true,
+    ButtonR3 = true, ButtonL3 = true, ButtonStart = true, ButtonSelect = true,
+    DPadLeft = true, DPadRight = true, DPadUp = true, DPadDown = true,
+}
+
+local function isValidToggleKey(k)
+    if type(k) ~= "string" then return false end
+    if k == "" then return true end
+    if not VALID_KEYCODES[k] then return false end
+    local ok, item = pcall(function() return Enum.KeyCode[k] end)
+    return ok and item ~= nil
+end
+
+if not isValidToggleKey(Saved.toggleKey) then
     Saved.toggleKey = "RightShift"
 end
 if type(Saved.localCfg) ~= "table" then
@@ -393,8 +430,8 @@ end
 local curW = math.clamp(num(Saved.w, UI_W), MIN_UI_W, math.max(MIN_UI_W, viewport0.X))
 local curH = math.clamp(num(Saved.h, UI_H), MIN_UI_H, math.max(MIN_UI_H, viewport0.Y))
 
-local maxOffX = math.max(0, (viewport0.X - curW) / 2)
-local maxOffY = math.max(0, (viewport0.Y - curH) / 2)
+local maxOffX = math.max(0, (viewport0.X - curW * Saved.uiScale) / 2)
+local maxOffY = math.max(0, (viewport0.Y - curH * Saved.uiScale) / 2)
 local uiPosition = UDim2.new(
     0.5, math.clamp(num(Saved.uiX, 0), -maxOffX, maxOffX),
     0.5, math.clamp(num(Saved.uiY, 0), -maxOffY, maxOffY)
@@ -414,26 +451,41 @@ end
 
 local ToggleButton
 local saveQueued = false
-local function saveSettings()
-    if not canFS or saveQueued then return end
-    saveQueued = true
-    task.delay(SAVE_DELAY, function()
+local saveToken = 0
+local function writeSettingsNow()
+    if not canFS then return false end
+    local t = ToggleButton and ToggleButton.Position or togglePosition
+    return writeJsonFile(SAVE_FILE, {
+        w = curW, h = curH,
+        uiX = uiPosition.X.Offset, uiY = uiPosition.Y.Offset,
+        toggle = { t.X.Scale, t.X.Offset, t.Y.Scale, t.Y.Offset },
+        fpsMode = ScreenGui:GetAttribute("FpsMode") or Saved.fpsMode,
+        theme = ScreenGui:GetAttribute("Theme") or Saved.theme,
+        autoExecute = Saved.autoExecute == true,
+        autoLoadSession = Saved.autoLoadSession == true,
+        uiScale = Saved.uiScale,
+        reduceMotion = Saved.reduceMotion == true,
+        toggleKey = Saved.toggleKey,
+        toggles = Saved.toggles,
+        localCfg = Saved.localCfg,
+    })
+end
+
+local function saveSettings(flushNow)
+    if not canFS then return end
+    if flushNow then
+        saveToken = saveToken + 1
         saveQueued = false
-        local t = ToggleButton and ToggleButton.Position or togglePosition
-        writeJsonFile(SAVE_FILE, {
-            w = curW, h = curH,
-            uiX = uiPosition.X.Offset, uiY = uiPosition.Y.Offset,
-            toggle = { t.X.Scale, t.X.Offset, t.Y.Scale, t.Y.Offset },
-            fpsMode = ScreenGui:GetAttribute("FpsMode") or Saved.fpsMode,
-            theme = ScreenGui:GetAttribute("Theme") or Saved.theme,
-            autoExecute = Saved.autoExecute == true,
-            autoLoadSession = Saved.autoLoadSession == true,
-            uiScale = Saved.uiScale,
-            reduceMotion = Saved.reduceMotion == true,
-            toggleKey = Saved.toggleKey,
-            toggles = Saved.toggles,
-            localCfg = Saved.localCfg,
-        })
+        writeSettingsNow()
+        return
+    end
+    if saveQueued then return end
+    saveQueued = true
+    local myToken = saveToken
+    task.delay(SAVE_DELAY, function()
+        if myToken ~= saveToken then return end
+        saveQueued = false
+        writeSettingsNow()
     end)
 end
 
@@ -535,11 +587,17 @@ corner(MainUI, 12)
 local MainUIStroke = stroke(MainUI)
 local MainUIScale = new("UIScale", { Scale = Saved.uiScale }, MainUI)
 
+local isMaximized = false
+
 local function setUIScale(s)
     s = math.clamp(tonumber(s) or 1, 0.6, 1.4)
     Saved.uiScale = s
     MainUIScale.Scale = s
     ToggleUIScale.Scale = s
+    if isMaximized then
+        local viewport = getViewport()
+        MainUI.Size = UDim2.fromOffset(viewport.X / s, viewport.Y / s)
+    end
     saveSettings()
     return s
 end
@@ -873,8 +931,6 @@ do
 end
 
 --// ================= DRAG SUPPORT =================
-local isMaximized = false
-
 local function commitUIState()
     if isMaximized then return end
     local p = MainUI.Position
@@ -891,7 +947,8 @@ do
     local OVERLAY_TRANSPARENCY = 0.45
     local DIALOG_SIZE = UDim2.fromOffset(310, 160)
     local overlayTween, overlayOn = nil, false
-    local owners, frozenScrolls = {}, {}
+    local owners, frozenScrolls, frozenInteractables = {}, {}, {}
+    local interactableAdded = nil
 
     local InteractionBlocker = new("Frame", {
         Name = "InteractionBlocker",
@@ -906,28 +963,50 @@ do
 
     -- Active only sinks button clicks: hover, wheel scroll, TopBar drag and an already focused TextBox
     -- still reached MainUI under the dark layer, so everything inside it is switched off while it is shown.
-    local function lockMainUI(on)
-        for _, child in ipairs(MainUI:GetChildren()) do
-            if child:IsA("GuiObject") and child ~= InteractionBlocker then child.Interactable = not on end
+    local function freezeMainUIObject(object)
+        if object == InteractionBlocker or object:IsDescendantOf(InteractionBlocker) then return end
+        if not object:IsA("GuiObject") then return end
+        if frozenInteractables[object] == nil then
+            frozenInteractables[object] = object.Interactable
         end
+        object.Interactable = false
+        if object:IsA("ScrollingFrame") then
+            if frozenScrolls[object] == nil then
+                frozenScrolls[object] = object.ScrollingEnabled
+            end
+            object.ScrollingEnabled = false
+        end
+    end
+
+    local function lockMainUI(on)
         if on then
+            if not interactableAdded then
+                interactableAdded = MainUI.DescendantAdded:Connect(freezeMainUIObject)
+            end
+            for _, d in ipairs(MainUI:GetDescendants()) do freezeMainUIObject(d) end
             local box = UserInputService:GetFocusedTextBox()
             if box and box:IsDescendantOf(MainUI) then box:ReleaseFocus() end
-            for _, d in ipairs(MainUI:GetDescendants()) do
-                if d:IsA("ScrollingFrame") and d.ScrollingEnabled then
-                    frozenScrolls[d] = true
-                    d.ScrollingEnabled = false
+        else
+            if interactableAdded then
+                interactableAdded:Disconnect()
+                interactableAdded = nil
+            end
+            for d, wasEnabled in pairs(frozenScrolls) do
+                frozenScrolls[d] = nil
+                if d.Parent and d.ScrollingEnabled == false then
+                    d.ScrollingEnabled = wasEnabled
                 end
             end
-        else
-            for d in pairs(frozenScrolls) do
-                frozenScrolls[d] = nil
-                d.ScrollingEnabled = true
+            for object, wasInteractable in pairs(frozenInteractables) do
+                frozenInteractables[object] = nil
+                if object.Parent and object.Interactable == false then
+                    object.Interactable = wasInteractable
+                end
             end
         end
     end
 
-    function isOverlayOn() return overlayOn end
+    function isOverlayOn() return overlayLocked end
 
     -- One entry per dialog (owner), so repeated show/hide calls can neither leave the layer stuck on nor drop it early.
     function setOverlay(on, owner)
@@ -937,6 +1016,8 @@ do
         overlayOn = want
         if overlayTween then overlayTween:Cancel() end
         if want then
+            overlayLocked = true
+            syncUiLock()
             InteractionBlocker.Visible = true
             lockMainUI(true)
             overlayTween = tween(InteractionBlocker, FADE_IN_TIME, { BackgroundTransparency = OVERLAY_TRANSPARENCY }, EASE_QUAD, DIR_OUT)
@@ -946,6 +1027,8 @@ do
                 if state == Enum.PlaybackState.Completed and not overlayOn then
                     InteractionBlocker.Visible = false
                     lockMainUI(false)
+                    overlayLocked = false
+                    syncUiLock()
                 end
             end)
         end
@@ -1061,11 +1144,11 @@ do
         local function hide()
             hideToken = hideToken + 1
             local token = hideToken
-            setOverlay(false, Box)
             local sizeTween = tween(Box, BUBBLE_OUT_TIME, { Size = UDim2.new() }, EASE_QUAD, DIR_IN)
             sizeTween.Completed:Connect(function(state)
                 if state ~= Enum.PlaybackState.Completed or token ~= hideToken then return end
                 Box.Visible = false
+                setOverlay(false, Box)
             end)
         end
 
@@ -1101,8 +1184,23 @@ local function openUI()
     fadeMainUI(POPUP_TIME, 0, DIR_OUT)
 end
 
+local keyCaptureCb
+local keyCaptureToken = 0
+local KEY_CAPTURE_TIMEOUT = 8
+
+local function finishKeyCapture(newKey, notify)
+    local cb = keyCaptureCb
+    if not cb then return end
+    keyCaptureCb = nil
+    keyCaptureToken = keyCaptureToken + 1
+    if notify ~= false then
+        pcall(cb, newKey)
+    end
+end
+
 local function closeUI()
     isOpen = false
+    finishKeyCapture(Saved.toggleKey, true)
     if CloseDialog.Box.Visible then CloseDialog.hide() end
     if ResetDialog.Box.Visible then ResetDialog.hide() end
     if DeleteDialog.Box.Visible then DeleteDialog.hide() end
@@ -1119,21 +1217,21 @@ makeDraggable(ToggleButton, ToggleButton, saveSettings, function()
     if isOpen then closeUI() else openUI() end
 end, 5)
 
-local keyCaptureCb
 track(UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
     local code = input.KeyCode
     if code == Enum.KeyCode.Unknown then return end
     if keyCaptureCb then
-        local cb = keyCaptureCb
-        keyCaptureCb = nil
+        if uiLocked or UserInputService:GetFocusedTextBox() then return end
+        if gameProcessed and code ~= Enum.KeyCode.Escape then return end
         if code == Enum.KeyCode.Backspace or code == Enum.KeyCode.Delete then
             Saved.toggleKey = ""
+            saveSettings()
         elseif code ~= Enum.KeyCode.Escape then
             Saved.toggleKey = code.Name
+            saveSettings()
         end
-        saveSettings()
-        pcall(cb, Saved.toggleKey)
+        finishKeyCapture(Saved.toggleKey, true)
         return
     end
     if gameProcessed or uiLocked or UserInputService:GetFocusedTextBox() then return end
@@ -1157,8 +1255,9 @@ local function toggleMaximize()
         isMaximized = true
         drawIcon(MaximizeIcon, "restore", Theme.Text, Theme.PanelAlt)
         local viewport = getViewport()
+        local s = Saved.uiScale
         tween(MainUI, 0.25, {
-            Size = UDim2.fromOffset(viewport.X, viewport.Y),
+            Size = UDim2.fromOffset(viewport.X / s, viewport.Y / s),
             Position = CENTER,
         }, EASE_QUAD, DIR_OUT)
     end
@@ -1173,9 +1272,12 @@ CloseBtn.MouseButton1Click:Connect(function()
 end)
 
 local function unloadUI()
+    finishKeyCapture(Saved.toggleKey, false)
     if Saved.autoExecute == true then
         Saved.autoExecute = false
-        saveSettings()
+        saveSettings(true)
+    elseif saveQueued then
+        saveSettings(true)
     end
     ScreenGui:Destroy()
 end
@@ -1188,10 +1290,15 @@ local function resetLayout()
     end
     curW, curH = UI_W, UI_H
     uiPosition = CENTER
+    local targetSize = UDim2.fromOffset(curW, curH)
+    preMaxSize, preMaxPos = targetSize, uiPosition
 
-    local props = { Position = uiPosition }
-    if isOpen then props.Size = UDim2.fromOffset(curW, curH) end
-    tween(MainUI, 0.2, props, EASE_QUAD, DIR_OUT)
+    if isOpen then
+        tween(MainUI, 0.2, { Position = uiPosition, Size = targetSize }, EASE_QUAD, DIR_OUT)
+    else
+        MainUI.Position = uiPosition
+        MainUI.Size = targetSize
+    end
     tween(ToggleButton, 0.2, { Position = DEFAULT_TOGGLE_POS }, EASE_QUAD, DIR_OUT)
     saveSettings()
 end
@@ -1297,7 +1404,7 @@ do
         }, Handle)
 
         Grip.InputBegan:Connect(function(input)
-            if not resizeMode or isOverlayOn() or resizeDragCorner or not isPress(input) then return end
+            if not resizeMode or uiLocked or isOverlayOn() or resizeDragCorner or not isPress(input) then return end
             if isMaximized then
                 isMaximized = false
                 drawIcon(MaximizeIcon, "maximize", Theme.Text, Theme.PanelAlt)
@@ -1361,7 +1468,7 @@ do
     end)
 
     ResizeBtn.MouseButton1Click:Connect(function()
-        setResizeMode(not resizeMode)
+        if not uiLocked then setResizeMode(not resizeMode) end
     end)
 end
 
@@ -1622,7 +1729,7 @@ local function CreateToggleOption(parent, title, height, opts)
         Switch:SetAttribute("Toggled", true)
         paint(false)
     elseif trackSession then
-        sessionToggles[#sessionToggles + 1] = { key = sessionKey, set = setState }
+        sessionToggles[#sessionToggles + 1] = { key = sessionKey, set = setState, get = function() return state end, switch = Switch }
     end
 
     Switch.MouseButton1Click:Connect(function()
@@ -1808,12 +1915,82 @@ do
     end
 
     function UI.FormatAgo(ts, withDate)
-        local d = math.max(0, os.time() - (tonumber(ts) or 0))
+        local now = os.time()
+        local stamp = tonumber(ts)
+        if not stamp or stamp ~= stamp or math.abs(stamp) >= math.huge or stamp <= 0 or stamp > now + 315360000 then
+            return withDate and "unknown" or "--"
+        end
+        stamp = math.floor(stamp)
+        local d = math.max(0, now - stamp)
         if d < (withDate and 45 or 60) then return withDate and "just now" or "<1m ago" end
         if d < 3600 then return ("%dm ago"):format(math.max(1, math.floor(d / 60))) end
         if d < 86400 then return ("%dh ago"):format(math.floor(d / 3600)) end
-        if withDate and d >= 7 * 86400 then return os.date("%b %d", ts) end
-        return ("%dd ago"):format(math.floor(d / 86400))
+        if withDate and d >= 7 * 86400 then
+            local ok, str = pcall(os.date, "%b %d", stamp)
+            if ok and type(str) == "string" then return str end
+        end
+        local days = math.floor(d / 86400)
+        if days > 36500 then return withDate and "unknown" or "--" end
+        return ("%dd ago"):format(days)
+    end
+
+    do
+        local Lighting = game:GetService("Lighting")
+        local owners = {}
+        local base, conn = nil, nil
+        local writing = false
+
+        local function enforce()
+            if Lighting.GlobalShadows ~= false then
+                writing = true
+                pcall(function() Lighting.GlobalShadows = false end)
+                writing = false
+            end
+        end
+
+        local function unbindWatch()
+            if conn then conn:Disconnect(); conn = nil end
+        end
+
+        local function bindWatch()
+            if conn then return end
+            conn = Lighting:GetPropertyChangedSignal("GlobalShadows"):Connect(function()
+                if writing or next(owners) == nil then return end
+                local now = Lighting.GlobalShadows
+                if now ~= false then
+                    base = now
+                    enforce()
+                end
+            end)
+        end
+
+        UI.GlobalShadows = {
+            acquire = function(owner)
+                if not owner then return end
+                if next(owners) == nil then
+                    base = Lighting.GlobalShadows
+                end
+                owners[owner] = true
+                bindWatch()
+                enforce()
+            end,
+            release = function(owner)
+                if not owner or not owners[owner] then return end
+                owners[owner] = nil
+                if next(owners) ~= nil then
+                    enforce()
+                    return
+                end
+                unbindWatch()
+                local restoreVal = base
+                base = nil
+                if restoreVal ~= nil and Lighting.GlobalShadows ~= restoreVal then
+                    writing = true
+                    pcall(function() Lighting.GlobalShadows = restoreVal end)
+                    writing = false
+                end
+            end,
+        }
     end
 
     function UI.ThemedColors(tokens)
@@ -1854,10 +2031,23 @@ do
         if not fn then return nil, "No HTTP" end
         local ok, res = pcall(fn, { Url = url, Method = "GET" })
         if not ok or type(res) ~= "table" then return nil, "Failed" end
-        local code = res.StatusCode
+        if res.Success == false then return nil, "Failed" end
+        local code = tonumber(res.StatusCode or res.status or res.Status)
         if code == 429 then return nil, "Limited" end
-        if type(code) == "number" and (code < 200 or code >= 300) then return nil, "Failed" end
-        if type(res.Body) == "string" then return res.Body end
+        if code and (code < 200 or code >= 300) then return nil, "Failed" end
+        local body = res.Body or res.body
+        if type(body) == "string" then
+            if not code then
+                if body:match("^%s*404:?%s*Not Found")
+                    or body:match("^%s*429:?%s*Too Many Requests")
+                    or body:match("^%s*5%d%d:?%s*[A-Za-z]")
+                    or body:match("^%s*<!DOCTYPE%s+html")
+                    or body:match("^%s*<html") then
+                    return nil, body:match("^%s*429") and "Limited" or "Failed"
+                end
+            end
+            return body
+        end
         return nil, "Failed"
     end
 
@@ -2021,12 +2211,25 @@ do
         local noop = { dismiss = function() end }
         if not ScreenGui.Parent then return noop end
 
+        local hasAction = opts.actionText ~= nil and type(opts.onAction) == "function"
         local now = os.clock()
-        if message == lastToast.text and now - lastToast.at < 1 then return noop end
-        lastToast.text, lastToast.at = message, now
+        if not hasAction then
+            if message == lastToast.text and now - lastToast.at < 1 then return noop end
+            lastToast.text, lastToast.at = message, now
+        end
 
         local host = getToastHost()
-        if #toastQueue >= MAX_TOASTS then toastQueue[1].dismiss() end
+        if #toastQueue >= MAX_TOASTS then
+            local evictIdx
+            for i, t in ipairs(toastQueue) do
+                if not t.hasAction then evictIdx = i; break end
+            end
+            if evictIdx then
+                toastQueue[evictIdx].dismiss()
+            elseif not hasAction then
+                return noop
+            end
+        end
 
         toastSeq = toastSeq + 1
         local token = TOAST_TOKENS[kind or "info"] or TOAST_TOKENS.info
@@ -2058,7 +2261,7 @@ do
             ZIndex = 72,
         }, Pill)
 
-        local toast, closed = {}, false
+        local toast, closed = { hasAction = hasAction }, false
         function toast.dismiss()
             if closed then return end
             closed = true
@@ -2267,6 +2470,22 @@ end
 
 --// ================= REMOTE MODULE LOADER =================
 local Loader = { sources = {}, version = VERSION }
+local tabTeardowns = {}
+local function cleanupTab(tab)
+    local list = tabTeardowns[tab]
+    if list then
+        tabTeardowns[tab] = nil
+        for i = #list, 1, -1 do
+            pcall(list[i])
+        end
+    end
+    for i = #sessionToggles, 1, -1 do
+        local item = sessionToggles[i]
+        if item.switch and (not item.switch.Parent or item.switch:IsDescendantOf(tab)) then
+            table.remove(sessionToggles, i)
+        end
+    end
+end
 local mountModule
 do
     local MODULE_BASE    = "https://raw.githubusercontent.com/MinzTogether/Universal-Script/"
@@ -2328,7 +2547,9 @@ do
     end
 
     local function compileModule(file, src)
-        local chunk, err = loadstring(src, "=" .. file)
+        if typeof(loadstring) ~= "function" then return nil, "loadstring is not available" end
+        local okLoad, chunk, err = pcall(loadstring, src, "=" .. file)
+        if not okLoad then return nil, "compile error: " .. tostring(chunk) end
         if not chunk then return nil, "syntax error: " .. tostring(err) end
         local ok, init = pcall(chunk)
         if not ok then return nil, "error while loading the file: " .. tostring(init) end
@@ -2395,7 +2616,11 @@ do
     end
 
     function mountModule(file, tab, build, isRetry)
-        if isRetry then startDownload(file) end
+        if isRetry then
+            cleanupTab(tab)
+            clearTab(tab)
+            startDownload(file)
+        end
         local deadline = isRetry and (os.clock() + MODULE_TIMEOUT) or nil
         local problems = {}
         local function note(msg) problems[#problems + 1] = msg end
@@ -2406,9 +2631,25 @@ do
             if not init then
                 note(why)
             else
+                local startIdx = #sessionToggles + 1
                 local okBuild, berr = pcall(build, init)
                 if okBuild then
                     Loader.sources[file] = "web"
+                    if isRetry and restoreSession then
+                        local newItems = {}
+                        for i = startIdx, #sessionToggles do
+                            newItems[#newItems + 1] = sessionToggles[i]
+                        end
+                        task.defer(function()
+                            for _, item in ipairs(newItems) do
+                                local want = (type(Saved.toggles) == "table" and Saved.toggles[item.key] == true)
+                                    or (bootToggles[item.key] == true and (type(Saved.toggles) ~= "table" or Saved.toggles[item.key] ~= false))
+                                if want and (not item.get or not item.get()) then
+                                    pcall(item.set, true)
+                                end
+                            end
+                        end)
+                    end
                     return true
                 end
                 note("error during initialization: " .. tostring(berr))
@@ -2417,12 +2658,12 @@ do
             note(tostring(src))
         end
 
+        cleanupTab(tab)
         clearTab(tab)
         local message = table.concat(problems, " | ")
         warn("[Elysera] Could not load " .. file .. ": " .. message)
         Loader.sources[file] = "error"
         showModuleError(tab, file, message, function()
-            clearTab(tab)
             mountModule(file, tab, build, true)
         end)
         return false
@@ -2521,8 +2762,31 @@ do
         setUIScale = setUIScale, getUIScale = function() return Saved.uiScale end,
         setReduceMotion = setReduceMotion, getReduceMotion = function() return Saved.reduceMotion == true end,
         getToggleKey = function() return Saved.toggleKey end,
-        setToggleKey = function(k) Saved.toggleKey = tostring(k or ""); saveSettings() end,
-        captureToggleKey = function(cb) keyCaptureCb = cb end,
+        setToggleKey = function(k)
+            if not isValidToggleKey(k) then return false end
+            Saved.toggleKey = k
+            saveSettings()
+            return true
+        end,
+        captureToggleKey = function(cb)
+            if type(cb) ~= "function" then
+                finishKeyCapture(Saved.toggleKey, false)
+                return
+            end
+            keyCaptureToken = keyCaptureToken + 1
+            local myToken = keyCaptureToken
+            local settled = false
+            keyCaptureCb = function(res)
+                if settled then return end
+                settled = true
+                cb(res)
+            end
+            task.delay(KEY_CAPTURE_TIMEOUT, function()
+                if keyCaptureToken == myToken and keyCaptureCb then
+                    finishKeyCapture(Saved.toggleKey, true)
+                end
+            end)
+        end,
         resetLayout = resetLayout,
         resetAllToggles = function()
             for _, item in ipairs(sessionToggles) do pcall(item.set, false) end
@@ -2534,11 +2798,22 @@ do
         end,
         isOpen = function() return isOpen end,
         isLocked = function() return uiLocked end,
-        setLocked = function(v) uiLocked = v end,
+        setLocked = function(v)
+            manualLocked = v and true or false
+            syncUiLock()
+        end,
     }
 
     function makeCtx(tab)
-        return setmetatable({ Tab = tab }, { __index = Shared })
+        return setmetatable({
+            Tab = tab,
+            OnDestroy = function(fn)
+                if type(fn) ~= "function" then return end
+                local list = tabTeardowns[tab]
+                if not list then list = {}; tabTeardowns[tab] = list end
+                list[#list + 1] = fn
+            end,
+        }, { __index = Shared })
     end
 end
 

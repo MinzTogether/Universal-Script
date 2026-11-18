@@ -1,11 +1,3 @@
---// ##########################################################################################
---// ##                                                                                      ##
---// ##   MANDATORY: USE ENGLISH (US) ONLY IN THIS FILE                                      ##
---// ##   Every comment, UI text, message and name here MUST be written in English (US).     ##
---// ##   Never add any other language to this file. Keep it English (US) on every edit.     ##
---// ##                                                                                      ##
---// ##########################################################################################
-
 --// ============================================================================
 --//  Settings.lua  -  module for the "Settings" tab of the Elysera MainUI
 --// ============================================================================
@@ -39,6 +31,11 @@ return function(D)
     local isLocked, setLocked  = D.isLocked, D.setLocked
     local refreshStateColors   = D.refreshStateColors or function() end
 
+    local destroyed = false
+    local teardown = {}
+    local function onDestroy(fn) teardown[#teardown + 1] = fn end
+    local function trackConn(c) teardown[#teardown + 1] = function() c:Disconnect() end; return c end
+
     --// =====================================================================
     --// PART A. ANTI CHAT
     --// =====================================================================
@@ -51,8 +48,17 @@ return function(D)
         local AntiChatSwitch = CreateToggleOption(Tab, "Anti Chat")
         AntiChatSwitch.Parent.LayoutOrder = 1
 
-        local antiChatOn    = false
-        local chatHooked    = false
+        local chatState
+        do
+            local okEnv, env = pcall(function() return typeof(getgenv) == "function" and getgenv() end)
+            env = (okEnv and type(env) == "table") and env or _G
+            chatState = env.__ElyseraAntiChat
+            if type(chatState) ~= "table" then
+                chatState = { on = false, hookedNamecall = false, hookedFire = false, hookedSend = false }
+                env.__ElyseraAntiChat = chatState
+            end
+        end
+
         local antiChatConns = {}
         local antiChatBoxes = {}
         local chatBarConfig, chatBarOriginal
@@ -64,48 +70,52 @@ return function(D)
             elseif method == "SendAsync" then
                 return self.ClassName == "TextChannel"
             elseif method == "Chat" then
-                return self == LocalPlayer
+                local okP, lp = pcall(function() return game:GetService("Players").LocalPlayer end)
+                return okP and lp ~= nil and self == lp
             end
             return false
         end
 
         local function installChatHook()
-            if chatHooked then return end
-
-            if hookmetamethod and getnamecallmethod and newcclosure then
+            if not chatState.hookedNamecall and typeof(hookmetamethod) == "function"
+                and typeof(getnamecallmethod) == "function" and typeof(newcclosure) == "function" then
                 pcall(function()
                     local old
                     old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-                        if antiChatOn and isChatCall(self, getnamecallmethod()) then return end
+                        if chatState.on and isChatCall(self, getnamecallmethod()) then return end
                         return old(self, ...)
                     end))
-                    chatHooked = true
+                    if old then chatState.hookedNamecall = true end
                 end)
             end
 
-            if hookfunction and newcclosure then
-                pcall(function()
-                    local tmp = Instance.new("RemoteEvent")
-                    local fn = tmp.FireServer
-                    pcall(tmp.Destroy, tmp)
-                    local oldFire
-                    oldFire = hookfunction(fn, newcclosure(function(self, ...)
-                        if antiChatOn and isChatCall(self, "FireServer") then return end
-                        return oldFire(self, ...)
-                    end))
-                    chatHooked = true
-                end)
-                pcall(function()
-                    local tmp = Instance.new("TextChannel")
-                    local fn = tmp.SendAsync
-                    pcall(tmp.Destroy, tmp)
-                    local oldSend
-                    oldSend = hookfunction(fn, newcclosure(function(self, ...)
-                        if antiChatOn and isChatCall(self, "SendAsync") then return end
-                        return oldSend(self, ...)
-                    end))
-                    chatHooked = true
-                end)
+            if typeof(hookfunction) == "function" and typeof(newcclosure) == "function" then
+                if not chatState.hookedFire then
+                    pcall(function()
+                        local tmp = Instance.new("RemoteEvent")
+                        local fn = tmp.FireServer
+                        pcall(tmp.Destroy, tmp)
+                        local oldFire
+                        oldFire = hookfunction(fn, newcclosure(function(self, ...)
+                            if chatState.on and isChatCall(self, "FireServer") then return end
+                            return oldFire(self, ...)
+                        end))
+                        if oldFire then chatState.hookedFire = true end
+                    end)
+                end
+                if not chatState.hookedSend then
+                    pcall(function()
+                        local tmp = Instance.new("TextChannel")
+                        local fn = tmp.SendAsync
+                        pcall(tmp.Destroy, tmp)
+                        local oldSend
+                        oldSend = hookfunction(fn, newcclosure(function(self, ...)
+                            if chatState.on and isChatCall(self, "SendAsync") then return end
+                            return oldSend(self, ...)
+                        end))
+                        if oldSend then chatState.hookedSend = true end
+                    end)
+                end
             end
         end
 
@@ -125,7 +135,7 @@ return function(D)
         end
 
         local function disableAntiChat()
-            antiChatOn = false
+            chatState.on = false
             for _, c in ipairs(antiChatConns) do c:Disconnect() end
             table.clear(antiChatConns)
             table.clear(antiChatBoxes)
@@ -140,7 +150,7 @@ return function(D)
 
         local function enableAntiChat()
             disableAntiChat()
-            antiChatOn = true
+            chatState.on = true
             installChatHook()
 
             pcall(function()
@@ -168,7 +178,7 @@ return function(D)
             if AntiChatSwitch:GetAttribute("Toggled") then enableAntiChat() else disableAntiChat() end
         end)
 
-        ScreenGui.Destroying:Connect(disableAntiChat)
+        onDestroy(disableAntiChat)
     end
 
     --// =====================================================================
@@ -840,12 +850,17 @@ return function(D)
 
             for index, entry in ipairs(THEMES) do createListItem(entry, index) end
 
-            MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+            trackConn(MainUI:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
                 if listOpen then
                     positionList()
                     placeList()
                     List.Size = UDim2.fromOffset(lastW, lastH)
                 end
+            end))
+            onDestroy(function()
+                closeList(true)
+                if Catcher then pcall(Catcher.Destroy, Catcher); Catcher = nil end
+                if List then pcall(List.Destroy, List); List = nil end
             end)
         end
 
@@ -1254,6 +1269,10 @@ return function(D)
                     AutoExec.set(s.autoExecute)
                     if setAutoExecSwitch then setAutoExecSwitch(AutoExec.isOn(), true) end
                 end
+                if type(s.fpsMode) == "string" and (s.fpsMode == "Balanced" or s.fpsMode == "Performance" or s.fpsMode == "Extreme") then
+                    Saved.fpsMode = s.fpsMode
+                    ScreenGui:SetAttribute("FpsMode", s.fpsMode)
+                end
                 if type(s.localCfg) == "table" then Saved.localCfg = s.localCfg end
                 if type(s.toggles) == "table" then Saved.toggles = s.toggles end
                 if type(s.theme) == "string" and byId[s.theme] then applyTheme(s.theme, { animate = false }) end
@@ -1284,6 +1303,8 @@ return function(D)
                 if D.setUIScale then D.setUIScale(1) end
                 if D.setReduceMotion then D.setReduceMotion(false) end
                 if D.setToggleKey then D.setToggleKey("RightShift") end
+                Saved.fpsMode = "Balanced"
+                ScreenGui:SetAttribute("FpsMode", "Balanced")
                 Saved.autoLoadSession = false
                 Saved.localCfg = {}
                 if setAutoLoadSwitch then setAutoLoadSwitch(false, true) end
@@ -1443,9 +1464,9 @@ return function(D)
                 modValue.TextColor3 = (err > 0 and Theme.Danger) or Theme.AccentPink
             end
             refreshModules()
-            Tab:GetPropertyChangedSignal("Visible"):Connect(function()
+            trackConn(Tab:GetPropertyChangedSignal("Visible"):Connect(function()
                 if Tab.Visible then refreshModules() else closeList(true) end
-            end)
+            end))
 
             local function buildReport()
                 local out = { "Elysera diagnostics v" .. tostring(D.VERSION or "2.5.0"), "Executor: " .. execName }
@@ -1495,7 +1516,14 @@ return function(D)
         if not okD then warn("[Elysera/Settings] Could not build Diagnostics: " .. tostring(errD)) end
     end
 
-    ScreenGui.Destroying:Connect(function() closeList(true) end)
+    local function destroyModule()
+        if destroyed then return end
+        destroyed = true
+        for _, fn in ipairs(teardown) do pcall(fn) end
+        table.clear(teardown)
+    end
+    trackConn(ScreenGui.Destroying:Connect(destroyModule))
+    if D.OnDestroy then D.OnDestroy(destroyModule) end
 
     local metaList = {}
     for i, t in ipairs(THEMES) do
@@ -1512,5 +1540,6 @@ return function(D)
         Stats          = stats,
         isListOpen     = function() return listOpen end,
         hideList       = function() closeList(true) end,
+        Destroy        = destroyModule,
     }
 end
