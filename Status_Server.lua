@@ -26,6 +26,8 @@ return function(ctx)
     local HOP_WAIT_RESULT  = PENDING_TIMEOUT
     local HOP_MAX_ATTEMPTS = 3
     local PAGE_DELAY       = 0.3
+    local RECOVERY_TOAST_SECONDS = 12
+    local AUTO_REJOIN_MAX_FAILS  = 5
 
     local ScriptStartTime  = os.time()
     local copyToClipboard  = UI.CopyText
@@ -43,11 +45,57 @@ return function(ctx)
         return type(jobId) == "string" and #jobId == 36 and jobId:match(UUID_PATTERN) ~= nil
     end
 
+    local function decodePercent(text)
+        if text:gsub("%%%x%x", ""):find("%%", 1, true) then return nil end
+        return (text:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+    end
+
+    local function parseQuery(query)
+        local params = {}
+        for pair in query:gmatch("[^&]+") do
+            local key, value = pair:match("^([^=]+)=(.*)$")
+            if not key or params[key] ~= nil then return nil end
+            params[key] = value
+        end
+        return params
+    end
+
+    local SHARE_PREFIXES = {
+        "^https?://www%.roblox%.com/share%?",
+        "^https?://roblox%.com/share%?",
+        "^https?://www%.roblox%.com/share%-links%?",
+        "^https?://roblox%.com/share%-links%?",
+        "^roblox://navigation/share_links%?",
+        "^www%.roblox%.com/share%?",
+        "^roblox%.com/share%?",
+    }
+
+    local function parseShareLink(compact)
+        for _, prefix in ipairs(SHARE_PREFIXES) do
+            local _, stop = compact:find(prefix)
+            if stop then
+                local params = parseQuery((compact:sub(stop + 1):gsub("#.*$", "")))
+                if not params then return false end
+                local code = params.code and decodePercent(params.code)
+                local kind = params.type and decodePercent(params.type)
+                if not code or not kind then return false end
+                if not code:match("^%x+$") or #code < 16 or #code > 64 then return false end
+                return kind == "server"
+            end
+        end
+        return nil
+    end
+
     local function parseJoinInput(raw)
         if type(raw) ~= "string" then return nil, nil, "Invalid" end
-        local text = raw:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
-        text = text:gsub("[%s\"']", ""):lower()
-        if text == "" then return nil, nil, "Invalid" end
+        local compact = raw:gsub("[%s\"']", ""):lower()
+        if compact == "" then return nil, nil, "Invalid" end
+        local share = parseShareLink(compact)
+        if share == true then return nil, nil, "Private" end
+        if share == false then return nil, nil, "Invalid" end
+        local text = decodePercent(compact)
+        if not text then return nil, nil, "Invalid" end
+        text = (text:gsub("[%s\"']", "")):lower()
         if isValidJobId(text) then return text, nil end
         if text:find("privateserverlinkcode=", 1, true) then return nil, nil, "Private" end
 
@@ -57,32 +105,90 @@ return function(ctx)
         return jobId, tonumber(placeId)
     end
 
-    --// ---------- Shared teleport state ----------
-    local activeAttempt   = nil
-    local pendingToken    = 0
-    local failStreak      = 0
-    local destroyed       = false
-    local teardown        = {}
+    --// ---------- Shared teleport coordinator ----------
+    local RETRYABLE_RESULTS = { Failure = true, Flooded = true }
+    local ABANDONED_TTL = 120
+
+    local activeAttempt     = nil
+    local abandonedAttempts = {}
+    local teleportState     = "idle"
+    local stateListeners    = {}
+    local attemptSeq        = 0
+    local failStreak        = 0
+    local destroyed         = false
+    local teardown          = {}
     local function onDestroy(fn) teardown[#teardown + 1] = fn end
     local function trackConn(c) teardown[#teardown + 1] = function() c:Disconnect() end; return c end
 
-    local function isTeleportPending()
-        if not activeAttempt or activeAttempt.status ~= "pending" then return false end
-        if os.clock() >= activeAttempt.deadline then
-            activeAttempt.status = "timeout"
-            activeAttempt = nil
-            return false
-        end
-        return true
+    local function destroyModule()
+        if destroyed then return end
+        destroyed = true
+        activeAttempt = nil
+        table.clear(abandonedAttempts)
+        table.clear(stateListeners)
+        attemptSeq = attemptSeq + 1
+        for _, fn in ipairs(teardown) do pcall(fn) end
+        table.clear(teardown)
+    end
+    trackConn(ScreenGui.Destroying:Connect(destroyModule))
+    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
+
+    local requestTeleport
+
+    local function setTeleportState(state)
+        if teleportState == state then return end
+        teleportState = state
+        for _, fn in ipairs(stateListeners) do pcall(fn, state) end
     end
 
-    local function requestTeleport(kind, placeId, jobId)
+    local function offerRecovery(attempt)
+        local now = os.clock()
+        if attempt.offeredAt and now - attempt.offeredAt < RECOVERY_TOAST_SECONDS then return end
+        attempt.offeredAt = now
+        showToast("Teleport result unknown. The earlier request may still be in flight; retrying can start a second one.", "warn", {
+            duration = RECOVERY_TOAST_SECONDS,
+            actionText = "Retry",
+            onAction = function()
+                if destroyed or activeAttempt ~= attempt or attempt.status ~= "unknown" then return end
+                requestTeleport(attempt.kind, attempt.placeId, attempt.jobId, true)
+            end,
+        })
+    end
+
+    local function markUnknown(attempt)
+        if attempt.status ~= "pending" then return end
+        attempt.status = "unknown"
+        setTeleportState("unknown")
+        offerRecovery(attempt)
+    end
+
+    local function markSucceeded(attempt)
+        attempt.status = "succeeded"
+        if activeAttempt == attempt then activeAttempt = nil end
+        setTeleportState("succeeded")
+    end
+
+    local function isTeleportUnresolved()
+        local attempt = activeAttempt
+        if not attempt then return false end
+        if attempt.status == "pending" and os.clock() >= attempt.deadline then markUnknown(attempt) end
+        return attempt.status == "pending" or attempt.status == "unknown"
+    end
+
+    function requestTeleport(kind, placeId, jobId, force)
+        if destroyed then return false, "Failed" end
         local targetPlace = placeId or game.PlaceId
         if jobId ~= nil then
             if not isValidJobId(jobId) then return false, "Invalid" end
             if jobId == game.JobId and kind ~= "rejoin" then return false, "Same" end
         end
-        if isTeleportPending() then return false, "Busy" end
+        if isTeleportUnresolved() then
+            local blocked = activeAttempt
+            if not (force and blocked.status == "unknown") then
+                if blocked.status == "unknown" and kind ~= "spam" and kind ~= "autorejoin" then offerRecovery(blocked) end
+                return false, blocked.status == "unknown" and "Unresolved" or "Busy"
+            end
+        end
         local ok = pcall(function()
             if jobId ~= nil then
                 TeleportService:TeleportToPlaceInstance(targetPlace, jobId, LocalPlayer)
@@ -91,9 +197,14 @@ return function(ctx)
             end
         end)
         if not ok then return false, "Failed" end
-        pendingToken = pendingToken + 1
+        if activeAttempt then
+            activeAttempt.status = "abandoned"
+            activeAttempt.abandonedAt = os.clock()
+            abandonedAttempts[#abandonedAttempts + 1] = activeAttempt
+        end
+        attemptSeq = attemptSeq + 1
         local attempt = {
-            id = pendingToken,
+            seq = attemptSeq,
             kind = kind or "join",
             placeId = targetPlace,
             jobId = jobId,
@@ -101,29 +212,54 @@ return function(ctx)
             deadline = os.clock() + PENDING_TIMEOUT,
         }
         activeAttempt = attempt
+        setTeleportState("pending")
         task.delay(PENDING_TIMEOUT, function()
-            if activeAttempt == attempt and attempt.status == "pending" then
-                attempt.status = "timeout"
-                activeAttempt = nil
-            end
+            if attempt.seq == attemptSeq then markUnknown(attempt) end
         end)
         return true, attempt
     end
 
-    trackConn(TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, _, placeId)
-        if player ~= LocalPlayer then return end
-        if not isTeleportPending() then return end
-        if type(placeId) == "number" and placeId > 0 and activeAttempt.placeId and placeId ~= activeAttempt.placeId then
+    local function matchesFailure(attempt, placeId, serverId)
+        if type(placeId) == "number" and placeId > 0 and attempt.placeId and placeId ~= attempt.placeId then return false end
+        if serverId and attempt.jobId and serverId ~= attempt.jobId then return false end
+        return true
+    end
+
+    local function resolveFailure(attempt, teleportResult)
+        local name = typeof(teleportResult) == "EnumItem" and teleportResult.Name or tostring(teleportResult)
+        attempt.result = name
+        attemptSeq = attemptSeq + 1
+        if name == "IsTeleporting" then
+            attempt.status = "unknown"
+            setTeleportState("unknown")
+            offerRecovery(attempt)
             return
         end
-        local attempt = activeAttempt
         attempt.status = "failed"
-        attempt.result = teleportResult
+        attempt.retryable = RETRYABLE_RESULTS[name] == true
         activeAttempt = nil
-        pendingToken = pendingToken + 1
-        if attempt.kind == "spam" then
-            failStreak = failStreak + 1
+        if attempt.kind == "spam" then failStreak = failStreak + 1 end
+        setTeleportState("failed")
+    end
+
+    trackConn(TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, _, placeId, teleportOptions)
+        if player ~= LocalPlayer or destroyed then return end
+        local now = os.clock()
+        for i = #abandonedAttempts, 1, -1 do
+            if now - abandonedAttempts[i].abandonedAt > ABANDONED_TTL then table.remove(abandonedAttempts, i) end
         end
+        isTeleportUnresolved()
+        local hasId, rawId = pcall(function() return teleportOptions.ServerInstanceId end)
+        local serverId = (hasId and type(rawId) == "string" and rawId ~= "") and rawId or nil
+        local current = activeAttempt
+        local currentMatches = current ~= nil and matchesFailure(current, placeId, serverId)
+        for i, old in ipairs(abandonedAttempts) do
+            if matchesFailure(old, placeId, serverId) then
+                table.remove(abandonedAttempts, i)
+                return
+            end
+        end
+        if currentMatches then resolveFailure(current, teleportResult) end
     end))
 
     local function joinServer(jobId, placeId, kind)
@@ -331,6 +467,9 @@ return function(ctx)
             if not jobId then
                 flashStrokeError(BoxStroke)
                 flashButtonFeedback(JoinBtn, "Join", why or "Invalid", true, 0.8)
+                if why == "Private" then
+                    showToast("Private server links cannot be joined from here. Open the link in the Roblox app.", "warn", { duration = 4 })
+                end
                 return
             end
 
@@ -388,18 +527,38 @@ return function(ctx)
 
     --// ---------- Rejoin & Auto Rejoin on Kick ----------
     do
-        local Frame = CreateInfoRow(StatusServerTab, "Rejoin Server")
+        local Frame, RejoinLeft = CreateInfoRow(StatusServerTab, "Rejoin Server")
+        local TeleportStateLabel = label(RejoinLeft, {
+            LayoutOrder = 2,
+            Size = UDim2.new(0, 0, 1, 0),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Text = "",
+            Font = Enum.Font.Gotham,
+            TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextColor3 = Theme.SubText,
+        })
+        local STATE_TEXT = {
+            pending = "· teleporting...",
+            unknown = "· teleport unresolved",
+            failed  = "· last teleport failed",
+        }
+        stateListeners[#stateListeners + 1] = function(state)
+            TeleportStateLabel.Text = STATE_TEXT[state] or ""
+            TeleportStateLabel.TextColor3 = (state == "unknown" or state == "failed") and Theme.Danger or Theme.SubText
+        end
         local RejoinBtn = CreateStyledButton(Frame, "Rejoin", 70)
         RejoinBtn.Activated:Connect(guarded(function(done)
             local ok, reason = requestTeleport("rejoin", game.PlaceId, isValidJobId(game.JobId) and game.JobId or nil)
-            flashButtonFeedback(RejoinBtn, "Rejoin", ok and "Rejoining..." or (reason == "Busy" and "Busy" or "Failed"), not ok)
+            flashButtonFeedback(RejoinBtn, "Rejoin", ok and "Rejoining..." or ((reason == "Busy" or reason == "Unresolved") and reason or "Failed"), not ok)
             done()
         end))
 
-        local KickSwitch = CreateToggleOption(StatusServerTab, "Auto Rejoin on Kick")
+        local KickSwitch, setKickState = CreateToggleOption(StatusServerTab, "Auto Rejoin on Kick")
         local kickConns = {}
         local rejoining = false
         local autoRejoinRun = 0
+        local autoRejoinFails = 0
 
         local function triggerAutoRejoin()
             if rejoining or destroyed or not KickSwitch:GetAttribute("Toggled") then return end
@@ -408,11 +567,27 @@ return function(ctx)
             local myRun = autoRejoinRun
             showToast("Disconnected - auto rejoining...", "warn", { duration = 4 })
             task.spawn(function()
+                local last = nil
                 while KickSwitch:GetAttribute("Toggled") and myRun == autoRejoinRun and ScreenGui.Parent and not destroyed do
-                    if not isTeleportPending() then
-                        requestTeleport("autorejoin", game.PlaceId, nil)
+                    if last and last.status == "failed" then
+                        autoRejoinFails = autoRejoinFails + 1
+                        if not last.retryable then
+                            showToast(("Auto rejoin stopped: %s"):format(tostring(last.result)), "error")
+                            setKickState(false)
+                            break
+                        end
+                        last = nil
                     end
-                    task.wait(2.5)
+                    if autoRejoinFails >= AUTO_REJOIN_MAX_FAILS then
+                        showToast(("Auto rejoin stopped after %d failed attempts"):format(autoRejoinFails), "error")
+                        setKickState(false)
+                        break
+                    end
+                    if not isTeleportUnresolved() then
+                        local ok, result = requestTeleport("autorejoin", game.PlaceId, nil)
+                        if ok then last = result elseif result == "Failed" then autoRejoinFails = autoRejoinFails + 1 end
+                    end
+                    task.wait(2.5 + math.min(autoRejoinFails, 5) * 2.5)
                 end
                 if myRun == autoRejoinRun then rejoining = false end
             end)
@@ -427,6 +602,7 @@ return function(ctx)
 
         local function startAutoRejoin()
             stopAutoRejoin()
+            autoRejoinFails = 0
             pcall(function()
                 kickConns[#kickConns + 1] = GuiService.ErrorMessageChanged:Connect(function(msg)
                     if type(msg) ~= "string" then
@@ -608,24 +784,27 @@ return function(ctx)
                 local srv = candidates[tried]
                 local ok, attemptOrReason = joinServer(srv.id, game.PlaceId, "hop")
                 if not ok then
-                    if attemptOrReason == "Busy" then return false, "Busy" end
+                    if attemptOrReason == "Busy" or attemptOrReason == "Unresolved" then return false, attemptOrReason end
                     failedJobIds[srv.id] = true
                     lastReason = attemptOrReason or "Failed"
                 else
                     local attempt = attemptOrReason
-                    while attempt.status == "pending" and os.clock() < attempt.deadline and ScreenGui.Parent and not destroyed do
-                        if game.JobId == srv.id then return true end
-                        task.wait(0.2)
-                    end
-                    if not ScreenGui.Parent or destroyed or game.JobId == srv.id then
+                    local function landed()
+                        if game.JobId ~= srv.id then return false end
+                        markSucceeded(attempt)
                         return true
                     end
-                    if attempt.status == "pending" and os.clock() >= attempt.deadline then
-                        attempt.status = "timeout"
-                        if activeAttempt == attempt then activeAttempt = nil end
+                    while attempt.status == "pending" and os.clock() < attempt.deadline and ScreenGui.Parent and not destroyed do
+                        if landed() then return true end
+                        task.wait(0.2)
                     end
+                    if not ScreenGui.Parent or destroyed or landed() then
+                        return true
+                    end
+                    markUnknown(attempt)
+                    if attempt.status == "unknown" then return false, "Unresolved" end
                     failedJobIds[srv.id] = true
-                    lastReason = (attempt.status == "timeout") and "Timed out" or "Failed"
+                    lastReason = "Failed"
                 end
             end
             return false, lastReason
@@ -757,15 +936,5 @@ return function(ctx)
         end))
     end
 
-    local function destroyModule()
-        if destroyed then return end
-        destroyed = true
-        activeAttempt = nil
-        pendingToken = pendingToken + 1
-        for _, fn in ipairs(teardown) do pcall(fn) end
-        table.clear(teardown)
-    end
-    trackConn(ScreenGui.Destroying:Connect(destroyModule))
-    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
     return { Destroy = destroyModule }
 end

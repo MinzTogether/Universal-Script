@@ -72,17 +72,19 @@ return function(ctx)
     local FpsCap = {}
     do
         local COVER_CAP = 15
+        local ZERO_CAP_VERIFIED = false
         local canSet = typeof(setfpscap) == "function"
         local canGet = typeof(getfpscap) == "function"
         local origState, original = "unknown", nil
 
         local function captureOriginal()
+            origState, original = "unknown", nil
             if not canGet then return end
             local ok, v = pcall(getfpscap)
-            if ok and type(v) == "number" and v == v then
+            if ok and type(v) == "number" and v == v and math.abs(v) < math.huge then
                 if v > 0 then
                     origState, original = "numeric", v
-                elseif v == 0 then
+                elseif v == 0 and ZERO_CAP_VERIFIED then
                     origState, original = "unlimited", 0
                 end
             end
@@ -97,25 +99,28 @@ return function(ctx)
             if coverCap and (not cap or coverCap < cap) then cap = coverCap end
             if afkCap and (not cap or afkCap < cap) then cap = afkCap end
             if cap then
-                if not engaged then captureOriginal() end
+                if not engaged then
+                    captureOriginal()
+                    if origState == "unknown" then return false, "unknown_original" end
+                end
+                if not pcall(setfpscap, cap) then return false, "set_failed" end
                 engaged = true
-                pcall(setfpscap, cap)
                 return true, "engaged"
             elseif engaged then
+                if not pcall(setfpscap, original) then return false, "restore_failed" end
                 engaged = false
-                if origState == "numeric" and original then
-                    pcall(setfpscap, original)
-                    return true, "restored"
-                elseif origState == "unlimited" then
-                    pcall(setfpscap, 0)
-                    return true, "restored_unlimited"
-                end
-                return false, "unknown"
+                return true, origState == "unlimited" and "restored_unlimited" or "restored"
             end
             return true, "idle"
         end
 
-        function FpsCap.supported() return canSet end
+        function FpsCap.supported() return canSet and origState ~= "unknown" end
+        function FpsCap.unavailableReason()
+            if not canSet then return "no setfpscap" end
+            if not canGet then return "no getfpscap" end
+            if origState == "unknown" then return "cap unreadable" end
+            return nil
+        end
         function FpsCap.getUser() return userCap end
         function FpsCap.getOriginal() return original, origState end
         function FpsCap.setUser(fps) userCap = fps; return apply() end
@@ -123,6 +128,8 @@ return function(ctx)
         function FpsCap.setAfk(on) afkCap = on and COVER_CAP or nil; return apply() end
         function FpsCap.restore() userCap, coverCap, afkCap = nil, nil, nil; return apply() end
     end
+    ScreenGui:SetAttribute("FpsCapAvailable", FpsCap.supported())
+    onDestroy(function() ScreenGui:SetAttribute("FpsCapAvailable", nil) end)
 
     --// ================= MODE SELECTOR (toggle + dropdown) =================
     local createChevron = UI.CreateChevron
@@ -366,6 +373,8 @@ return function(ctx)
     end
 
     --// ================= WHITE / BLACK SCREEN & AFK MODE =================
+    local coverActive, autoCover = false, false
+    local afkIdledConn
     local Cover = new("ScreenGui", {
         Name = "ElyseraCover",
         DisplayOrder = 5,
@@ -374,6 +383,15 @@ return function(ctx)
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
         Enabled = false,
     }, GuiRoot)
+    onDestroy(function()
+        if afkIdledConn then afkIdledConn:Disconnect(); afkIdledConn = nil end
+        if coverActive then
+            coverActive = false
+            pcall(function() RunService:Set3dRenderingEnabled(true) end)
+        end
+        Cover:Destroy()
+        FpsCap.restore()
+    end)
     local CoverFrame = new("Frame", {
         Size = UDim2.fromScale(1, 1),
         BorderSizePixel = 0,
@@ -389,9 +407,6 @@ return function(ctx)
     addToggle(ScreenSec, WhiteSwitch, setWhite)
     addToggle(ScreenSec, BlackSwitch, setBlack)
     addToggle(ScreenSec, AfkSwitch, setAfk)
-
-    local coverActive, autoCover = false, false
-    local afkIdledConn
 
     local function refreshScreen()
         local white = WhiteSwitch:GetAttribute("Toggled") == true
@@ -439,16 +454,6 @@ return function(ctx)
         autoCover = on
         refreshScreen()
     end
-
-    onDestroy(function()
-        if afkIdledConn then afkIdledConn:Disconnect(); afkIdledConn = nil end
-        if coverActive then
-            coverActive = false
-            pcall(function() RunService:Set3dRenderingEnabled(true) end)
-        end
-        Cover:Destroy()
-        FpsCap.restore()
-    end)
 
     --// ================= IDLE SAVER =================
     local Saver = {}
@@ -1466,6 +1471,7 @@ return function(ctx)
             end
         end
 
+        local stopDrag
         local Gui = new("ScreenGui", {
             Name = "ElyseraFpsOverlay",
             DisplayOrder = 6,
@@ -1474,6 +1480,10 @@ return function(ctx)
             ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
             Enabled = false,
         }, GuiRoot)
+        onDestroy(function()
+            if stopDrag then stopDrag() end
+            Gui:Destroy()
+        end)
 
         local Pill = new("Frame", {
             Name = "Pill",
@@ -1533,7 +1543,7 @@ return function(ctx)
         end
 
         local dragMoveConn, dragEndConn
-        local function stopDrag()
+        function stopDrag()
             if dragMoveConn then dragMoveConn:Disconnect(); dragMoveConn = nil end
             if dragEndConn then dragEndConn:Disconnect(); dragEndConn = nil end
         end
@@ -1565,10 +1575,6 @@ return function(ctx)
             Meter.want("overlay", on)
         end
 
-        onDestroy(function()
-            stopDrag()
-            Gui:Destroy()
-        end)
     end
 
     --// ================= OPTIMIZE ROWS =================
@@ -1619,15 +1625,18 @@ return function(ctx)
     end
 
     local CapRow
+    local function setUserCap(fps)
+        if not FpsCap.setUser(fps) and fps then CapRow.setState(false) end
+    end
     CapRow = createModeRow(Optimize.Body, "FPS Cap", CAP_MODES, Prefs.pick("cap", CAP_MODES, "60 FPS"), function(m)
         Prefs.set("cap", m)
-        if CapRow.Switch:GetAttribute("Toggled") then FpsCap.setUser(parseFps(m)) end
-    end, { default = "Lower cap saves battery and heat", Unlimited = "No limit, uses more power" })
+        if CapRow.Switch:GetAttribute("Toggled") then setUserCap(parseFps(m)) end
+    end, FpsCap.supported() and { default = "Lower cap saves battery and heat", Unlimited = "No limit, uses more power" }
+        or { default = "Unavailable: " .. tostring(FpsCap.unavailableReason()) })
     CapRow.Frame.LayoutOrder = 2
-    CapRow.Frame.Visible = FpsCap.supported()
     CapRow.Switch:GetAttributeChangedSignal("Toggled"):Connect(function()
         if CapRow.Switch:GetAttribute("Toggled") then
-            FpsCap.setUser(parseFps(CapRow.getMode()))
+            setUserCap(parseFps(CapRow.getMode()))
         else
             FpsCap.setUser(nil)
         end

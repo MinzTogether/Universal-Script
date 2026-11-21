@@ -54,11 +54,28 @@ return function(ctx)
 
     local OutputPanel, StatusLabel, SearchRow, SearchBox, EmptyLabel, ScriptDialog
     local applyListView, CreateScriptRow, fitListPanel
+    local stopAll, closeContextMenu, dialogBox
     local modConns = {}
+    local destroyed = false
     local function trackConn(c)
         modConns[#modConns + 1] = c
         return c
     end
+
+    local function destroyModule()
+        if destroyed then return end
+        destroyed = true
+        if stopAll then stopAll() end
+        if closeContextMenu then closeContextMenu() end
+        for _, c in ipairs(modConns) do pcall(c.Disconnect, c) end
+        table.clear(modConns)
+        if dialogBox then
+            if dialogBox.Visible then setOverlay(false, dialogBox) end
+            pcall(dialogBox.Destroy, dialogBox)
+            dialogBox = nil
+        end
+    end
+    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
 
     local borderStroke       = UI.BorderStroke
     local createAccentButton = UI.CreateAccentButton
@@ -577,7 +594,7 @@ return function(ctx)
         return true
     end
 
-    local function stopAll()
+    function stopAll()
         local entries = {}
         for _, st in pairs(Running) do entries[#entries + 1] = st.entry end
         for _, e in ipairs(entries) do stopScript(e) end
@@ -951,7 +968,7 @@ return function(ctx)
             save = "Save", saveChanges = "Save Changes", import = "Import",
             cancel = "Cancel", discard = "Discard?",
             namePlaceholder = "Enter your name script here",
-            codePlaceholder = "Enter your script here",
+            codePlaceholder = "Enter your script here\n\nTip: OnStop(function() end)\nruns when you press Stop.",
             importPlaceholder = "Paste exported JSON or a file name",
         }
 
@@ -967,6 +984,7 @@ return function(ctx)
             ClipsDescendants = true,
             ZIndex = 51,
         }, ScreenGui)
+        dialogBox = Box
         corner(Box, 12)
 
         local Bg = new("Frame", {
@@ -1548,7 +1566,7 @@ return function(ctx)
 
     --// ---- Shared floating menu ----
     local MenuCatcher
-    local function closeContextMenu()
+    function closeContextMenu()
         if MenuCatcher then MenuCatcher:Destroy(); MenuCatcher = nil end
     end
 
@@ -2178,11 +2196,11 @@ return function(ctx)
             end
             if #queue > 0 then
                 task.delay(STARTUP_DELAY, function()
-                    if not ScreenGui.Parent or not State.autoRun then return end
+                    if destroyed or not ScreenGui.Parent or not State.autoRun then return end
                     showToast(("Auto-running %d script%s"):format(#queue, #queue == 1 and "" or "s"),
                         "info", { duration = 2 })
                     for _, e in ipairs(queue) do
-                        if not ScreenGui.Parent then break end
+                        if destroyed or not ScreenGui.Parent then break end
                         local rec = Rows[e.id]
                         if rec and (e.auto == true or e.autoPlace == game.PlaceId) and not e.review and not Running[e.id] then
                             logOut("info", e.name, "Auto-run on startup")
@@ -2195,17 +2213,6 @@ return function(ctx)
         end
     end
 
-    local function destroyModule()
-        stopAll()
-        closeContextMenu()
-        for _, c in ipairs(modConns) do pcall(c.Disconnect, c) end
-        table.clear(modConns)
-        if ScriptDialog and ScriptDialog.Box then
-            if ScriptDialog.Box.Visible then setOverlay(false, ScriptDialog.Box) end
-            pcall(ScriptDialog.Box.Destroy, ScriptDialog.Box)
-        end
-    end
-    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
     ScriptDialog.Destroy = destroyModule
 
     return ScriptDialog

@@ -2022,33 +2022,38 @@ do
     UI.ReadJson  = readJsonFile
     UI.WriteJson = writeJsonFile
 
+    local function normalizeHttpResponse(res)
+        if type(res) ~= "table" then return nil, "Failed", { kind = "shape" } end
+        local code = tonumber(res.StatusCode or res.status or res.Status)
+        if code == 429 then return nil, "Limited", { kind = "http", status = code } end
+        if res.Success == false then return nil, "Failed", { kind = "http", status = code } end
+        if code and (code < 200 or code >= 300) then return nil, "Failed", { kind = "http", status = code } end
+        local body = res.Body or res.body
+        if type(body) ~= "string" then return nil, "Failed", { kind = "body", status = code } end
+        if not code then
+            if res.Success ~= true then return nil, "Failed", { kind = "shape" } end
+            if body:match("^%s*404:?%s*Not Found")
+                or body:match("^%s*429:?%s*Too Many Requests")
+                or body:match("^%s*5%d%d:?%s*[A-Za-z]")
+                or body:match("^%s*<!DOCTYPE%s+html")
+                or body:match("^%s*<html") then
+                local limited = body:match("^%s*429") ~= nil
+                return nil, limited and "Limited" or "Failed", { kind = "http" }
+            end
+        end
+        return body, nil, { kind = "ok", status = code }
+    end
+
     function UI.HttpRequest(url)
         local fn = (typeof(syn) == "table" and typeof(syn.request) == "function" and syn.request)
             or (typeof(http_request) == "function" and http_request)
             or (typeof(request) == "function" and request)
             or (typeof(http) == "table" and typeof(http.request) == "function" and http.request)
             or (typeof(fluxus) == "table" and typeof(fluxus.request) == "function" and fluxus.request)
-        if not fn then return nil, "No HTTP" end
+        if not fn then return nil, "No HTTP", { kind = "unsupported" } end
         local ok, res = pcall(fn, { Url = url, Method = "GET" })
-        if not ok or type(res) ~= "table" then return nil, "Failed" end
-        if res.Success == false then return nil, "Failed" end
-        local code = tonumber(res.StatusCode or res.status or res.Status)
-        if code == 429 then return nil, "Limited" end
-        if code and (code < 200 or code >= 300) then return nil, "Failed" end
-        local body = res.Body or res.body
-        if type(body) == "string" then
-            if not code then
-                if body:match("^%s*404:?%s*Not Found")
-                    or body:match("^%s*429:?%s*Too Many Requests")
-                    or body:match("^%s*5%d%d:?%s*[A-Za-z]")
-                    or body:match("^%s*<!DOCTYPE%s+html")
-                    or body:match("^%s*<html") then
-                    return nil, body:match("^%s*429") and "Limited" or "Failed"
-                end
-            end
-            return body
-        end
-        return nil, "Failed"
+        if not ok then return nil, "Failed", { kind = "transport" } end
+        return normalizeHttpResponse(res)
     end
 
     UI.CreateDialogButton = createDialogButton
@@ -2173,7 +2178,7 @@ do
         end)
     end
 
-    local TOAST_W, MAX_TOASTS = 300, 3
+    local TOAST_W, MAX_TOASTS, MAX_ACTION_TOASTS = 300, 3, 3
     local TOAST_TOKENS = {
         info    = "SubText",
         success = "Sakura",
@@ -2205,6 +2210,23 @@ do
         return ToastHost
     end
 
+    local function evictOldestToast(withAction)
+        for _, t in ipairs(toastQueue) do
+            if t.hasAction == withAction then
+                t.dismiss()
+                return
+            end
+        end
+    end
+
+    local function countToasts(withAction)
+        local n = 0
+        for _, t in ipairs(toastQueue) do
+            if t.hasAction == withAction then n = n + 1 end
+        end
+        return n
+    end
+
     function UI.Toast(message, kind, opts)
         opts = opts or {}
         message = tostring(message)
@@ -2219,16 +2241,10 @@ do
         end
 
         local host = getToastHost()
-        if #toastQueue >= MAX_TOASTS then
-            local evictIdx
-            for i, t in ipairs(toastQueue) do
-                if not t.hasAction then evictIdx = i; break end
-            end
-            if evictIdx then
-                toastQueue[evictIdx].dismiss()
-            elseif not hasAction then
-                return noop
-            end
+        if hasAction then
+            if countToasts(true) >= MAX_ACTION_TOASTS then evictOldestToast(true) end
+        elseif countToasts(false) >= MAX_TOASTS then
+            evictOldestToast(false)
         end
 
         toastSeq = toastSeq + 1
@@ -2247,7 +2263,7 @@ do
         padding(Pill, 12, 12, 6, 6)
         local PillScale = new("UIScale", { Scale = 0.9 }, Pill)
 
-        local actionW = opts.actionText and 64 or 0
+        local actionW = hasAction and 64 or 0
         new("TextLabel", {
             Size = UDim2.new(1, -actionW, 0, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
@@ -2273,7 +2289,7 @@ do
             end)
         end
 
-        if opts.actionText then
+        if hasAction then
             local Act = new("TextButton", {
                 AnchorPoint = Vector2.new(1, 0.5),
                 Position = UDim2.new(1, 0, 0.5, 0),
@@ -2288,7 +2304,7 @@ do
             Act.MouseButton1Click:Connect(function()
                 if closed then return end
                 toast.dismiss()
-                if opts.onAction then task.spawn(opts.onAction) end
+                task.spawn(opts.onAction)
             end)
         end
 

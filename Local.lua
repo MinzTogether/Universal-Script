@@ -164,6 +164,16 @@ return function(ctx)
         return c
     end
 
+    local function destroyModule()
+        if destroyed then return end
+        destroyed = true
+        Core.ResetAll()
+        for _, fn in ipairs(Core.hooks) do pcall(fn) end
+        table.clear(Core.hooks)
+    end
+    trackConn(ScreenGui.Destroying:Connect(destroyModule))
+    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
+
     function Core.TrackCharacter(player, onChar, opts)
         local onDied = opts and opts.onDied
         local token, activeCleanups, diedConn = 0, nil, nil
@@ -1594,7 +1604,7 @@ return function(ctx)
                     end
                 end)
                 badge.set("active", "Running")
-            end)
+            end, { onDied = true })
         end
 
         local function stop()
@@ -1851,7 +1861,7 @@ return function(ctx)
             pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.Default end)
             if camSnap then
                 local cam = Workspace.CurrentCamera
-                if cam then
+                if cam and cam == camSnap.cam and cam.Parent then
                     pcall(function()
                         cam.CameraType = camSnap.type
                         local subject = resolveCameraSubject()
@@ -1867,6 +1877,17 @@ return function(ctx)
             badge.set("off")
         end
 
+        local function onCameraChanged()
+            if not active then return end
+            local cam = Workspace.CurrentCamera
+            if camSnap and cam == camSnap.cam then return end
+            camSnap = nil
+            if cam and cam.Parent then
+                camSnap = { cam = cam, type = cam.CameraType, subject = cam.CameraSubject, cf = cam.CFrame }
+                cam.CameraType = Enum.CameraType.Scriptable
+            end
+        end
+
         local function start()
             local cam = Workspace.CurrentCamera
             if not cam then return false end
@@ -1877,7 +1898,7 @@ return function(ctx)
             local rx, ry = cam.CFrame:ToOrientation()
             pitch, yaw = rx, ry
             camPos = cam.CFrame.Position
-            camSnap = { type = cam.CameraType, subject = cam.CameraSubject, cf = cam.CFrame }
+            camSnap = { cam = cam, type = cam.CameraType, subject = cam.CameraSubject, cf = cam.CFrame }
             cam.CameraType = Enum.CameraType.Scriptable
 
             bindCharacter(LocalPlayer.Character)
@@ -1906,7 +1927,7 @@ return function(ctx)
             end)
             conns[5] = RunService.RenderStepped:Connect(function(dt)
                 local c = Workspace.CurrentCamera
-                if not c then return end
+                if not c or not camSnap or c ~= camSnap.cam then return end
                 if c.CameraType ~= Enum.CameraType.Scriptable then
                     c.CameraType = Enum.CameraType.Scriptable
                 end
@@ -1924,6 +1945,7 @@ return function(ctx)
                     end
                 end
             end)
+            conns[8] = Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(onCameraChanged)
             updateBadge()
         end
 
@@ -3273,6 +3295,9 @@ return function(ctx)
             Visible = false,
             ZIndex = 30,
         }, ScreenGui)
+        Core.OnDestroy(function()
+            if Hud then pcall(Hud.Destroy, Hud); Hud = nil end
+        end)
         corner(Hud, 19)
         stroke(Hud, Theme.AccentPink, 1.5)
         padding(Hud, 16, 6, 0, 0)
@@ -3325,7 +3350,7 @@ return function(ctx)
             Hud.Visible = viewing ~= nil
         end
 
-        local themeConn = ScreenGui:GetAttributeChangedSignal("Theme"):Connect(renderTitle)
+        trackConn(ScreenGui:GetAttributeChangedSignal("Theme"):Connect(renderTitle))
 
         local function stopView(keepCamera)
             if not viewing then return end
@@ -3503,16 +3528,9 @@ return function(ctx)
         StopTop.onClick(function() stopView() end)
         HudStop.onClick(function() stopView() end)
 
-        local conns = {
-            themeConn,
-            Players.PlayerAdded:Connect(queueRefresh),
-            Players.PlayerRemoving:Connect(function() task.delay(0.25, queueRefresh) end),
-            Search:GetPropertyChangedSignal("Text"):Connect(queueRefresh),
-        }
-        Core.OnDestroy(function()
-            for _, c in ipairs(conns) do c:Disconnect() end
-            if Hud then pcall(Hud.Destroy, Hud); Hud = nil end
-        end)
+        trackConn(Players.PlayerAdded:Connect(queueRefresh))
+        trackConn(Players.PlayerRemoving:Connect(function() task.delay(0.25, queueRefresh) end))
+        trackConn(Search:GetPropertyChangedSignal("Text"):Connect(queueRefresh))
 
         local handle = {
             isOn = function() return viewing ~= nil end,
@@ -3572,16 +3590,6 @@ return function(ctx)
     Safety.trackSwitch(Features.CreateAntiVoid(Safety.Body))
 
     UI.CreateResetButton(LocalTab, 7, Core.ResetAll)
-
-    local function destroyModule()
-        if destroyed then return end
-        destroyed = true
-        Core.ResetAll()
-        for _, fn in ipairs(Core.hooks) do pcall(fn) end
-        table.clear(Core.hooks)
-    end
-    trackConn(ScreenGui.Destroying:Connect(destroyModule))
-    if ctx.OnDestroy then ctx.OnDestroy(destroyModule) end
 
     return { Destroy = destroyModule, Core = Core, Features = Features }
 end

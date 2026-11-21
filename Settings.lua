@@ -36,6 +36,15 @@ return function(D)
     local function onDestroy(fn) teardown[#teardown + 1] = fn end
     local function trackConn(c) teardown[#teardown + 1] = function() c:Disconnect() end; return c end
 
+    local function destroyModule()
+        if destroyed then return end
+        destroyed = true
+        for _, fn in ipairs(teardown) do pcall(fn) end
+        table.clear(teardown)
+    end
+    trackConn(ScreenGui.Destroying:Connect(destroyModule))
+    if D.OnDestroy then D.OnDestroy(destroyModule) end
+
     --// =====================================================================
     --// PART A. ANTI CHAT
     --// =====================================================================
@@ -1395,7 +1404,7 @@ return function(D)
                       or (isFn(hookfunction) and isFn(newcclosure)) },
                 { title = "Notify hook", affects = "Remove Notification",
                   ok = isFn(hookfunction) and isFn(newcclosure) and isFn(checkcaller) },
-                { title = "FPS cap", affects = "FPS Cap", ok = isFn(setfpscap) },
+                { title = "FPS cap", affects = "FPS Cap", ok = ScreenGui:GetAttribute("FpsCapAvailable") == true },
                 { title = "Hidden props", affects = "FPS Profile",
                   ok = isFn(gethiddenproperty) and isFn(sethiddenproperty) },
                 { title = "Queue on teleport", affects = "Auto Execute",
@@ -1515,15 +1524,6 @@ return function(D)
         end)
         if not okD then warn("[Elysera/Settings] Could not build Diagnostics: " .. tostring(errD)) end
     end
-
-    local function destroyModule()
-        if destroyed then return end
-        destroyed = true
-        for _, fn in ipairs(teardown) do pcall(fn) end
-        table.clear(teardown)
-    end
-    trackConn(ScreenGui.Destroying:Connect(destroyModule))
-    if D.OnDestroy then D.OnDestroy(destroyModule) end
 
     local metaList = {}
     for i, t in ipairs(THEMES) do
